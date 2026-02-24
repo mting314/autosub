@@ -1,18 +1,8 @@
 import logging
 from pathlib import Path
 
-# Add the cloned pyass source code to the python path dynamically
-import sys
-import os
-
-pyass_path = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".pyass_src")
-)
-if pyass_path not in sys.path:
-    sys.path.insert(0, pyass_path)
-
-import pyass  # noqa: E402
-from autosub.core.config import PROJECT_ID  # noqa: E402
+import pyass
+from autosub.core.config import PROJECT_ID
 
 logger = logging.getLogger(__name__)
 
