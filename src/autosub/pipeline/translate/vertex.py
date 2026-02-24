@@ -36,7 +36,11 @@ class VertexTranslator(BaseTranslator):
         prompt = (
             f"You are a professional subtitle translator. "
             f"Translate the following JSON array of subtitle lines from {self.source_lang} to {self.target_lang}.\n"
-            f"Maintain the exact same number of items and return a JSON array with 'id' and 'translated' fields.\n"
+            f"IMPORTANT RULES:\n"
+            f"1. Maintain the exact same number of items and return a JSON array with 'id' and 'translated' fields.\n"
+            f"2. The input lines are sequential parts of continuous speech.\n"
+            f"3. Do not translate each line in strict isolation. Understand the complete thought across consecutive lines.\n"
+            f"4. Because speakers naturally pause mid-sentence, a single sentence may be split across multiple lines. Translate the complete thought naturally, and distribute the English sentence across the corresponding lines so the grammar flows perfectly from one line to the next.\n"
         )
         if self.system_prompt:
             prompt += f"System Instructions: {self.system_prompt}\n"
