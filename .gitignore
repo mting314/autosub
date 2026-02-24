@@ -236,3 +236,7 @@ __marimo__/
 # *.srt
 # *.vtt
 # *.ass
+
+# Data files
+*.json
+*.ass
