@@ -50,7 +50,9 @@ def transcribe(
                     gcs_uri, PROJECT_ID, language_code, vocabulary
                 )
                 # Parse Google's Batch response
-                for result in response.results[gcs_uri].transcript.results:
+                for result in response.results[
+                    gcs_uri
+                ].inline_result.transcript.results:
                     for alt in result.alternatives:
                         for w in alt.words:
                             words_data.append(
