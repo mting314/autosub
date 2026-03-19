@@ -9,6 +9,7 @@ class SegmentMS:
     def __init__(self, line: SubtitleLine):
         self.text = line.text
         self.speaker = line.speaker
+        self.role = line.role
         self.start_ms = int(round(line.start_time * 1000))
         self.end_ms = int(round(line.end_time * 1000))
 
@@ -18,6 +19,7 @@ class SegmentMS:
             start_time=self.start_ms / 1000.0,
             end_time=self.end_ms / 1000.0,
             speaker=self.speaker,
+            role=self.role,
         )
 
 

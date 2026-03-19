@@ -15,24 +15,10 @@ class TranslatedSubtitle(BaseModel):
 
 
 class VertexTranslator(BaseTranslator):
-    def translate(self, texts: list[str]) -> list[str]:
-        if not texts:
-            return []
-
-        logger.info(
-            f"Translating {len(texts)} subtitle shards using Vertex AI (Gemini Flash)..."
-        )
-
-        # Initialize the Vertex AI client using Application Default Credentials
-        client = genai.Client(
-            vertexai=True, project=self.project_id, location="us-central1"
-        )
-
-        # Package the texts into a JSON array of objects
+    def _build_prompt(self, texts: list[str]) -> str:
         payload = [{"id": i, "text": t} for i, t in enumerate(texts)]
         payload_str = json.dumps(payload, ensure_ascii=False, indent=2)
 
-        # Build dynamic prompt
         prompt = (
             f"You are a professional subtitle translator and localizer.\n"
             f"Task: Translate the following JSON array of subtitle lines from {self.source_lang} to {self.target_lang}.\n\n"
@@ -49,11 +35,29 @@ class VertexTranslator(BaseTranslator):
             f"5. Keep the tone, emotional intent, and speaker persona intact.\n"
             f"6. Keep translations concise enough to work as readable subtitles.\n"
             f"7. If a line contains a catchphrase, segment title, fandom reference, or recurring term, translate it consistently with the provided context.\n"
+            f"8. Prefer ending subtitle lines on natural punctuation whenever possible. If a clause can end with a comma, period, question mark, or exclamation point, keep that punctuation at the end of the line instead of leaving a dangling conjunction or connective there.\n"
+            f"9. Move trailing connectives such as 'but', 'and', 'so', 'because', 'though', or 'then' onto the following line.\n"
         )
         if self.system_prompt:
             prompt += f"\nSpeaker and style context:\n{self.system_prompt.strip()}\n"
 
         prompt += f"\nInput JSON:\n{payload_str}"
+        return prompt
+
+    def translate(self, texts: list[str]) -> list[str]:
+        if not texts:
+            return []
+
+        logger.info(
+            f"Translating {len(texts)} subtitle shards using Vertex AI (Gemini Flash)..."
+        )
+
+        # Initialize the Vertex AI client using Application Default Credentials
+        client = genai.Client(
+            vertexai=True, project=self.project_id, location="us-central1"
+        )
+
+        prompt = self._build_prompt(texts)
 
         # Use Gemini 2.5 Flash with structured output schema
         response = client.models.generate_content(

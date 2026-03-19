@@ -34,6 +34,38 @@ def test_chunk_words_by_speaker():
     assert l2.text == "Hithere!"
 
 
+def test_soft_punctuation_splits_dense_chunk_without_pause():
+    words = [
+        TranscribedWord(word=f"語{i}、", start_time=i * 0.1, end_time=i * 0.1 + 0.05)
+        for i in range(12)
+    ]
+    words.extend(
+        [
+            TranscribedWord(word="続き", start_time=1.2, end_time=1.25),
+            TranscribedWord(word="です", start_time=1.3, end_time=1.35),
+        ]
+    )
+
+    lines = chunk_words_to_lines(words)
+
+    assert len(lines) == 2
+    assert lines[0].text == "".join(word.word for word in words[:12])
+    assert lines[1].text == "続きです"
+
+
+def test_soft_punctuation_does_not_split_short_chunk_without_pause():
+    words = [
+        TranscribedWord(word=f"語{i}、", start_time=i * 0.1, end_time=i * 0.1 + 0.05)
+        for i in range(11)
+    ]
+    words.append(TranscribedWord(word="続き", start_time=1.1, end_time=1.15))
+
+    lines = chunk_words_to_lines(words)
+
+    assert len(lines) == 1
+    assert lines[0].text == "".join(word.word for word in words)
+
+
 def test_profile_speaker_parsing(tmp_path):
     # Mock a TOML profile
     profile_dir = tmp_path / "profiles"

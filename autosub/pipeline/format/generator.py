@@ -53,12 +53,13 @@ def generate_ass_file(lines: List[SubtitleLine], output_path: Path):
         assigned_style = speakerOriginToStyleMap.get(
             line.speaker if line.speaker else "Default", "Default"
         )
+        event_name = line.role or (line.speaker if line.speaker else "")
         pyass_events.append(
             pyass.Event(
                 start=pyass.timedelta(seconds=line.start_time),
                 end=pyass.timedelta(seconds=line.end_time),
                 style=assigned_style,
-                name=line.speaker if line.speaker else "",
+                name=event_name,
                 text=line.text,
             )
         )

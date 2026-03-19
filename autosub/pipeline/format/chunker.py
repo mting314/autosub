@@ -6,6 +6,7 @@ SOFT_PUNCTUATION = {"、", ","}
 
 LONG_PAUSE_THRESHOLD = 1.5
 SOFT_PAUSE_THRESHOLD = 0.6
+SOFT_PUNCT_WORD_THRESHOLD = 12
 
 
 def chunk_words_to_lines(words: List[TranscribedWord]) -> List[SubtitleLine]:
@@ -15,6 +16,7 @@ def chunk_words_to_lines(words: List[TranscribedWord]) -> List[SubtitleLine]:
     1. Hard Punctuation (。, !, ?)
     2. Long Pauses (> 1.5s)
     3. Soft Punctuation (、, ,) + Moderate Pause (> 0.6s)
+    4. Soft Punctuation after an already-dense chunk (>= 12 transcribed words)
 
     Words are grouped by speaker before chunking to handle overlapping speech.
     """
@@ -51,8 +53,11 @@ def chunk_words_to_lines(words: List[TranscribedWord]) -> List[SubtitleLine]:
             # Rule 3: Soft Punctuation + Moderate Pause
             is_soft_punct = any(word.word.endswith(p) for p in SOFT_PUNCTUATION)
             is_soft_pause = is_soft_punct and pause_duration >= SOFT_PAUSE_THRESHOLD
+            is_dense_soft_break = (
+                is_soft_punct and len(current_chunk) >= SOFT_PUNCT_WORD_THRESHOLD
+            )
 
-            if is_hard_punct or is_long_pause or is_soft_pause:
+            if is_hard_punct or is_long_pause or is_soft_pause or is_dense_soft_break:
                 all_lines.append(_create_line(current_chunk))
                 current_chunk = []
 

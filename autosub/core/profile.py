@@ -5,6 +5,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _merge_nested_dict(base: dict, override: dict) -> dict:
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(merged.get(key), dict) and isinstance(value, dict):
+            merged[key] = _merge_nested_dict(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> dict:
     """
     Loads a TOML profile recursively, resolving 'extends' arrays.
@@ -15,25 +25,44 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         visited = set()
 
     if profile_name in visited:
-        return {"prompt": [], "vocab": [], "speakers": None, "timing": {}}
+        return {
+            "prompt": [],
+            "vocab": [],
+            "speakers": None,
+            "timing": {},
+            "extensions": {},
+        }
     visited.add(profile_name)
 
     profile_path = Path("profiles") / f"{profile_name}.toml"
     if not profile_path.exists():
         logger.warning(f"Profile {profile_name}.toml not found in profiles/ directory.")
-        return {"prompt": [], "vocab": [], "speakers": None, "timing": {}}
+        return {
+            "prompt": [],
+            "vocab": [],
+            "speakers": None,
+            "timing": {},
+            "extensions": {},
+        }
 
     try:
         with open(profile_path, "rb") as f:
             data = tomllib.load(f)
     except Exception as e:
         logger.error(f"Failed to parse TOML profile {profile_path}: {e}")
-        return {"prompt": [], "vocab": [], "speakers": None, "timing": {}}
+        return {
+            "prompt": [],
+            "vocab": [],
+            "speakers": None,
+            "timing": {},
+            "extensions": {},
+        }
 
     combined_prompt = []
     combined_vocab = []
     final_speakers = None
     final_timing = {}
+    final_extensions = {}
 
     # 1. Process base profiles recursively (so base instructions come first)
     for base in data.get("extends", []):
@@ -46,6 +75,9 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         for k, v in base_data.get("timing", {}).items():
             if k not in final_timing:
                 final_timing[k] = v
+        final_extensions = _merge_nested_dict(
+            final_extensions, base_data.get("extensions", {})
+        )
 
     # 2. Append this profile's data
     if "prompt" in data:
@@ -81,9 +113,16 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         else:
             logger.warning(f"'timing' in {profile_name} must be a TOML table/dict.")
 
+    if "extensions" in data:
+        if isinstance(data["extensions"], dict):
+            final_extensions = _merge_nested_dict(final_extensions, data["extensions"])
+        else:
+            logger.warning(f"'extensions' in {profile_name} must be a TOML table/dict.")
+
     return {
         "prompt": combined_prompt,
         "vocab": combined_vocab,
         "speakers": final_speakers,
         "timing": final_timing,
+        "extensions": final_extensions,
     }

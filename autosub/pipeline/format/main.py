@@ -5,7 +5,6 @@ from pathlib import Path
 from autosub.core.schemas import TranscriptionResult
 from autosub.pipeline.format import chunker
 from autosub.pipeline.format import generator
-from autosub.pipeline.format.layout import wrap_subtitle_lines
 from autosub.pipeline.format.timing import apply_timing_rules
 
 logger = logging.getLogger(__name__)
@@ -17,6 +16,7 @@ def format_subtitles(
     keyframes: list[int] | None = None,
     video_duration_ms: int | None = None,
     timing_config: dict | None = None,
+    extensions_config: dict | None = None,
 ) -> None:
     """
     Reads a transcript.json file, chunks the transcribed words into semantic lines,
@@ -37,6 +37,17 @@ def format_subtitles(
     lines = chunker.chunk_words_to_lines(transcript.words)
     logger.info(f"Generated {len(lines)} subtitle lines.")
 
+    if not extensions_config:
+        extensions_config = {}
+
+    radio_discourse_config = extensions_config.get("radio_discourse", {})
+    if radio_discourse_config.get("enabled"):
+        logger.info("Applying radio discourse extension...")
+        from autosub.extensions.radio_discourse.main import apply_radio_discourse
+
+        lines = apply_radio_discourse(lines, radio_discourse_config)
+        logger.info(f"Radio discourse extension produced {len(lines)} subtitle lines.")
+
     logger.info("Applying timing rules (snapping, keyframes, min duration)...")
     if not timing_config:
         timing_config = {}
@@ -50,13 +61,6 @@ def format_subtitles(
         conditional_snap_threshold_ms=timing_config.get(
             "conditional_snap_threshold_ms", 500
         ),
-    )
-
-    logger.info("Applying subtitle layout rules (max visible lines, wrapping)...")
-    lines = wrap_subtitle_lines(
-        lines,
-        max_line_width=timing_config.get("max_line_width", 22),
-        max_lines_per_subtitle=timing_config.get("max_lines_per_subtitle", 2),
     )
 
     logger.info(f"Writing .ass file to {output_ass_path}...")

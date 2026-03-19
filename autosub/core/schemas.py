@@ -18,3 +18,4 @@ class SubtitleLine(BaseModel):
     start_time: float
     end_time: float
     speaker: str | None = None
+    role: str | None = None
