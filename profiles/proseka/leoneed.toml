@@ -1,6 +1,6 @@
-extends = ["proseka_aftertalk"]
+extends = ["proseka/aftertalk"]
 
-prompt = "prompts/proseka_leoneed.md"
+prompt = "prompts/proseka/leoneed.md"
 vocab = [
     # --- Characters ---
     "星乃一歌",
