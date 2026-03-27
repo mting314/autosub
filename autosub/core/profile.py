@@ -24,48 +24,36 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
     if visited is None:
         visited = set()
 
+    _empty = {
+        "prompt": [],
+        "vocab": [],
+        "speakers": None,
+        "timing": {},
+        "extensions": {},
+        "glossary": {},
+        "replacements": {},
+        "corners": [],
+    }
+
     if profile_name in visited:
-        return {
-            "prompt": [],
-            "vocab": [],
-            "speakers": None,
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
+        return dict(_empty)
     visited.add(profile_name)
 
     profile_path = Path("profiles") / f"{profile_name}.toml"
     if not profile_path.exists():
         logger.warning(f"Profile {profile_name}.toml not found in profiles/ directory.")
-        return {
-            "prompt": [],
-            "vocab": [],
-            "speakers": None,
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
+        return dict(_empty)
 
     try:
         with open(profile_path, "rb") as f:
             data = tomllib.load(f)
     except Exception as e:
         logger.error(f"Failed to parse TOML profile {profile_path}: {e}")
-        return {
-            "prompt": [],
-            "vocab": [],
-            "speakers": None,
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
+        return dict(_empty)
 
     combined_prompt = []
     combined_vocab = []
+    combined_corners = []
     final_speakers = None
     final_timing = {}
     final_extensions = {}
@@ -77,6 +65,7 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         base_data = load_unified_profile(base, visited)
         combined_prompt.extend(base_data["prompt"])
         combined_vocab.extend(base_data["vocab"])
+        combined_corners.extend(base_data.get("corners", []))
         if final_speakers is None and base_data.get("speakers") is not None:
             final_speakers = base_data["speakers"]
         # Update inherited timing. Top level overrides base.
@@ -143,6 +132,12 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
                 f"'replacements' in {profile_name} must be a TOML table/dict."
             )
 
+    if "corners" in data:
+        if isinstance(data["corners"], list):
+            combined_corners.extend(data["corners"])
+        else:
+            logger.warning(f"'corners' in {profile_name} must be an array of tables.")
+
     return {
         "prompt": combined_prompt,
         "vocab": combined_vocab,
@@ -151,4 +146,5 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         "extensions": final_extensions,
         "glossary": final_glossary,
         "replacements": final_replacements,
+        "corners": combined_corners,
     }
