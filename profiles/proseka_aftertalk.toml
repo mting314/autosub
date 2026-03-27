@@ -1,3 +1,5 @@
+extends = ["solo_seiyuu_radio"]
+
 prompt = "prompts/proseka_aftertalk.md"
 vocab = [
     # --- Game & Program ---
