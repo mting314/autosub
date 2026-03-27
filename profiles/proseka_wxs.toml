@@ -1,0 +1,26 @@
+extends = ["proseka_aftertalk"]
+
+prompt = "prompts/proseka_wxs.md"
+vocab = [
+    # --- Characters ---
+    "天馬司",
+    "鳳えむ",
+    "草薙寧々",
+    "神代類",
+
+    # --- Voice Actors ---
+    "廣瀬大介",
+    "木野日菜",
+    "Machico",
+    "土岐隼一",
+
+    # --- Greetings ---
+    "ワンダーホイ",
+]
+
+[glossary]
+"天馬司" = "Tsukasa Tenma"
+"鳳えむ" = "Emu Otori"
+"草薙寧々" = "Nene Kusanagi"
+"神代類" = "Rui Kamishiro"
+"ワンダーホイ" = "Wonderhoi!"
