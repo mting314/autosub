@@ -206,6 +206,16 @@ def translate(
         "--bilingual/--replace",
         help="Include original text on top, or replace completely.",
     ),
+    chunk: bool = typer.Option(
+        False,
+        "--chunk/--no-chunk",
+        help="Split translation into smaller chunks with retry logic. Useful for long files.",
+    ),
+    chunk_size: int = typer.Option(
+        80,
+        "--chunk-size",
+        help="Number of subtitle lines per chunk when --chunk is enabled.",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -229,6 +239,8 @@ def translate(
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
+    chunk_size = chunk_size if chunk else 0
+
     try:
         translate_module.translate_subtitles(
             input_ass,
@@ -240,6 +252,7 @@ def translate(
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
+            chunk_size=chunk_size,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -357,6 +370,16 @@ def run(
         None,
         "--end",
         help="End time for transcription (e.g. 00:04:00 or 240).",
+    ),
+    chunk: bool = typer.Option(
+        False,
+        "--chunk/--no-chunk",
+        help="Split translation into smaller chunks with retry logic. Useful for long files.",
+    ),
+    chunk_size: int = typer.Option(
+        80,
+        "--chunk-size",
+        help="Number of subtitle lines per chunk when --chunk is enabled.",
     ),
 ):
     """
@@ -477,6 +500,8 @@ def run(
         raise typer.Exit(code=1)
 
     # Step 3: Translate
+    chunk_size = chunk_size if chunk else 0
+
     try:
         logger.info("[Step 3/4] Translating...")
         translate_module.translate_subtitles(
@@ -489,6 +514,7 @@ def run(
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
+            chunk_size=chunk_size,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")

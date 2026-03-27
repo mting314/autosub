@@ -1,10 +1,14 @@
 import logging
+import time
 from pathlib import Path
 
 import pyass
 from autosub.core.config import PROJECT_ID
 
 logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 3
+RETRY_BASE_DELAY = 10  # seconds
 
 
 def translate_subtitles(
@@ -17,6 +21,7 @@ def translate_subtitles(
     bilingual: bool = True,
     model: str = "gemini-3-flash-preview",
     location: str = "global",
+    chunk_size: int = 0,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -31,6 +36,7 @@ def translate_subtitles(
         bilingual: If True, keep the original text above the translated text. If False, replace completely.
         model: Vertex model name for LLM translation.
         location: Vertex region for LLM translation.
+        chunk_size: If > 0, split into chunks of this size with retry logic.
     """
     logger.info(f"Loading '{input_ass_path}' for translation...")
 
@@ -84,7 +90,10 @@ def translate_subtitles(
     else:
         raise ValueError(f"Unknown translation engine: {engine}")
 
-    translated_texts = translator.translate(texts_to_translate)
+    if chunk_size > 0:
+        translated_texts = _translate_chunked(translator, texts_to_translate, chunk_size)
+    else:
+        translated_texts = translator.translate(texts_to_translate)
 
     if len(translated_texts) != len(events_to_translate):
         raise ValueError(
@@ -115,3 +124,39 @@ def translate_subtitles(
         pyass.dump(script, f)
 
     logger.info("Translation complete!")
+
+
+def _translate_chunked(translator, texts: list[str], chunk_size: int) -> list[str]:
+    """Split texts into chunks, translate each with retry logic, and merge results."""
+    chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
+
+    logger.info(
+        f"Translating {len(texts)} subtitle lines "
+        f"in {len(chunks)} chunks of up to {chunk_size}..."
+    )
+
+    all_translated: list[str] = []
+    for chunk_idx, chunk in enumerate(chunks):
+        logger.info(
+            f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)..."
+        )
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                results = translator.translate(chunk)
+                all_translated.extend(results)
+                break
+            except Exception as e:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"  Chunk {chunk_idx + 1} attempt {attempt} failed: {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"  Chunk {chunk_idx + 1} failed after {MAX_RETRIES} attempts: {e}"
+                    )
+                    raise
+
+    return all_translated
