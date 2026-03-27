@@ -4,8 +4,3 @@ ProSeka AfterTalk (プロセカアフタートーク) is a recurring livestream 
 Additional guidelines:
 1. The host is reacting to story scenes, reading fan letters, sharing personal anecdotes, and commenting on their character's emotional arc. Translate with that context in mind.
 2. When discussing in-game story scenes, preserve character names and event-specific terminology consistently.
-
-Fan letter conventions:
-1. When the host says おたより, translate as "letter" (singular) or "messages" (plural/general).
-2. When introducing a sender's ラジオネーム or ペンネーム, use "From: {name}-san".
-3. After reading a letter, メッセージありがとうございます becomes "Thanks for the message!"
