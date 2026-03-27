@@ -1,3 +1,4 @@
+import json
 import logging
 import time
 from pathlib import Path
@@ -90,10 +91,19 @@ def translate_subtitles(
     else:
         raise ValueError(f"Unknown translation engine: {engine}")
 
+    checkpoint_path = output_ass_path.with_suffix(".checkpoint.json")
+
     if chunk_size > 0:
-        translated_texts = _translate_chunked(translator, texts_to_translate, chunk_size)
+        translated_texts = _translate_chunked(
+            translator, texts_to_translate, chunk_size, checkpoint_path
+        )
     else:
         translated_texts = _translate_with_retry(translator, texts_to_translate)
+
+    # Clean up checkpoint file on successful completion
+    if checkpoint_path.exists():
+        checkpoint_path.unlink()
+        logger.info("Removed checkpoint file.")
 
     if len(translated_texts) != len(events_to_translate):
         raise ValueError(
@@ -148,23 +158,64 @@ def _translate_with_retry(translator, texts: list[str], label: str = "") -> list
     return []  # unreachable
 
 
-def _translate_chunked(translator, texts: list[str], chunk_size: int) -> list[str]:
+def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
+    """Load completed chunk results from checkpoint file."""
+    if not checkpoint_path.exists():
+        return {}
+    try:
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Keys are stored as strings in JSON, convert back to int
+        return {int(k): v for k, v in data.items()}
+    except Exception as e:
+        logger.warning(f"Failed to load checkpoint, starting fresh: {e}")
+        return {}
+
+
+def _save_checkpoint(
+    checkpoint_path: Path, completed: dict[int, list[str]]
+) -> None:
+    """Save completed chunk results to checkpoint file."""
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
+        json.dump(completed, f, ensure_ascii=False, indent=2)
+
+
+def _translate_chunked(
+    translator, texts: list[str], chunk_size: int, checkpoint_path: Path
+) -> list[str]:
     """Split texts into chunks, translate each with retry logic, and merge results."""
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
+    completed = _load_checkpoint(checkpoint_path)
+
+    if completed:
+        logger.info(
+            f"Resuming from checkpoint: {len(completed)}/{len(chunks)} chunks already completed."
+        )
 
     logger.info(
         f"Translating {len(texts)} subtitle lines "
         f"in {len(chunks)} chunks of up to {chunk_size}..."
     )
 
-    all_translated: list[str] = []
     for chunk_idx, chunk in enumerate(chunks):
+        if chunk_idx in completed:
+            logger.info(
+                f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)"
+            )
+            continue
+
         logger.info(
             f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)..."
         )
         results = _translate_with_retry(
             translator, chunk, label=f"Chunk {chunk_idx + 1}"
         )
-        all_translated.extend(results)
+        completed[chunk_idx] = results
+        _save_checkpoint(checkpoint_path, completed)
+
+    # Reassemble in order
+    all_translated: list[str] = []
+    for chunk_idx in range(len(chunks)):
+        all_translated.extend(completed[chunk_idx])
 
     return all_translated
