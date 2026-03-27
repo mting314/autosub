@@ -53,6 +53,7 @@ vocab = [
     "ラジオネーム",
     "ペンネーム",
     "メッセージ",
+
 ]
 
 [glossary]
@@ -74,3 +75,32 @@ vocab = [
 "鏡音リン" = "Kagamine Rin"
 "鏡音レン" = "Kagamine Len"
 "巡音ルカ" = "Megurine Luka"
+
+[[corners]]
+name = "Card Illustrations"
+description = "Host reviews event card art, comparing before and after training illustrations. Lines discuss card art, expressions, outfits, and training upgrades."
+cues = [
+    "カードイラストを見ていきましょう",
+    "今回のイベントのカードを見ていきましょう",
+    "イラストコーナー",
+    "カードイラスト",
+]
+
+[[corners]]
+name = "3DMV"
+description = "Host watches and reacts to the event's 3D music video. Lines discuss choreography, camera angles, character expressions, and song impressions."
+cues = [
+    "3DMVを見ていきましょう",
+    "MVを見ていきましょう",
+    "3DMVを流します",
+]
+
+[[corners]]
+name = "Fan Letter Corner"
+description = "Host reads and responds to fan letters/messages submitted via Discord and email. Lines include pen names, fan comments, and the host's reactions."
+cues = [
+    "おたよりコーナー",
+    "おたよりを紹介",
+    "おたよりを読んでいきましょう",
+    "皆さんからいただいたおたより",
+]
