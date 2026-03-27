@@ -155,8 +155,8 @@ def _translate_with_retry(translator, texts: list[str], label: str = "") -> list
 def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
     """Load and validate completed chunk results from checkpoint file.
 
-    Expected structure: {"0": ["str", ...], "1": ["str", ...], ...}
-    Keys must be non-negative integer strings, values must be non-empty lists of strings.
+    Returns dict[int, list[str]] mapping chunk index to translated strings.
+    JSON serializes int keys as strings, so they are converted back on load.
     Invalid entries are skipped with a warning.
     """
     if not checkpoint_path.exists():
