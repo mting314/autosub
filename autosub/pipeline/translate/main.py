@@ -93,7 +93,7 @@ def translate_subtitles(
     if chunk_size > 0:
         translated_texts = _translate_chunked(translator, texts_to_translate, chunk_size)
     else:
-        translated_texts = translator.translate(texts_to_translate)
+        translated_texts = _translate_with_retry(translator, texts_to_translate)
 
     if len(translated_texts) != len(events_to_translate):
         raise ValueError(
@@ -126,6 +126,28 @@ def translate_subtitles(
     logger.info("Translation complete!")
 
 
+def _translate_with_retry(translator, texts: list[str], label: str = "") -> list[str]:
+    """Translate texts with exponential backoff retry."""
+    prefix = f"  {label}: " if label else ""
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return translator.translate(texts)
+        except Exception as e:
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"{prefix}Attempt {attempt} failed: {e}. "
+                    f"Retrying in {delay}s..."
+                )
+                time.sleep(delay)
+            else:
+                logger.error(
+                    f"{prefix}Failed after {MAX_RETRIES} attempts: {e}"
+                )
+                raise
+    return []  # unreachable
+
+
 def _translate_chunked(translator, texts: list[str], chunk_size: int) -> list[str]:
     """Split texts into chunks, translate each with retry logic, and merge results."""
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
@@ -140,23 +162,9 @@ def _translate_chunked(translator, texts: list[str], chunk_size: int) -> list[st
         logger.info(
             f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)..."
         )
-        for attempt in range(1, MAX_RETRIES + 1):
-            try:
-                results = translator.translate(chunk)
-                all_translated.extend(results)
-                break
-            except Exception as e:
-                if attempt < MAX_RETRIES:
-                    delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"  Chunk {chunk_idx + 1} attempt {attempt} failed: {e}. "
-                        f"Retrying in {delay}s..."
-                    )
-                    time.sleep(delay)
-                else:
-                    logger.error(
-                        f"  Chunk {chunk_idx + 1} failed after {MAX_RETRIES} attempts: {e}"
-                    )
-                    raise
+        results = _translate_with_retry(
+            translator, chunk, label=f"Chunk {chunk_idx + 1}"
+        )
+        all_translated.extend(results)
 
     return all_translated
