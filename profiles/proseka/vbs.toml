@@ -1,6 +1,6 @@
-extends = ["proseka_aftertalk"]
+extends = ["proseka/aftertalk"]
 
-prompt = "prompts/proseka_vbs.md"
+prompt = "prompts/proseka/vbs.md"
 vocab = [
     # --- Characters ---
     "小豆沢こはね",
