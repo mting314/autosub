@@ -558,6 +558,13 @@ def translate(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.yaml to inject speaker identity context into the translation prompt.",
+        exists=True,
+        dir_okay=False,
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -610,6 +617,11 @@ def translate(
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+        loaded_speaker_map = load_speaker_map(speaker_map)
+
     final_prompt_parts = []
     if profile:
         profile_data = load_unified_profile(profile)
@@ -621,6 +633,10 @@ def translate(
 
     if prompt:
         final_prompt_parts.append(prompt)
+
+    if loaded_speaker_map:
+        from autosub.core.speaker_map import build_speaker_prompt
+        final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
@@ -979,6 +995,10 @@ def run(
         final_vocab.extend(vocab)
     if prompt:
         final_prompt_parts.append(prompt)
+
+    if loaded_speaker_map:
+        from autosub.core.speaker_map import build_speaker_prompt
+        final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
     resolved_provider = llm_provider
