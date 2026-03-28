@@ -216,10 +216,10 @@ def translate(
         "--chunk-size",
         help="Number of subtitle lines per chunk when --chunk is enabled.",
     ),
-    debug: bool = typer.Option(
+    mark_chunks: bool = typer.Option(
         False,
-        "--debug/--no-debug",
-        help="Insert debug comments at artificial chunk boundaries for review.",
+        "--mark-chunks/--no-mark-chunks",
+        help="Insert comment events at artificial chunk boundaries for review.",
     ),
 ):
     """
@@ -279,7 +279,7 @@ def translate(
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
-            debug=debug,
+            debug=mark_chunks,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -408,10 +408,10 @@ def run(
         "--chunk-size",
         help="Number of subtitle lines per chunk when --chunk is enabled.",
     ),
-    debug: bool = typer.Option(
+    mark_chunks: bool = typer.Option(
         False,
-        "--debug/--no-debug",
-        help="Insert debug comments at artificial chunk boundaries for review.",
+        "--mark-chunks/--no-mark-chunks",
+        help="Insert comment events at artificial chunk boundaries for review.",
     ),
 ):
     """
@@ -568,7 +568,7 @@ def run(
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
-            debug=debug,
+            debug=mark_chunks,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
