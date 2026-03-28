@@ -78,12 +78,11 @@ vocab = [
 
 [[corners]]
 name = "Story Watchalong"
-description = "Host watches the event's visual novel story scenes in picture-in-picture, reacting and commenting over the gameplay footage. Usually announces picked scenes beforehand and references episode numbers."
+description = "Host watches selected visual novel story scenes in picture-in-picture, reacting live over the gameplay footage. This is a passive watchalong — the host comments on what's on screen in real time, not a discussion or analysis of the story. Story discussion (e.g. talking about themes, plot points, impressions) is a separate topic and should NOT be marked as Story Watchalong."
 cues = [
     "語りたいシーンをピックアップ",
     "一緒に見ていきましょう",
     "ストーリーを見ながら",
-    "では早速行きましょう",
     "ゲームの方でまた改めて見ていただければ",
 ]
 
