@@ -996,8 +996,11 @@ def run(
     if prompt:
         final_prompt_parts.append(prompt)
 
-    if loaded_speaker_map:
-        from autosub.core.speaker_map import build_speaker_prompt
+    # Load speaker map early so it can be used in both prompt and format steps
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map, build_speaker_prompt
+        loaded_speaker_map = load_speaker_map(speaker_map)
         final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
@@ -1073,12 +1076,6 @@ def run(
             logger.warning("No video stream found. Keyframe extraction disabled.")
     except Exception as e:
         logger.warning(f"Failed to process keyframes: {e}")
-
-    # Load speaker map if provided
-    loaded_speaker_map = None
-    if speaker_map:
-        from autosub.core.speaker_map import load_speaker_map
-        loaded_speaker_map = load_speaker_map(speaker_map)
 
     # Step 2: Format
     try:
