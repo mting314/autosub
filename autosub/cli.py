@@ -250,6 +250,12 @@ def transcribe(
         "--whisper-hf-token",
         help="Optional Hugging Face token for WhisperX diarization.",
     ),
+    speakers: int = typer.Option(
+        None,
+        "--speakers",
+        "-s",
+        help="Number of speakers for diarization. Enables per-word speaker labels in the transcript.",
+    ),
     start: list[str] = typer.Option(
         None,
         "--start",
@@ -321,6 +327,7 @@ def transcribe(
             whisper_batch_size=whisper_batch_size,
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
+            num_speakers=speakers,
         )
         logger.info(f"Success! Saved {len(result.words)} words to {output}")
     except Exception as e:
@@ -780,6 +787,12 @@ def run(
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
     ),
+    speakers: int = typer.Option(
+        None,
+        "--speakers",
+        "-s",
+        help="Number of speakers for diarization. Enables per-word speaker labels and per-speaker styles.",
+    ),
     keyframes: Path = typer.Option(
         None,
         "--keyframes",
@@ -909,7 +922,6 @@ def run(
     replacements = {}
     final_corner_names = []
     final_corner_cues = []
-    profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
         transcribe_profile = profile_data.get("transcribe", {})
@@ -921,6 +933,8 @@ def run(
             _extract_format_profile_config(profile_data)
         )
         final_postprocess_extensions = postprocess_profile.get("extensions", {})
+        if not speakers and profile_data.get("speakers"):
+            speakers = profile_data["speakers"]
         glossary_text = _build_glossary_prompt(translate_profile.get("glossary", {}))
         if glossary_text:
             final_prompt_parts.append(glossary_text)
@@ -984,6 +998,7 @@ def run(
             whisper_batch_size=whisper_batch_size,
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
+            num_speakers=speakers,
         )
     except Exception as e:
         logger.error(f"Failed during transcription: {e}")
