@@ -396,8 +396,11 @@ def translate(
     if not out:
         out = input_ass.with_name("translated.ass")
 
+    translate_log_dir = None
     if save_log:
-        _add_file_logger(out.with_suffix(".log"))
+        translate_log_dir = out.with_suffix("_logs")
+        translate_log_dir.mkdir(parents=True, exist_ok=True)
+        _add_file_logger(translate_log_dir / "run.log")
 
     loaded_speaker_map = None
     if speaker_map:
@@ -466,6 +469,7 @@ def translate(
             corner_cues=final_corner_cues or None,
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
+            log_dir=translate_log_dir,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -688,8 +692,11 @@ def run(
 
     stem = video_path.stem
 
+    translate_log_dir = None
     if save_log:
-        _add_file_logger(out_dir / f"{stem}_autosub.log")
+        translate_log_dir = out_dir / f"{stem}_logs"
+        translate_log_dir.mkdir(parents=True, exist_ok=True)
+        _add_file_logger(translate_log_dir / "run.log")
 
     transcript_out = out_dir / f"{stem}_transcript.json"
     original_ass_out = out_dir / f"{stem}_original.ass"
@@ -880,6 +887,7 @@ def run(
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
             debug=mark_chunks,
+            log_dir=translate_log_dir,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")

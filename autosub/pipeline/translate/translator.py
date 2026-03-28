@@ -87,6 +87,12 @@ class VertexTranslator(BaseTranslator, BaseVertexLLM):
             operation_name="Vertex translator",
         )
 
+        # Store for structured logging by the caller
+        self.last_system_instruction = system_instruction
+        self.last_input = contents
+        self.last_output = json.dumps(response_json, ensure_ascii=False, indent=2)
+        self.last_diagnostics = diagnostics
+
         try:
             # Sort by id to guarantee ordering
             response_json.sort(key=lambda x: x["id"])

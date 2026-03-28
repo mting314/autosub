@@ -50,8 +50,6 @@ class BaseVertexLLM:
         operation_name: str,
     ) -> tuple[Any, VertexResponseDiagnostics]:
         client = self._get_client()
-        logger.debug("%s system instruction:\n%s", operation_name, system_instruction)
-        logger.debug("%s input:\n%s", operation_name, contents)
         t0 = time.monotonic()
         try:
             response = client.models.generate_content(
@@ -63,7 +61,7 @@ class BaseVertexLLM:
                     response_schema=response_schema,
                     temperature=self.temperature,
                     thinking_config=types.ThinkingConfig(
-                        thinking_budget=8192,
+                        thinking_level="MEDIUM",
                         include_thoughts=True,
                     ),
                 ),
@@ -83,9 +81,8 @@ class BaseVertexLLM:
                 logger.debug("Failed to close Vertex client cleanly.", exc_info=True)
 
         diagnostics = self._build_response_diagnostics(response)
-        logger.debug("%s response diagnostics: %s", operation_name, diagnostics)
 
-        # Log token usage and thinking output
+        # Log token usage
         usage = response.usage_metadata
         if usage:
             logger.info(
@@ -96,17 +93,6 @@ class BaseVertexLLM:
                 usage.thoughts_token_count,
                 usage.total_token_count,
             )
-        for candidate in response.candidates or []:
-            if not candidate.content or not candidate.content.parts:
-                continue
-            for part in candidate.content.parts:
-                if hasattr(part, "thought") and part.thought and part.text:
-                    logger.debug(
-                        "%s thinking:\n%s", operation_name, part.text[:2000]
-                    )
-
-        if response.text:
-            logger.debug("%s raw output:\n%s", operation_name, response.text)
 
         # Warn when finish_reason is not STOP (e.g. MAX_TOKENS, OTHER)
         non_stop = [r for r in diagnostics.candidate_finish_reasons if r != "STOP"]
@@ -178,6 +164,16 @@ class BaseVertexLLM:
                     f"candidate[{candidate_index}]={rating_summary}"
                 )
 
+        # Extract thinking text from candidate parts
+        thinking_parts: list[str] = []
+        for candidate in response.candidates or []:
+            if not candidate.content or not candidate.content.parts:
+                continue
+            for part in candidate.content.parts:
+                if hasattr(part, "thought") and part.thought and part.text:
+                    thinking_parts.append(part.text)
+        thinking_text = "\n".join(thinking_parts) if thinking_parts else None
+
         prompt_feedback = response.prompt_feedback
         usage_metadata = response.usage_metadata
         sdk_http_response = response.sdk_http_response
@@ -215,6 +211,7 @@ class BaseVertexLLM:
             thoughts_token_count=(
                 usage_metadata.thoughts_token_count if usage_metadata else None
             ),
+            thinking_text=thinking_text,
             text_preview=self._truncate_preview(response.text),
             http_body_preview=self._truncate_preview(
                 sdk_http_response.body if sdk_http_response else None

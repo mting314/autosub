@@ -29,6 +29,7 @@ def translate_subtitles(
     corner_cues: list[str] | None = None,
     debug: bool = False,
     retry_chunks: list[int] | None = None,
+    log_dir: Path | None = None,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -109,6 +110,7 @@ def translate_subtitles(
             translator, texts_to_translate, chunk_size, checkpoint_path,
             corner_cues=corner_cues,
             retry_chunks=retry_chunks,
+            log_dir=log_dir,
         )
     else:
         translated_texts = _translate_with_retry(translator, texts_to_translate)
@@ -296,9 +298,24 @@ def _translate_chunked(
     checkpoint_path: Path,
     corner_cues: list[str] | None = None,
     retry_chunks: list[int] | None = None,
+    log_dir: Path | None = None,
 ) -> tuple[list[str], set[int]]:
     """Split texts into chunks, translate each with retry logic, and merge results."""
     chunks, splits = make_chunks(texts, chunk_size, corner_cues=corner_cues)
+
+    # Set up structured log directory
+    chunks_dir = None
+    token_summary_path = None
+    if log_dir:
+        chunks_dir = log_dir / "chunks"
+        chunks_dir.mkdir(parents=True, exist_ok=True)
+        token_summary_path = log_dir / "token_summary.tsv"
+        # Write header if new file
+        if not token_summary_path.exists():
+            token_summary_path.write_text(
+                "chunk\tlines\tprompt\tcandidates\tthoughts\ttotal\n",
+                encoding="utf-8",
+            )
     completed = _load_checkpoint(checkpoint_path)
 
     # Remove specified chunks from checkpoint to force re-translation
@@ -347,6 +364,41 @@ def _translate_chunked(
         )
         completed[chunk_idx] = results
         _save_checkpoint(checkpoint_path, completed)
+
+        # Write structured log files per chunk
+        if chunks_dir and hasattr(translator, "last_diagnostics"):
+            chunk_num = f"{chunk_idx + 1:02d}"
+
+            # Write system prompt once
+            if chunk_idx == 0 or not (log_dir / "system_prompt.txt").exists():
+                if hasattr(translator, "last_system_instruction"):
+                    (log_dir / "system_prompt.txt").write_text(
+                        translator.last_system_instruction, encoding="utf-8"
+                    )
+
+            if hasattr(translator, "last_input"):
+                (chunks_dir / f"chunk_{chunk_num}_input.json").write_text(
+                    translator.last_input, encoding="utf-8"
+                )
+            if hasattr(translator, "last_output"):
+                (chunks_dir / f"chunk_{chunk_num}_output.json").write_text(
+                    translator.last_output, encoding="utf-8"
+                )
+
+            diag = translator.last_diagnostics
+            if diag.thinking_text:
+                (chunks_dir / f"chunk_{chunk_num}_thinking.txt").write_text(
+                    diag.thinking_text, encoding="utf-8"
+                )
+
+            if token_summary_path:
+                with open(token_summary_path, "a", encoding="utf-8") as tsv:
+                    tsv.write(
+                        f"{chunk_idx + 1}\t{len(chunk)}\t"
+                        f"{diag.prompt_token_count}\t{diag.candidates_token_count}\t"
+                        f"{diag.thoughts_token_count}\t{diag.total_token_count}\n"
+                    )
+
         line_offset += len(chunk)
 
     # Reassemble in order
