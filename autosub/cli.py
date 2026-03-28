@@ -398,7 +398,7 @@ def translate(
 
     translate_log_dir = None
     if save_log:
-        translate_log_dir = out.with_suffix("_logs")
+        translate_log_dir = out.parent / f"{out.stem}_logs"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
