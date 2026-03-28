@@ -472,6 +472,16 @@ def translate(
         min=0,
         help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
+    save_log: bool = typer.Option(
+        False,
+        "--save-log/--no-save-log",
+        help="Save full log output to a .log file next to the output file.",
+    ),
+    retry_chunk: list[int] = typer.Option(
+        None,
+        "--retry-chunk",
+        help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -566,6 +576,7 @@ def translate(
             reasoning_budget_tokens=vertex_reasoning_budget,
             reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
+            retry_chunks=retry_chunk or None,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")

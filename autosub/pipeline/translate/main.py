@@ -25,6 +25,7 @@ def translate_subtitles(
     reasoning_budget_tokens: int | None = None,
     reasoning_dynamic: bool | None = None,
     chunk_size: int = 0,
+    retry_chunks: list[int] | None = None,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -121,7 +122,8 @@ def translate_subtitles(
     try:
         if chunk_size > 0:
             translated_texts = _translate_chunked(
-                translator, texts_to_translate, chunk_size, checkpoint_path
+                translator, texts_to_translate, chunk_size, checkpoint_path,
+                retry_chunks=retry_chunks,
             )
         else:
             translated_texts = translator.translate(texts_to_translate)
@@ -232,11 +234,26 @@ def _save_checkpoint(checkpoint_path: Path, completed: dict[int, list[str]]) -> 
 
 
 def _translate_chunked(
-    translator, texts: list[str], chunk_size: int, checkpoint_path: Path
+    translator,
+    texts: list[str],
+    chunk_size: int,
+    checkpoint_path: Path,
+    retry_chunks: list[int] | None = None,
 ) -> list[str]:
     """Split texts into chunks, translate each once, and merge results."""
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
     completed = _load_checkpoint(checkpoint_path)
+
+    # Remove specified chunks from checkpoint to force re-translation
+    if retry_chunks and completed:
+        for idx in retry_chunks:
+            chunk_num = idx - 1  # user-facing is 1-based
+            if chunk_num in completed:
+                del completed[chunk_num]
+                logger.info(f"Cleared checkpoint for chunk {idx} — will re-translate.")
+            else:
+                logger.warning(f"Chunk {idx} not in checkpoint — nothing to retry.")
+        _save_checkpoint(checkpoint_path, completed)
 
     if completed:
         logger.info(
