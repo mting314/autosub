@@ -1,7 +1,7 @@
 import pyass
 
 from autosub.core.schemas import SubtitleLine, TranscribedWord
-from autosub.core.speaker_map import hex_to_pyass_color, load_speaker_map, remap_speaker_labels
+from autosub.core.speaker_map import build_speaker_prompt, hex_to_pyass_color, load_speaker_map, remap_speaker_labels
 from autosub.pipeline.format.chunker import chunk_words_to_lines
 from autosub.core.profile import load_unified_profile
 
@@ -145,20 +145,22 @@ def test_profile_prompt_inheritance(tmp_path):
 def test_load_speaker_map(tmp_path):
     yaml_content = """\
 speakers:
+  "0":
+    name: "Suzuki Minori"
+    character: "Ena Shinonome"
+    color: "#FFA0A0"
   "1":
-    name: "Mizuki Akiyama"
-    color: "#FFFF00"
-  "2":
-    name: "Ena Shinonome"
-    color: "#FF8080"
+    name: "Sato Hinata"
+    character: "Mizuki Akiyama"
+    color: "#A0D0FF"
 """
     map_file = tmp_path / "speaker_map.yaml"
     map_file.write_text(yaml_content, encoding="utf-8")
 
     result = load_speaker_map(map_file)
     assert result == {
-        "1": {"name": "Mizuki Akiyama", "color": "#FFFF00"},
-        "2": {"name": "Ena Shinonome", "color": "#FF8080"},
+        "0": {"name": "Suzuki Minori", "character": "Ena Shinonome", "color": "#FFA0A0"},
+        "1": {"name": "Sato Hinata", "character": "Mizuki Akiyama", "color": "#A0D0FF"},
     }
 
 
@@ -174,6 +176,7 @@ speakers:
     result = load_speaker_map(map_file)
     assert result["1"]["name"] == "Speaker One"
     assert result["1"]["color"] is None
+    assert result["1"]["character"] is None
 
 
 def test_load_speaker_map_fallback_name(tmp_path):
@@ -187,6 +190,7 @@ speakers:
 
     result = load_speaker_map(map_file)
     assert result["3"]["name"] == "3"
+    assert result["3"]["character"] is None
 
 
 def test_remap_speaker_labels():
@@ -220,3 +224,23 @@ def test_hex_to_pyass_color_no_hash():
     assert c.r == 0
     assert c.g == 255
     assert c.b == 0
+
+
+def test_build_speaker_prompt_with_characters():
+    speaker_map = {
+        "0": {"name": "Suzuki Minori", "character": "Ena Shinonome", "color": "#FFA0A0"},
+        "1": {"name": "Sato Hinata", "character": "Mizuki Akiyama", "color": "#A0D0FF"},
+    }
+    result = build_speaker_prompt(speaker_map)
+    assert "Suzuki Minori (voice of Ena Shinonome)" in result
+    assert "Sato Hinata (voice of Mizuki Akiyama)" in result
+    assert result.startswith("Speakers in this recording:")
+
+
+def test_build_speaker_prompt_without_characters():
+    speaker_map = {
+        "0": {"name": "Speaker A", "character": None, "color": None},
+    }
+    result = build_speaker_prompt(speaker_map)
+    assert "- Speaker A" in result
+    assert "voice of" not in result

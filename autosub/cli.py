@@ -246,6 +246,13 @@ def translate(
         "--save-log/--no-save-log",
         help="Save full log output to a .log file next to the output file.",
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.yaml to inject speaker identity context into the translation prompt.",
+        exists=True,
+        dir_okay=False,
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -255,6 +262,11 @@ def translate(
 
     if save_log:
         _add_file_logger(out.with_suffix(".log"))
+
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+        loaded_speaker_map = load_speaker_map(speaker_map)
 
     final_prompt_parts = []
     final_corner_names = []
@@ -293,6 +305,10 @@ def translate(
 
     if prompt:
         final_prompt_parts.append(prompt)
+
+    if loaded_speaker_map:
+        from autosub.core.speaker_map import build_speaker_prompt
+        final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
@@ -528,6 +544,10 @@ def run(
         final_vocab.extend(vocab)
     if prompt:
         final_prompt_parts.append(prompt)
+
+    if loaded_speaker_map:
+        from autosub.core.speaker_map import build_speaker_prompt
+        final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
