@@ -409,6 +409,7 @@ Behavior notes:
 - `--llm-provider` always overrides automatic provider selection.
 - OpenRouter-native `vendor/model` IDs such as `qwen/qwen3.6-plus:free` are accepted directly. If `OPENROUTER_API_KEY` is available, bare vendor-prefixed model IDs also auto-resolve to OpenRouter.
 - `--model` cannot be combined with `--engine cloud-v3`.
+- When the profile defines corners with cue phrases, chunking is corner-aware: chunks split at detected segment boundaries instead of fixed-size intervals.
 
 Anthropic notes:
 
@@ -557,6 +558,34 @@ enabled = true
 - `[postprocess.extensions]`: Nested extension configuration for the postprocessing stage.
 
 Legacy flat profile keys such as top-level `prompt`, `vocab`, `[timing]`, `[extensions]`, `[glossary]`, and `[replacements]` are still accepted for compatibility, but new profiles should use the staged layout above.
+
+### Corners
+
+Profiles can define recurring program segments (corners) that the LLM detects during translation:
+
+```toml
+[[corners]]
+name = "Card Illustrations"
+description = "Segment where hosts discuss character card art"
+cues = ["カードイラスト", "イラストのコーナー"]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Segment where hosts watch and react to a 3DMV"
+cues = ["3DMV", "MV見よう"]
+```
+
+Each corner has:
+
+- `name`: Display name used in the output ASS comment marker.
+- `description`: Context for the LLM to understand what the segment is about.
+- `cues`: Japanese phrases that typically signal the start of this segment.
+
+**Corner detection**: During translation, the LLM prepends `[CORNER: Name]` tags to the first line of each detected segment. These are parsed post-translation and inserted as ASS Comment events (green rows in Aegisub) with `effect="corner"`. Duplicate consecutive corners are automatically deduplicated.
+
+**Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
+
+Corner names and cues are inherited and merged through profile `extends` chains.
 
 ### Prompt and Vocab Merge Rules
 
