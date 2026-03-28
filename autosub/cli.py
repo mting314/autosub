@@ -64,7 +64,7 @@ def transcribe(
         None,
         "--speakers",
         "-s",
-        help="Reserved for future diarization work. Ignored by the current single-speaker pipeline.",
+        help="Number of speakers for diarization. Enables per-word speaker labels in the transcript.",
     ),
     start: str = typer.Option(
         None,
@@ -89,17 +89,13 @@ def transcribe(
     if vocab:
         final_vocab.extend(vocab)
 
-    if speakers:
-        logger.warning(
-            "--speakers is currently ignored. The active pipeline is single-speaker only."
-        )
-
     try:
         result = transcribe_main.transcribe(
             video_path,
             output,
             language,
             final_vocab,
+            num_speakers=speakers,
             start_time=start,
             end_time=end,
         )
@@ -400,7 +396,7 @@ def run(
         None,
         "--speakers",
         "-s",
-        help="Reserved for future diarization work. Ignored by the current single-speaker pipeline.",
+        help="Number of speakers for diarization. Enables per-word speaker labels and per-speaker styles.",
     ),
     keyframes: Path = typer.Option(
         None,
@@ -470,7 +466,6 @@ def run(
     replacements = {}
     final_corner_names = []
     final_corner_cues = []
-    profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
         final_vocab.extend(profile_data["vocab"])
@@ -478,7 +473,8 @@ def run(
         final_timing = profile_data.get("timing", {})
         final_extensions = profile_data.get("extensions", {})
         replacements = profile_data.get("replacements", {})
-        profile_speakers_requested = bool(profile_data.get("speakers"))
+        if not speakers and profile_data.get("speakers"):
+            speakers = profile_data["speakers"]
 
         if profile_data.get("glossary"):
             glossary_text = "Glossary (Always translate these exact phrases):\n"
@@ -513,15 +509,6 @@ def run(
     if prompt:
         final_prompt_parts.append(prompt)
 
-    if speakers:
-        logger.warning(
-            "--speakers is currently ignored. The active pipeline is single-speaker only."
-        )
-    elif profile_speakers_requested:
-        logger.warning(
-            "Profile speaker settings are currently ignored. The active pipeline is single-speaker only."
-        )
-
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
     # Step 1: Transcribe
@@ -532,6 +519,7 @@ def run(
             transcript_out,
             language,
             final_vocab,
+            num_speakers=speakers,
             start_time=start,
             end_time=end,
         )
