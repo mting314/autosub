@@ -1,0 +1,60 @@
+extends = ["liella"]
+
+prompt = "prompts/lieraji.md"
+vocab = [
+    # --- Program-specific ---
+    "リエラジ",
+    "リエラのRadio Japan",
+    "由宇女ランチタイム放送局",
+    "メールボックス",
+    "リエラジチャレンジ",
+    "ヒトコト",
+    "ラジオネーム",
+
+    # --- Host nicknames ---
+    "さゆりん",
+    "さくちゃん",
+    "えもりん",
+    "ペイちゃん",
+    "なこちゃん",
+    "なぎちゃん",
+    "のんちゃん",
+    "くまちゃん",
+]
+
+[glossary]
+"リエラジ" = "Lieraji"
+"メールボックス" = "Mailbox"
+"リエラジチャレンジ" = "Lieraji Challenge"
+"ヒトコト" = "Hitokoto"
+"ラジオネーム" = "Radio name:"
+"みなさーん" = "Everyone,"
+"こんにちはー" = "good afternoon!"
+"私たち" = "We are..."
+"リエラです！よろしくお願いしまーす！" = "Liella! We'll be in your care!"
+"それではまた来週" = "See you again next week!"
+"バイバーイ" = "Bye-bye!"
+"メールありがとう" = "Thanks for the mail!"
+
+[extensions.radio_discourse]
+enabled = true
+engine = "hybrid"
+model = "gemini-3-flash-preview"
+scope = "full_script"
+split_framing_phrases = true
+label_roles = true
+
+[[corners]]
+name = "Opening Skit"
+description = "In-character comedy skit at the start of each episode. Hosts speak as their Love Live! characters, not as themselves. Ends before self-introductions."
+cues = ["ランチタイム放送局"]
+
+[[corners]]
+name = "Mailbox"
+description = "Listener mail segment where hosts read and respond to fan messages. Begins with the hosts calling out the segment name."
+cues = ["メールボックス", "お便り"]
+
+[[corners]]
+name = "Lieraji Challenge"
+description = "Game or challenge segment where hosts compete or play together."
+cues = ["リエラジチャレンジ", "チャレンジのコーナー"]
