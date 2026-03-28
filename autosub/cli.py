@@ -225,6 +225,7 @@ def translate(
 
     final_prompt_parts = []
     final_corner_names = []
+    final_corner_cues = []
     if profile:
         profile_data = load_unified_profile(profile)
         final_prompt_parts.extend(profile_data["prompt"])
@@ -237,6 +238,8 @@ def translate(
 
         if profile_data.get("corners"):
             final_corner_names = [c["name"] for c in profile_data["corners"]]
+            for c in profile_data["corners"]:
+                final_corner_cues.extend(c.get("cues", []))
             corners_text = "Recurring corners/segments in this program:\n"
             for corner in profile_data["corners"]:
                 corners_text += f'- {corner["name"]}: {corner["description"]}\n'
@@ -270,6 +273,7 @@ def translate(
             location=vertex_location,
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
+            corner_cues=final_corner_cues or None,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -420,6 +424,7 @@ def run(
     final_extensions = {}
     replacements = {}
     final_corner_names = []
+    final_corner_cues = []
     profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
@@ -438,6 +443,8 @@ def run(
 
         if profile_data.get("corners"):
             final_corner_names = [c["name"] for c in profile_data["corners"]]
+            for c in profile_data["corners"]:
+                final_corner_cues.extend(c.get("cues", []))
             corners_text = "Recurring corners/segments in this program:\n"
             for corner in profile_data["corners"]:
                 corners_text += f'- {corner["name"]}: {corner["description"]}\n'
@@ -549,6 +556,7 @@ def run(
             location=vertex_location,
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
+            corner_cues=final_corner_cues or None,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
