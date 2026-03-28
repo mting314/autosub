@@ -4,9 +4,6 @@ import json
 import logging
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 from autosub.core.errors import (
     VertexBlockedResponseError,
     VertexEmptyResponseError,
@@ -14,6 +11,8 @@ from autosub.core.errors import (
     VertexResponseDiagnostics,
     VertexResponseParseError,
 )
+from google import genai
+from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +76,29 @@ class BaseVertexLLM:
         diagnostics = self._build_response_diagnostics(response)
         logger.debug("%s response diagnostics: %s", operation_name, diagnostics)
 
+        # Warn when finish_reason is not STOP (e.g. MAX_TOKENS, OTHER)
+        non_stop = [r for r in diagnostics.candidate_finish_reasons if r != "STOP"]
+        if non_stop:
+            logger.warning(
+                "%s finished with non-STOP reason(s): %s (diagnostics: %s)",
+                operation_name,
+                ", ".join(non_stop),
+                "; ".join(diagnostics.summary_parts()),
+            )
+
         if not response.text:
             error_class = (
                 VertexBlockedResponseError
                 if self._is_blocked_response(diagnostics)
                 else VertexEmptyResponseError
             )
+            finish_info = (
+                f" finish_reason={', '.join(diagnostics.candidate_finish_reasons)}"
+                if diagnostics.candidate_finish_reasons
+                else ""
+            )
             raise error_class(
-                f"{operation_name} returned no text response.",
+                f"{operation_name} returned no text response.{finish_info}",
                 diagnostics=diagnostics,
                 project_id=self.project_id,
                 model=self.model,
