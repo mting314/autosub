@@ -77,7 +77,7 @@ def test_chunked_splits_and_merges(tmp_path):
     texts = [f"line{i}" for i in range(5)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     assert result == [f"translated:line{i}" for i in range(5)]
     # Checkpoint should still exist (caller is responsible for cleanup)
@@ -90,7 +90,7 @@ def test_chunked_retries_failing_chunk(tmp_path):
     texts = ["a", "b", "c"]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     assert result == ["translated:a", "translated:b", "translated:c"]
     assert translator.attempts > 1
@@ -102,7 +102,7 @@ def test_chunked_preserves_order(tmp_path):
     texts = [f"line{i}" for i in range(10)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=3, checkpoint_path=checkpoint_path)
+    result, splits = _translate_chunked(translator, texts, chunk_size=3, checkpoint_path=checkpoint_path)
 
     assert len(result) == 10
     for i in range(10):
@@ -195,7 +195,7 @@ def test_chunked_resumes_from_checkpoint(tmp_path):
     translator = FakeTranslator()
     translator.translate = lambda texts: tracking_translate(translator, texts)
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     # Should only translate chunk 2 (lines e, f)
     assert translated_inputs == ["e", "f"]
@@ -243,7 +243,7 @@ def test_chunked_all_checkpointed_skips_translation(tmp_path):
 
     translator = MagicMock()
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     translator.translate.assert_not_called()
     assert result == ["translated:a", "translated:b", "translated:c", "translated:d"]
