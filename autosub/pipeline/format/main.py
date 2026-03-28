@@ -18,6 +18,7 @@ def format_subtitles(
     timing_config: dict | None = None,
     extensions_config: dict | None = None,
     replacements: dict[str, str] | None = None,
+    speaker_map: dict[str, dict] | None = None,
 ) -> None:
     """
     Reads a transcript.json file, chunks the transcribed words into semantic lines,
@@ -71,5 +72,5 @@ def format_subtitles(
     )
 
     logger.info(f"Writing .ass file to {output_ass_path}...")
-    generator.generate_ass_file(lines, output_ass_path)
+    generator.generate_ass_file(lines, output_ass_path, speaker_map=speaker_map)
     logger.info("Subtitle formatting complete!")
