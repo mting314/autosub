@@ -74,3 +74,47 @@ vocab = [
 "鏡音リン" = "Kagamine Rin"
 "鏡音レン" = "Kagamine Len"
 "巡音ルカ" = "Megurine Luka"
+
+[[corners]]
+name = "Story Watchalong"
+description = "Host watches the event's visual novel story scenes in picture-in-picture, reacting and commenting over the gameplay footage. Usually announces picked scenes beforehand and references episode numbers."
+cues = [
+    "語りたいシーンをピックアップ",
+    "一緒に見ていきましょう",
+    "ストーリーを見ながら",
+    "では早速行きましょう",
+    "ゲームの方でまた改めて見ていただければ",
+]
+
+[[corners]]
+name = "Card Illustrations"
+description = "Host reviews event card art, comparing before and after training illustrations. Lines discuss card art, expressions, outfits, and training upgrades."
+cues = [
+    "カードイラストを見ていきましょう",
+    "今回のイベントのカードを見ていきましょう",
+    "イラストコーナー",
+    "カードイラスト",
+]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Host watches and reacts to the event's music video (3DMV or 2DMV). Lines discuss choreography, camera angles, character expressions, song impressions, and composer/artist credits."
+cues = [
+    "3DMVを見ていきましょう",
+    "2DMVを見ていきましょう",
+    "MVを見ていきましょう",
+    "MVご覧ください",
+    "MVを見てみましょう",
+    "楽曲についてお話",
+    "書き下ろしいただいた",
+]
+
+[[corners]]
+name = "Fan Letter Corner"
+description = "Host reads and responds to fan letters/messages submitted via Discord and email. Lines include pen names, fan comments, and the host's reactions."
+cues = [
+    "おたよりコーナー",
+    "おたよりを紹介",
+    "おたよりを読んでいきましょう",
+    "皆さんからいただいたおたより",
+]
