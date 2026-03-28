@@ -10,6 +10,7 @@ vocab = [
     "リエラジチャレンジ",
     "ヒトコト",
     "ラジオネーム",
+    "Liellaネーム",
 ]
 
 [glossary]
@@ -17,6 +18,7 @@ vocab = [
 "投書箱" = "Suggestion Box"
 "ランチタイムリクエスト" = "Lunchtime Request"
 "ラジオネーム" = "Radio name:"
+"Liellaネーム" = "Liella name:"
 
 [extensions.radio_discourse]
 enabled = true
