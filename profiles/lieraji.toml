@@ -49,6 +49,11 @@ description = "Music request segment (ランチタイムリクエスト). A list
 cues = ["ランチタイムリクエスト", "お聞きください"]
 
 [[corners]]
+name = "News from Love Live! Superstar!!"
+description = "Announcements segment with news from the franchise. Covers music releases (音楽情報), appearance info (出演情報), card game news, and other product announcements. Introduced with 'Love Live! Superstarからのお知らせ' and ends with '以上、お知らせでした'."
+cues = ["Superstarからのお知らせ", "音楽情報です", "お知らせでした"]
+
+[[corners]]
 name = "Closing"
-description = "End-of-show announcements, next episode info, and sign-off. Begins when hosts announce the show is ending."
-cues = ["お別れのお時間", "ここまで", "また来週"]
+description = "Next episode preview, final greetings, and sign-off. Begins after the announcements when hosts preview next week's episode and say goodbye."
+cues = ["お別れのお時間", "次回以降の放送情報", "ここまで", "また来週"]
