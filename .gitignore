@@ -247,3 +247,5 @@ __marimo__/
 *.json
 *.ass
 *.txt
+
+/projects
