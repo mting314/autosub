@@ -41,15 +41,11 @@ def transcribe_uri(
         features=features,
     )
 
+    # Note: SpeechAdaptation (phrase_sets) is not supported on Chirp 3.
+    # Vocabulary hints are accepted by the CLI but not passed to the API.
     if vocabulary:
-        config.adaptation = cloud_speech.SpeechAdaptation(
-            phrase_sets=[
-                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                    inline_phrase_set=cloud_speech.PhraseSet(
-                        phrases=[{"value": word} for word in vocabulary]
-                    )
-                )
-            ]
+        logger.debug(
+            "Vocabulary hints ignored — Chirp 3 does not support SpeechAdaptation"
         )
 
     request = speech_v2.BatchRecognizeRequest(
@@ -105,15 +101,11 @@ def transcribe_local_file(
         features=features,
     )
 
+    # Note: SpeechAdaptation (phrase_sets) is not supported on Chirp 3.
+    # Vocabulary hints are accepted by the CLI but not passed to the API.
     if vocabulary:
-        config.adaptation = cloud_speech.SpeechAdaptation(
-            phrase_sets=[
-                cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
-                    inline_phrase_set=cloud_speech.PhraseSet(
-                        phrases=[{"value": word} for word in vocabulary]
-                    )
-                )
-            ]
+        logger.debug(
+            "Vocabulary hints ignored — Chirp 3 does not support SpeechAdaptation"
         )
 
     request = speech_v2.RecognizeRequest(
