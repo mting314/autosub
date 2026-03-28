@@ -1039,6 +1039,7 @@ def run(
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
             num_speakers=speakers,
+            replacements=replacements or None,
         )
     except Exception as e:
         logger.error(f"Failed during transcription: {e}")
