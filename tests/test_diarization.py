@@ -207,19 +207,19 @@ def test_local_prompt_overrides_example_prompt(tmp_path):
 
 
 def test_load_speaker_map(tmp_path):
-    yaml_content = """\
-speakers:
-  "0":
-    name: "Suzuki Minori"
-    character: "Ena Shinonome"
-    color: "#FFA0A0"
-  "1":
-    name: "Sato Hinata"
-    character: "Mizuki Akiyama"
-    color: "#A0D0FF"
+    toml_content = """\
+[speakers."0"]
+name = "Suzuki Minori"
+character = "Ena Shinonome"
+color = "#FFA0A0"
+
+[speakers."1"]
+name = "Sato Hinata"
+character = "Mizuki Akiyama"
+color = "#A0D0FF"
 """
-    map_file = tmp_path / "speaker_map.yaml"
-    map_file.write_text(yaml_content, encoding="utf-8")
+    map_file = tmp_path / "speaker_map.toml"
+    map_file.write_text(toml_content, encoding="utf-8")
 
     result = load_speaker_map(map_file)
     assert result == {
@@ -229,13 +229,12 @@ speakers:
 
 
 def test_load_speaker_map_missing_color(tmp_path):
-    yaml_content = """\
-speakers:
-  "1":
-    name: "Speaker One"
+    toml_content = """\
+[speakers."1"]
+name = "Speaker One"
 """
-    map_file = tmp_path / "speaker_map.yaml"
-    map_file.write_text(yaml_content, encoding="utf-8")
+    map_file = tmp_path / "speaker_map.toml"
+    map_file.write_text(toml_content, encoding="utf-8")
 
     result = load_speaker_map(map_file)
     assert result["1"]["name"] == "Speaker One"
@@ -244,13 +243,12 @@ speakers:
 
 
 def test_load_speaker_map_fallback_name(tmp_path):
-    yaml_content = """\
-speakers:
-  "3":
-    color: "#00FF00"
+    toml_content = """\
+[speakers."3"]
+color = "#00FF00"
 """
-    map_file = tmp_path / "speaker_map.yaml"
-    map_file.write_text(yaml_content, encoding="utf-8")
+    map_file = tmp_path / "speaker_map.toml"
+    map_file.write_text(toml_content, encoding="utf-8")
 
     result = load_speaker_map(map_file)
     assert result["3"]["name"] == "3"

@@ -397,7 +397,7 @@ def format(
     speaker_map: Path = typer.Option(
         None,
         "--speaker-map",
-        help="Path to speaker_map.yaml mapping API speaker labels to character names and colors.",
+        help="Path to speaker_map.toml mapping API speaker labels to character names and colors.",
         exists=True,
         dir_okay=False,
     ),
@@ -561,7 +561,7 @@ def translate(
     speaker_map: Path = typer.Option(
         None,
         "--speaker-map",
-        help="Path to speaker_map.yaml to inject speaker identity context into the translation prompt.",
+        help="Path to speaker_map.toml to inject speaker identity context into the translation prompt.",
         exists=True,
         dir_okay=False,
     ),
@@ -878,7 +878,7 @@ def run(
     speaker_map: Path = typer.Option(
         None,
         "--speaker-map",
-        help="Path to speaker_map.yaml mapping API speaker labels to character names and colors.",
+        help="Path to speaker_map.toml mapping API speaker labels to character names and colors.",
         exists=True,
         dir_okay=False,
     ),

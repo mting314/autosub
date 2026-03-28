@@ -149,6 +149,13 @@ For bilingual output:
 uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
 ```
 
+With speaker diarization (2 speakers, custom names/colors):
+
+```powershell
+uv run autosub run .\video.mp4 --profile my_profile --speakers 2 --speaker-map speaker_map.toml --chunk
+```
+
+
 By default, `run` writes these files next to the input media, named after the video stem:
 
 - `<stem>_transcript.json`
@@ -385,6 +392,7 @@ Behavior notes:
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
 - `--profile`: Loads `[format]`, including timing keys, replacements, and extensions
+- `--speaker-map`: Path to a `speaker_map.toml` mapping API speaker labels to character names and colors.
 
 Behavior notes:
 
@@ -705,6 +713,25 @@ Each corner has:
 **Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
 
 Corner names and cues are inherited and merged through profile `extends` chains.
+
+### Speaker Maps
+
+When using `--speakers` for diarization, the API assigns numeric labels ("0", "1", etc.) to each speaker. A speaker map TOML file can remap these to character names with custom colors:
+
+```toml
+# speaker_map.toml
+[speakers."0"]
+name = "Suzuki Minori"
+character = "Ena Shinonome"
+color = "#FFA0A0"
+
+[speakers."1"]
+name = "Sato Hinata"
+character = "Mizuki Akiyama"
+color = "#A0D0FF"
+```
+
+Usage: `--speaker-map speaker_map.toml` on `format`, `translate`, or `run` commands.
 
 ### Prompt and Vocab Merge Rules
 
