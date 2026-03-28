@@ -224,6 +224,7 @@ def translate(
         out = input_ass.with_name("translated.ass")
 
     final_prompt_parts = []
+    final_corner_names = []
     if profile:
         profile_data = load_unified_profile(profile)
         final_prompt_parts.extend(profile_data["prompt"])
@@ -235,6 +236,7 @@ def translate(
             final_prompt_parts.append(glossary_text)
 
         if profile_data.get("corners"):
+            final_corner_names = [c["name"] for c in profile_data["corners"]]
             corners_text = "Recurring corners/segments in this program:\n"
             for corner in profile_data["corners"]:
                 corners_text += f'- {corner["name"]}: {corner["description"]}\n'
@@ -267,6 +269,7 @@ def translate(
             model=vertex_model,
             location=vertex_location,
             chunk_size=chunk_size,
+            corner_names=final_corner_names or None,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -416,6 +419,7 @@ def run(
     final_timing = {}
     final_extensions = {}
     replacements = {}
+    final_corner_names = []
     profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
@@ -433,6 +437,7 @@ def run(
             final_prompt_parts.append(glossary_text)
 
         if profile_data.get("corners"):
+            final_corner_names = [c["name"] for c in profile_data["corners"]]
             corners_text = "Recurring corners/segments in this program:\n"
             for corner in profile_data["corners"]:
                 corners_text += f'- {corner["name"]}: {corner["description"]}\n'
@@ -543,6 +548,7 @@ def run(
             model=vertex_model,
             location=vertex_location,
             chunk_size=chunk_size,
+            corner_names=final_corner_names or None,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
