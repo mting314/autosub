@@ -379,6 +379,11 @@ def translate(
         exists=True,
         dir_okay=False,
     ),
+    retry_chunk: list[int] = typer.Option(
+        None,
+        "--retry-chunk",
+        help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -455,6 +460,7 @@ def translate(
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
             debug=mark_chunks,
+            retry_chunks=retry_chunk or None,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")

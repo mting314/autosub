@@ -28,6 +28,7 @@ def translate_subtitles(
     corner_names: list[str] | None = None,
     corner_cues: list[str] | None = None,
     debug: bool = False,
+    retry_chunks: list[int] | None = None,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -107,6 +108,7 @@ def translate_subtitles(
         translated_texts, splits = _translate_chunked(
             translator, texts_to_translate, chunk_size, checkpoint_path,
             corner_cues=corner_cues,
+            retry_chunks=retry_chunks,
         )
     else:
         translated_texts = _translate_with_retry(translator, texts_to_translate)
@@ -293,10 +295,22 @@ def _translate_chunked(
     chunk_size: int,
     checkpoint_path: Path,
     corner_cues: list[str] | None = None,
+    retry_chunks: list[int] | None = None,
 ) -> tuple[list[str], set[int]]:
     """Split texts into chunks, translate each with retry logic, and merge results."""
     chunks, splits = make_chunks(texts, chunk_size, corner_cues=corner_cues)
     completed = _load_checkpoint(checkpoint_path)
+
+    # Remove specified chunks from checkpoint to force re-translation
+    if retry_chunks and completed:
+        for idx in retry_chunks:
+            chunk_num = idx - 1  # user-facing is 1-based
+            if chunk_num in completed:
+                del completed[chunk_num]
+                logger.info(f"Cleared checkpoint for chunk {idx} — will re-translate.")
+            else:
+                logger.warning(f"Chunk {idx} not in checkpoint — nothing to retry.")
+        _save_checkpoint(checkpoint_path, completed)
 
     if completed:
         logger.info(
