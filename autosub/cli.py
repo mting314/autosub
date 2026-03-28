@@ -216,6 +216,11 @@ def translate(
         "--chunk-size",
         help="Number of subtitle lines per chunk when --chunk is enabled.",
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug/--no-debug",
+        help="Insert debug comments at artificial chunk boundaries for review.",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -274,6 +279,7 @@ def translate(
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
+            debug=debug,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -401,6 +407,11 @@ def run(
         80,
         "--chunk-size",
         help="Number of subtitle lines per chunk when --chunk is enabled.",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug/--no-debug",
+        help="Insert debug comments at artificial chunk boundaries for review.",
     ),
 ):
     """
@@ -557,6 +568,7 @@ def run(
             chunk_size=chunk_size,
             corner_names=final_corner_names or None,
             corner_cues=final_corner_cues or None,
+            debug=debug,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")

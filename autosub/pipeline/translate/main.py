@@ -27,6 +27,7 @@ def translate_subtitles(
     chunk_size: int = 0,
     corner_names: list[str] | None = None,
     corner_cues: list[str] | None = None,
+    debug: bool = False,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -101,8 +102,9 @@ def translate_subtitles(
 
     checkpoint_path = output_ass_path.with_suffix(".checkpoint.json")
 
+    splits: set[int] = set()
     if chunk_size > 0:
-        translated_texts = _translate_chunked(
+        translated_texts, splits = _translate_chunked(
             translator, texts_to_translate, chunk_size, checkpoint_path,
             corner_cues=corner_cues,
         )
@@ -141,6 +143,19 @@ def translate_subtitles(
         # Match this event to its translation by index
         original_text = texts_to_translate[event_idx]
         translated_text = translated_texts[event_idx]
+
+        # Insert debug comment at artificial chunk boundaries
+        if debug and event_idx in splits:
+            debug_comment = pyass.Event(
+                format=pyass.EventFormat.COMMENT,
+                start=event.start,
+                end=event.end,
+                style=event.style,
+                effect="chunk_debug",
+                text="=== Chunk boundary (review translation) ===",
+            )
+            new_events.append(debug_comment)
+
         event_idx += 1
 
         # Check for corner marker in translation
@@ -278,9 +293,9 @@ def _translate_chunked(
     chunk_size: int,
     checkpoint_path: Path,
     corner_cues: list[str] | None = None,
-) -> list[str]:
+) -> tuple[list[str], set[int]]:
     """Split texts into chunks, translate each with retry logic, and merge results."""
-    chunks = make_chunks(texts, chunk_size, corner_cues=corner_cues)
+    chunks, splits = make_chunks(texts, chunk_size, corner_cues=corner_cues)
     completed = _load_checkpoint(checkpoint_path)
 
     if completed:
@@ -314,4 +329,4 @@ def _translate_chunked(
     for chunk_idx in range(len(chunks)):
         all_translated.extend(completed[chunk_idx])
 
-    return all_translated
+    return all_translated, splits
