@@ -14,14 +14,16 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
 
     Expected format:
         speakers:
+          "0":
+            name: "Suzuki Minori"
+            character: "Ena Shinonome"
+            color: "#FFA0A0"
           "1":
-            name: "Mizuki Akiyama"
-            color: "#FFFF00"
-          "2":
-            name: "Ena Shinonome"
-            color: "#FF8080"
+            name: "Sato Hinata"
+            character: "Mizuki Akiyama"
+            color: "#A0D0FF"
 
-    Returns {"1": {"name": "Mizuki Akiyama", "color": "#FFFF00"}, ...}
+    Returns {"0": {"name": ..., "character": ..., "color": ...}, ...}
     """
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
@@ -31,9 +33,23 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
     for label, entry in speakers.items():
         result[str(label)] = {
             "name": entry.get("name", str(label)),
+            "character": entry.get("character"),
             "color": entry.get("color"),
         }
     return result
+
+
+def build_speaker_prompt(speaker_map: dict[str, dict]) -> str:
+    """Build a prompt fragment describing the speakers in this recording."""
+    lines = ["Speakers in this recording:"]
+    for entry in speaker_map.values():
+        name = entry["name"]
+        character = entry.get("character")
+        if character:
+            lines.append(f"- {name} (voice of {character})")
+        else:
+            lines.append(f"- {name}")
+    return "\n".join(lines)
 
 
 def remap_speaker_labels(lines: list[SubtitleLine], speaker_map: dict[str, dict]) -> None:
