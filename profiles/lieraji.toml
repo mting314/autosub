@@ -6,7 +6,8 @@ vocab = [
     "リエラジ",
     "リエラのRadio Japan",
     "由宇女ランチタイム放送局",
-    "メールボックス",
+    "投書箱",
+    "ランチタイムリクエスト",
     "リエラジチャレンジ",
     "ヒトコト",
     "ラジオネーム",
@@ -24,17 +25,11 @@ vocab = [
 
 [glossary]
 "リエラジ" = "Lieraji"
-"メールボックス" = "Mailbox"
+"投書箱" = "Suggestion Box"
+"ランチタイムリクエスト" = "Lunchtime Request"
 "リエラジチャレンジ" = "Lieraji Challenge"
 "ヒトコト" = "Hitokoto"
 "ラジオネーム" = "Radio name:"
-"みなさーん" = "Everyone,"
-"こんにちはー" = "good afternoon!"
-"私たち" = "We are..."
-"リエラです！よろしくお願いしまーす！" = "Liella! We'll be in your care!"
-"それではまた来週" = "See you again next week!"
-"バイバーイ" = "Bye-bye!"
-"メールありがとう" = "Thanks for the mail!"
 
 [extensions.radio_discourse]
 enabled = true
@@ -46,15 +41,25 @@ label_roles = true
 
 [[corners]]
 name = "Opening Skit"
-description = "In-character comedy skit at the start of each episode. Hosts speak as their Love Live! characters, not as themselves. Ends before self-introductions."
-cues = ["ランチタイム放送局"]
+description = "In-character comedy skit at the very start of the episode. Hosts speak as their Love Live! characters, not as themselves. Ends when they break character for self-introductions (みなさん、こんにちは)."
+cues = []
 
 [[corners]]
-name = "Mailbox"
-description = "Listener mail segment where hosts read and respond to fan messages. Begins with the hosts calling out the segment name."
-cues = ["メールボックス", "お便り"]
+name = "Self-Introductions"
+description = "Hosts introduce themselves by VA name and character role. Follows the opening skit. Transitions into the show kickoff call (由宇女ランチタイム放送局)."
+cues = ["みなさん、こんにちは", "渋谷かのん役", "鬼塚"]
 
 [[corners]]
-name = "Lieraji Challenge"
-description = "Game or challenge segment where hosts compete or play together."
-cues = ["リエラジチャレンジ", "チャレンジのコーナー"]
+name = "Suggestion Box"
+description = "Main listener mail segment (投書箱 / Toushoubako). Hosts read and discuss fan letters. Introduced with the call '結ヶ丘女子高等学校投書箱のコーナー' followed by a group shout of '投書箱!'"
+cues = ["投書箱のコーナー", "投書箱", "おたよりを紹介する"]
+
+[[corners]]
+name = "Lunchtime Request"
+description = "Music request segment (ランチタイムリクエスト). A listener requests a song and the hosts introduce it before it plays. Not present in every episode."
+cues = ["ランチタイムリクエスト", "お聞きください"]
+
+[[corners]]
+name = "Closing"
+description = "End-of-show announcements, next episode info, and sign-off. Begins when hosts announce the show is ending."
+cues = ["お別れのお時間", "ここまで", "また来週"]
