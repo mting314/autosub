@@ -6,14 +6,14 @@ Automatic Japanese subtitle generation and translation pipeline for speech-heavy
 
 `autosub` currently runs a four-stage CLI pipeline:
 
-1. **Transcribe**: Extract audio, send it to Google Cloud Speech-to-Text (`chirp_2`), and write a word-timed `transcript.json`.
-2. **Format**: Chunk words into subtitle lines, optionally apply discourse-aware radio segmentation, apply timing and optional keyframe snapping, and write `original.ass`.
+1. **Transcribe**: Extract audio, send it to Google Cloud Speech-to-Text (`chirp_3`), and write a word-timed `transcript.json`. Supports speaker diarization.
+2. **Format**: Chunk words into subtitle lines (speaker-aware when diarized), optionally apply discourse-aware radio segmentation, apply timing and optional keyframe snapping, and write `original.ass`.
 3. **Translate**: Translate subtitle events with either Vertex AI (`gemini-3-flash-preview`) or Cloud Translation v3, then write `translated.ass`.
 4. **Postprocess**: Apply profile-driven editorial cleanup to the translated `.ass` file. The built-in `run` command includes this step automatically.
 
 ```mermaid
 graph TD
-    A[Video or Audio Input] --> B[Transcribe<br/>Google Speech-to-Text chirp_2]
+    A[Video or Audio Input] --> B[Transcribe<br/>Google Speech-to-Text chirp_3]
     B --> C[Format<br/>Chunking + Timing + Optional Keyframe Snapping]
     C --> D[Translate<br/>Vertex Gemini 3 Flash or Cloud Translation v3]
     D --> E[Postprocess<br/>Profile Extensions]
@@ -22,7 +22,10 @@ graph TD
 
 ## Current Capabilities
 
-- Word-level transcript timing from Google Speech-to-Text.
+- Word-level transcript timing from Google Speech-to-Text (Chirp 3).
+- Speaker diarization with `--speakers N` — per-word speaker labels, per-speaker colored styles in ASS output.
+- Speaker maps (`--speaker-map`) to assign character names and custom colors to diarized speakers.
+- Automatic audio chunking for long audio (>18 min) to stay within Chirp 3's word-timestamp limit.
 - Automatic short-audio local transcription and long-audio GCS batch transcription.
 - Subtitle timing cleanup with minimum-duration padding, gap snapping, and optional keyframe alignment.
 - Radio-show discourse extensions that can split listener mail framing and label subtitle roles.
@@ -31,9 +34,7 @@ graph TD
 
 ## Current Limits
 
-- The CLI is still documented and exposed as a **single-speaker** pipeline.
-- `--speakers` and profile `speakers` values are parsed but currently ignored by the active CLI flow.
-- The transcript and formatter can preserve `speaker` labels if they are already present in `transcript.json`, and `.ass` generation will create per-speaker styles, but diarization is not wired through the transcription commands yet.
+- Chirp 3 does not support `SpeechAdaptation` (vocabulary hints). The `--vocab` flag and profile `vocab` are accepted but not sent to the API.
 - The formatter does **not** currently insert ASS line breaks (`\N`). Layout helpers exist in the codebase, but profile options such as `max_line_width` and `max_lines_per_subtitle` are not currently consumed by the CLI pipeline.
 
 ## Prerequisites
@@ -77,6 +78,12 @@ For bilingual output:
 
 ```powershell
 uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
+```
+
+With speaker diarization (2 speakers, custom names/colors):
+
+```powershell
+uv run autosub run .\video.mp4 --profile my_profile --speakers 2 --speaker-map speaker_map.yaml --chunk
 ```
 
 By default, `run` writes these files next to the input media, named after the video stem:
@@ -132,14 +139,17 @@ uv run autosub postprocess .\translated.ass `
 
 - `--out`, `-o`: Output transcript path. Default: `transcript.json`
 - `--language`, `-l`: Speech recognition language code. Default: `ja-JP`
-- `--vocab`, `-v`: Additional speech adaptation hints. Can be passed multiple times.
+- `--vocab`, `-v`: Speech adaptation hints. Accepted but not sent to Chirp 3 (unsupported).
 - `--profile`: Loads profile vocabulary.
-- `--speakers`, `-s`: Reserved for future diarization support. Currently ignored.
+- `--speakers`, `-s`: Number of speakers for diarization. Enables per-word speaker labels in the transcript.
 
 Behavior notes:
 
+- Uses Google Cloud Speech-to-Text Chirp 3 (`us` region).
+- Audio is extracted and re-encoded to Opus (Chirp 3 returns empty results for WAV/AAC).
 - Audio shorter than about 60 seconds is sent directly to the API.
 - Longer audio is uploaded to GCS first and transcribed as a batch job.
+- Audio longer than 18 minutes is automatically split into non-overlapping chunks to stay within Chirp 3's 20-minute word-timestamp limit. Timestamps are offset so they align with the original file.
 
 ### `autosub format`
 
@@ -147,11 +157,13 @@ Behavior notes:
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
 - `--profile`: Loads `[timing]` and `[extensions]`
+- `--speaker-map`: Path to a `speaker_map.yaml` mapping API speaker labels to character names and colors.
 
 Behavior notes:
 
 - Chunking is punctuation- and pause-aware.
-- If speaker labels are already present in the transcript JSON, chunking is done per speaker and the generated `.ass` file gets one style per speaker.
+- If speaker labels are present in the transcript JSON, chunking is done per speaker and the generated `.ass` file gets one style per speaker with auto-assigned colors.
+- With `--speaker-map`, speaker labels are remapped to character names and styles use the specified colors.
 - The `radio_discourse` extension runs here when enabled.
 
 ### `autosub translate`
@@ -200,7 +212,8 @@ Behavior notes:
 - `--target`
 - `--source`
 - `--bilingual` / `--replace`
-- `--speakers` (currently ignored)
+- `--speakers`
+- `--speaker-map`
 - `--keyframes`
 - `--extract-keyframes` / `--no-extract-keyframes`
 - `--chunk` / `--no-chunk`
@@ -244,8 +257,8 @@ label_roles = true
 
 - `extends`: List of base profile names. Base profiles are loaded first.
 - `prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
-- `vocab`: List of speech adaptation hints. Inherited lists are appended.
-- `speakers`: Parsed and inherited, but not currently used by the active CLI pipeline.
+- `vocab`: List of speech adaptation hints. Inherited lists are appended. Note: Chirp 3 does not support vocabulary adaptation, so these are currently not sent to the API.
+- `speakers`: Number of speakers for diarization. Used as a fallback when `--speakers` is not set on the CLI. Inherited through profile chains.
 - `[timing]`: Timing options for the formatter.
 - `[extensions]`: Nested extension configuration shared by formatting and postprocessing.
 
@@ -276,6 +289,28 @@ Each corner has:
 **Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
 
 Corner names and cues are inherited and merged through profile `extends` chains.
+
+### Speaker Maps
+
+When using `--speakers` for diarization, the API assigns numeric labels ("0", "1", etc.) to each speaker. A speaker map YAML file can remap these to character names with custom colors:
+
+```yaml
+# speaker_map.yaml
+speakers:
+  "0":
+    name: "Suzuki Minori"
+    color: "#FFA0A0"
+  "1":
+    name: "Sato Hinata"
+    color: "#A0D0FF"
+```
+
+Usage: `--speaker-map speaker_map.yaml` on `format` or `run` commands.
+
+- Without a speaker map, diarized output uses auto-assigned colors with raw API labels as style names.
+- With a speaker map, styles use character names and specified hex colors.
+- Chirp 3 uses 0-based speaker labels ("0", "1", ...). The label assignment depends on who speaks first — verify against the transcript and swap if needed.
+- Speaker maps are per-project files, typically stored alongside the video in the project directory.
 
 ### Prompt and Vocab Merge Rules
 
