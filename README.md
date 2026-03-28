@@ -79,13 +79,14 @@ For bilingual output:
 uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
 ```
 
-By default, `run` writes these files next to the input media:
+By default, `run` writes these files next to the input media, named after the video stem:
 
-- `transcript.json`
-- `original.ass`
-- `translated.ass`
+- `<stem>_transcript.json`
+- `<stem>_original.ass`
+- `<stem>_translated.ass`
 
-If keyframe extraction is enabled and succeeds, it also writes `<input-stem>_keyframes.log`.
+If keyframe extraction is enabled and succeeds, it also writes `<stem>_keyframes.log`.
+If `--save-log` is enabled, it writes `<stem>_autosub.log`.
 
 ## Running Stages Individually
 
@@ -164,6 +165,8 @@ Behavior notes:
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
 - `--chunk` / `--no-chunk`: Split translation into smaller chunks with retry logic. Useful for long files that cause API disconnects.
 - `--chunk-size`: Number of subtitle lines per chunk. Default: `80`. Only used when `--chunk` is enabled.
+- `--mark-chunks` / `--no-mark-chunks`: Insert ASS Comment events at artificial chunk boundaries so reviewers can spot lines where the LLM lost context. Only flags fixed-size and sub-split boundaries; corner-detected boundaries are excluded.
+- `--save-log` / `--no-save-log`: Write full log output (at DEBUG level) to a `.log` file next to the output file.
 
 Behavior notes:
 
@@ -171,6 +174,7 @@ Behavior notes:
 - `cloud-v3` uses Google Cloud Translation v3 and ignores custom prompt text.
 - `--chunk` splits the subtitle file into smaller API calls with exponential-backoff retry (3 attempts, 10s base delay). Recommended for files over ~200 lines. Checkpoints are saved so interrupted translations can resume.
 - When the profile defines corners with cue phrases, chunking is corner-aware: chunks split at detected segment boundaries instead of fixed-size intervals.
+- Vertex API errors include elapsed request time for diagnosing timeouts vs immediate connection failures.
 
 ### `autosub postprocess`
 
@@ -201,6 +205,8 @@ Behavior notes:
 - `--extract-keyframes` / `--no-extract-keyframes`
 - `--chunk` / `--no-chunk`
 - `--chunk-size`
+- `--mark-chunks` / `--no-mark-chunks`
+- `--save-log` / `--no-save-log`
 
 ## Unified Profile Format
 
