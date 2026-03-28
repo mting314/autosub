@@ -40,6 +40,16 @@ vocab = [
     "Fly! MUSIC WORLD", # 7th Live Title
     "結ヶ丘女子高等学校", # Yuigaoka Girls' High School
 
+    # --- Cast Nicknames ---
+    "さゆりん", # Sayurin (Date Sayuri)
+    "さくちゃん", # Sakuchan (Sakakura Sakura)
+    "えもりん", # Emorin (Emori Aya)
+    "ペイちゃん", # Paychan (Aoyama Nagisa)
+    "なこちゃん", # Nakochan (Konoe Nako)
+    "なぎちゃん", # Nagichan (Okuyama Nagi)
+    "のんちゃん", # Nonchan (Suzuhara Nozomi)
+    "くまちゃん", # Kumachan (Okuma Wakana)
+
     # --- Catchphrases & Verbal Tics ---
     "ギャラクシー", # Galaxy (Sumire)
     "〜っす", # -ssu (Kinako's verbal tic)

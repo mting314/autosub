@@ -4,30 +4,18 @@ prompt = "prompts/lieraji.md"
 vocab = [
     # --- Program-specific (リエラジ inherited from liella) ---
     "リエラのRadio Japan",
-    "由宇女ランチタイム放送局",
+    "結女ランチタイム放送局",
     "投書箱",
     "ランチタイムリクエスト",
     "リエラジチャレンジ",
     "ヒトコト",
     "ラジオネーム",
-
-    # --- Host nicknames ---
-    "さゆりん",
-    "さくちゃん",
-    "えもりん",
-    "ペイちゃん",
-    "なこちゃん",
-    "なぎちゃん",
-    "のんちゃん",
-    "くまちゃん",
 ]
 
 [glossary]
 "リエラジ" = "Lieraji"
 "投書箱" = "Suggestion Box"
 "ランチタイムリクエスト" = "Lunchtime Request"
-"リエラジチャレンジ" = "Lieraji Challenge"
-"ヒトコト" = "Hitokoto"
 "ラジオネーム" = "Radio name:"
 
 [extensions.radio_discourse]
