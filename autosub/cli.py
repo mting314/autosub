@@ -15,6 +15,17 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="AutoSub CLI for Japanese subtitle generation and translation")
 
+LOG_FORMAT = "%(asctime)s:%(levelname)s:%(name)s: %(message)s"
+
+
+def _add_file_logger(log_path: Path) -> None:
+    """Add a FileHandler to the root logger so all output is also saved to disk."""
+    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logging.getLogger().addHandler(handler)
+    logger.info(f"Saving log to {log_path}")
+
 
 @app.callback()
 def main():
@@ -221,12 +232,20 @@ def translate(
         "--mark-chunks/--no-mark-chunks",
         help="Insert comment events at artificial chunk boundaries for review.",
     ),
+    save_log: bool = typer.Option(
+        False,
+        "--save-log/--no-save-log",
+        help="Save full log output to a .log file next to the output file.",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
     """
     if not out:
         out = input_ass.with_name("translated.ass")
+
+    if save_log:
+        _add_file_logger(out.with_suffix(".log"))
 
     final_prompt_parts = []
     final_corner_names = []
@@ -413,6 +432,11 @@ def run(
         "--mark-chunks/--no-mark-chunks",
         help="Insert comment events at artificial chunk boundaries for review.",
     ),
+    save_log: bool = typer.Option(
+        False,
+        "--save-log/--no-save-log",
+        help="Save full log output to a .log file in the output directory.",
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -423,6 +447,9 @@ def run(
         out_dir = video_path.parent
 
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if save_log:
+        _add_file_logger(out_dir / "autosub.log")
 
     transcript_out = out_dir / "transcript.json"
     original_ass_out = out_dir / "original.ass"
