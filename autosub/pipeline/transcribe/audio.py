@@ -14,15 +14,15 @@ def extract_audio(
     video_path: Path, start_time: str | None = None, end_time: str | None = None
 ) -> Path:
     """
-    Extracts the audio track from a video file as a 16kHz mono WAV file,
-    which is optimized for Chirp 3 API transcription.
+    Extracts the audio track from a video file as Opus audio,
+    which is required for Chirp 3 API transcription (WAV/AAC return empty results).
     Returns the Path to the temporary audio file.
     """
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
     temp_dir = Path(tempfile.gettempdir())
-    output_audio_path = temp_dir / f"{video_path.stem}_audio_{uuid4().hex}.wav"
+    output_audio_path = temp_dir / f"{video_path.stem}_audio_{uuid4().hex}.opus"
 
     try:
         input_args = {}
@@ -35,7 +35,8 @@ def extract_audio(
             ffmpeg.input(str(video_path), **input_args)
             .output(
                 str(output_audio_path),
-                acodec="pcm_s16le",  # 16-bit PCM
+                acodec="libopus",
+                **{"b:a": "64k"},
                 ac=1,  # Mono channel
                 ar="16k",  # 16kHz sample rate
                 loglevel="error",  # Suppress verbose ffmpeg output
@@ -67,7 +68,7 @@ def split_audio(
     chunk_idx = 0
 
     while start < duration:
-        chunk_path = output_dir / f"chunk_{chunk_idx:03d}.wav"
+        chunk_path = output_dir / f"chunk_{chunk_idx:03d}{audio_path.suffix}"
         chunk_duration = min(chunk_seconds, duration - start)
 
         subprocess.run(
