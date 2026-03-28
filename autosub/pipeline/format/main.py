@@ -41,6 +41,7 @@ def format_subtitles(
     timing_config: dict | None = None,
     extensions_config: dict | None = None,
     replacements: dict[str, str] | None = None,
+    speaker_map: dict[str, dict] | None = None,
 ) -> None:
     """
     Reads a transcript.json file, chunks the transcribed words into semantic lines,
@@ -105,7 +106,7 @@ def format_subtitles(
     )
 
     logger.info(f"Writing .ass file to {output_ass_path}...")
-    generator.generate_ass_file(lines, output_ass_path)
+    generator.generate_ass_file(lines, output_ass_path, speaker_map=speaker_map)
     llm_trace_path = output_ass_path.with_suffix(".llm_trace.jsonl")
     if llm_trace_path.exists():
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")

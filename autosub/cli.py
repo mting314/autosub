@@ -360,6 +360,13 @@ def format(
         "--profile",
         help="Profile name to load timing and formatting extension configuration.",
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.yaml mapping API speaker labels to character names and colors.",
+        exists=True,
+        dir_okay=False,
+    ),
 ):
     """
     Step 2: Converts a transcript JSON into timed single-lane .ass subtitles.
@@ -395,6 +402,11 @@ def format(
             profile_data
         )
 
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+        loaded_speaker_map = load_speaker_map(speaker_map)
+
     kf_ms = None
     if keyframes and fps > 0:
         from autosub.pipeline.video.keyframes import parse_aegisub_keyframes
@@ -409,6 +421,7 @@ def format(
             timing_config=timing_config,
             extensions_config=extensions_config,
             replacements=replacements,
+            speaker_map=loaded_speaker_map,
         )
     except Exception as e:
         logger.error(f"Error during formatting: {e}")
@@ -834,6 +847,13 @@ def run(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.yaml mapping API speaker labels to character names and colors.",
+        exists=True,
+        dir_okay=False,
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -1038,6 +1058,12 @@ def run(
     except Exception as e:
         logger.warning(f"Failed to process keyframes: {e}")
 
+    # Load speaker map if provided
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+        loaded_speaker_map = load_speaker_map(speaker_map)
+
     # Step 2: Format
     try:
         logger.info("[Step 2/4] Formatting...")
@@ -1049,6 +1075,7 @@ def run(
             timing_config=final_timing,
             extensions_config=final_format_extensions,
             replacements=replacements,
+            speaker_map=loaded_speaker_map,
         )
     except Exception as e:
         logger.error(f"Failed during formatting: {e}")
