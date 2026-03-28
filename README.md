@@ -83,7 +83,7 @@ uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
 With speaker diarization (2 speakers, custom names/colors):
 
 ```powershell
-uv run autosub run .\video.mp4 --profile my_profile --speakers 2 --speaker-map speaker_map.yaml --chunk
+uv run autosub run .\video.mp4 --profile my_profile --speakers 2 --speaker-map speaker_map.toml --chunk
 ```
 
 By default, `run` writes these files next to the input media, named after the video stem:
@@ -157,7 +157,7 @@ Behavior notes:
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
 - `--profile`: Loads `[timing]` and `[extensions]`
-- `--speaker-map`: Path to a `speaker_map.yaml` mapping API speaker labels to character names and colors.
+- `--speaker-map`: Path to a `speaker_map.toml` mapping API speaker labels to character names and colors.
 
 Behavior notes:
 
@@ -292,20 +292,22 @@ Corner names and cues are inherited and merged through profile `extends` chains.
 
 ### Speaker Maps
 
-When using `--speakers` for diarization, the API assigns numeric labels ("0", "1", etc.) to each speaker. A speaker map YAML file can remap these to character names with custom colors:
+When using `--speakers` for diarization, the API assigns numeric labels ("0", "1", etc.) to each speaker. A speaker map TOML file can remap these to character names with custom colors:
 
-```yaml
-# speaker_map.yaml
-speakers:
-  "0":
-    name: "Suzuki Minori"
-    color: "#FFA0A0"
-  "1":
-    name: "Sato Hinata"
-    color: "#A0D0FF"
+```toml
+# speaker_map.toml
+[speakers."0"]
+name = "Suzuki Minori"
+character = "Ena Shinonome"
+color = "#FFA0A0"
+
+[speakers."1"]
+name = "Sato Hinata"
+character = "Mizuki Akiyama"
+color = "#A0D0FF"
 ```
 
-Usage: `--speaker-map speaker_map.yaml` on `format` or `run` commands.
+Usage: `--speaker-map speaker_map.toml` on `format`, `translate`, or `run` commands.
 
 - Without a speaker map, diarized output uses auto-assigned colors with raw API labels as style names.
 - With a speaker map, styles use character names and specified hex colors.
