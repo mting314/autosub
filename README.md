@@ -162,11 +162,15 @@ Behavior notes:
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
+- `--chunk` / `--no-chunk`: Split translation into smaller chunks with retry logic. Useful for long files that cause API disconnects.
+- `--chunk-size`: Number of subtitle lines per chunk. Default: `80`. Only used when `--chunk` is enabled.
 
 Behavior notes:
 
 - `vertex` uses Vertex AI with `gemini-3-flash-preview`.
 - `cloud-v3` uses Google Cloud Translation v3 and ignores custom prompt text.
+- `--chunk` splits the subtitle file into smaller API calls with exponential-backoff retry (3 attempts, 10s base delay). Recommended for files over ~200 lines. Checkpoints are saved so interrupted translations can resume.
+- When the profile defines corners with cue phrases, chunking is corner-aware: chunks split at detected segment boundaries instead of fixed-size intervals.
 
 ### `autosub postprocess`
 
@@ -195,6 +199,8 @@ Behavior notes:
 - `--speakers` (currently ignored)
 - `--keyframes`
 - `--extract-keyframes` / `--no-extract-keyframes`
+- `--chunk` / `--no-chunk`
+- `--chunk-size`
 
 ## Unified Profile Format
 
@@ -236,6 +242,34 @@ label_roles = true
 - `speakers`: Parsed and inherited, but not currently used by the active CLI pipeline.
 - `[timing]`: Timing options for the formatter.
 - `[extensions]`: Nested extension configuration shared by formatting and postprocessing.
+
+### Corners
+
+Profiles can define recurring program segments (corners) that the LLM detects during translation:
+
+```toml
+[[corners]]
+name = "Card Illustrations"
+description = "Segment where hosts discuss character card art"
+cues = ["カードイラスト", "イラストのコーナー"]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Segment where hosts watch and react to a 3DMV"
+cues = ["3DMV", "MV見よう"]
+```
+
+Each corner has:
+
+- `name`: Display name used in the output ASS comment marker.
+- `description`: Context for the LLM to understand what the segment is about.
+- `cues`: Japanese phrases that typically signal the start of this segment.
+
+**Corner detection**: During translation, the LLM prepends `[CORNER: Name]` tags to the first line of each detected segment. These are parsed post-translation and inserted as ASS Comment events (green rows in Aegisub) with `effect="corner"`. Duplicate consecutive corners are automatically deduplicated.
+
+**Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
+
+Corner names and cues are inherited and merged through profile `extends` chains.
 
 ### Prompt and Vocab Merge Rules
 
