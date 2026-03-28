@@ -1,8 +1,8 @@
 import logging
+import tomllib
 from pathlib import Path
 
 import pyass
-import yaml
 
 from autosub.core.schemas import SubtitleLine
 
@@ -10,23 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 def load_speaker_map(path: Path) -> dict[str, dict]:
-    """Load a speaker_map.yaml file.
+    """Load a speaker_map.toml file.
 
     Expected format:
-        speakers:
-          "0":
-            name: "Suzuki Minori"
-            character: "Ena Shinonome"
-            color: "#FFA0A0"
-          "1":
-            name: "Sato Hinata"
-            character: "Mizuki Akiyama"
-            color: "#A0D0FF"
+        [speakers."0"]
+        name = "Suzuki Minori"
+        character = "Ena Shinonome"
+        color = "#FFA0A0"
+
+        [speakers."1"]
+        name = "Sato Hinata"
+        character = "Mizuki Akiyama"
+        color = "#A0D0FF"
 
     Returns {"0": {"name": ..., "character": ..., "color": ...}, ...}
     """
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    with open(path, "rb") as f:
+        data = tomllib.load(f)
 
     speakers = data.get("speakers", {})
     result = {}
