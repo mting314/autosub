@@ -248,15 +248,30 @@ def _translate_chunked(
         f"in {len(chunks)} chunks of up to {chunk_size}..."
     )
 
+    line_offset = 0
     for chunk_idx, chunk in enumerate(chunks):
+        line_start = line_offset + 1
+        line_end = line_offset + len(chunk)
+
         if chunk_idx in completed:
-            logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)")
+            logger.info(
+                f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)"
+            )
+            line_offset += len(chunk)
             continue
 
-        logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)...")
+        first = chunk[0][:40] + "..." if len(chunk[0]) > 40 else chunk[0]
+        last = chunk[-1][:40] + "..." if len(chunk[-1]) > 40 else chunk[-1]
+        logger.info(
+            f"  Chunk {chunk_idx + 1}/{len(chunks)} "
+            f"(lines {line_start}-{line_end}, {len(chunk)} lines)"
+        )
+        logger.info(f"    first: {first}")
+        logger.info(f"    last:  {last}")
         results = translator.translate(chunk)
         completed[chunk_idx] = results
         _save_checkpoint(checkpoint_path, completed)
+        line_offset += len(chunk)
 
     # Reassemble in order
     all_translated: list[str] = []
