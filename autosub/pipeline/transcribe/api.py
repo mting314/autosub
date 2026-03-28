@@ -9,19 +9,24 @@ logger = logging.getLogger(__name__)
 def transcribe_uri(
     gcs_uri: str,
     project_id: str,
-    language_code: str = "ja-JP",
+    language_codes: list[str] | None = None,
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
 ) -> speech_v2.BatchRecognizeResponse:
     """
-    Sends a long-running batch transcription request to Chirp 2 using a GCS URI.
+    Sends a long-running batch transcription request to Chirp 3 using a GCS URI.
     Required for audio files longer than 1 minute.
     """
+    if not language_codes:
+        language_codes = ["ja-JP"]
     client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint="us-central1-speech.googleapis.com")
+        client_options=ClientOptions(api_endpoint="us-speech.googleapis.com")
     )
 
-    features = speech_v2.RecognitionFeatures(enable_word_time_offsets=True)
+    features = speech_v2.RecognitionFeatures(
+        enable_word_time_offsets=True,
+        enable_automatic_punctuation=True,
+    )
     if num_speakers is not None and num_speakers > 0:
         features.diarization_config = cloud_speech.SpeakerDiarizationConfig(
             min_speaker_count=num_speakers,
@@ -31,8 +36,8 @@ def transcribe_uri(
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
-        language_codes=[language_code],
-        model="chirp_2",
+        language_codes=language_codes,
+        model="chirp_3",
         features=features,
     )
 
@@ -48,7 +53,7 @@ def transcribe_uri(
         )
 
     request = speech_v2.BatchRecognizeRequest(
-        recognizer=f"projects/{project_id}/locations/us-central1/recognizers/_",
+        recognizer=f"projects/{project_id}/locations/us/recognizers/_",
         config=config,
         files=[speech_v2.BatchRecognizeFileMetadata(uri=gcs_uri)],
         recognition_output_config=speech_v2.RecognitionOutputConfig(
@@ -68,7 +73,7 @@ def transcribe_uri(
 def transcribe_local_file(
     audio_content: bytes,
     project_id: str,
-    language_code: str = "ja-JP",
+    language_codes: list[str] | None = None,
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
 ) -> speech_v2.RecognizeResponse:
@@ -76,11 +81,16 @@ def transcribe_local_file(
     Sends a standard synchronous transcription request using local audio bytes.
     Can only be used if audio is strictly < 1 minute.
     """
+    if not language_codes:
+        language_codes = ["ja-JP"]
     client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint="us-central1-speech.googleapis.com")
+        client_options=ClientOptions(api_endpoint="us-speech.googleapis.com")
     )
 
-    features = speech_v2.RecognitionFeatures(enable_word_time_offsets=True)
+    features = speech_v2.RecognitionFeatures(
+        enable_word_time_offsets=True,
+        enable_automatic_punctuation=True,
+    )
     if num_speakers is not None and num_speakers > 0:
         features.diarization_config = cloud_speech.SpeakerDiarizationConfig(
             min_speaker_count=num_speakers,
@@ -90,8 +100,8 @@ def transcribe_local_file(
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
-        language_codes=[language_code],
-        model="chirp_2",
+        language_codes=language_codes,
+        model="chirp_3",
         features=features,
     )
 
@@ -107,7 +117,7 @@ def transcribe_local_file(
         )
 
     request = speech_v2.RecognizeRequest(
-        recognizer=f"projects/{project_id}/locations/us-central1/recognizers/_",
+        recognizer=f"projects/{project_id}/locations/us/recognizers/_",
         config=config,
         content=audio_content,
     )
