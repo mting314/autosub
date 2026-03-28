@@ -34,6 +34,9 @@ def chunk_words_to_lines(words: List[TranscribedWord]) -> List[SubtitleLine]:
         current_chunk: List[TranscribedWord] = []
 
         for i, word in enumerate(speaker_words):
+            if word.start_time == word.end_time:
+                continue
+
             current_chunk.append(word)
 
             # Check if this is the last word for this speaker

@@ -25,17 +25,18 @@ class VertexRadioDiscourseClassifier:
     def __init__(
         self,
         project_id: str,
-        model: str = "gemini-3-flash-preview",
+        model: str = "gemini-3.1-flash-lite-preview",
         location: str = "global",
     ):
         self.project_id = project_id
         self.model = model
         self.location = location
 
-    def _get_system_instruction(self) -> str:
+    def _get_system_instruction(self, num_lines: int) -> str:
         return (
             "You are analyzing a Japanese solo voice-actress radio show transcript for subtitle segmentation.\n"
-            "Task: Classify each subtitle line as one of three discourse roles.\n\n"
+            "Task: Classify each subtitle line as one of three discourse roles.\n"
+            f"Your output must consist of exactly {num_lines} items.\n\n"
             "Role definitions:\n"
             "1. host: the host's own live speech, reactions, commentary, ad-libbing, or monologue.\n"
             "2. listener_mail: text from a listener message, question, or submission that the host is reading aloud.\n"
@@ -63,7 +64,7 @@ class VertexRadioDiscourseClassifier:
         client = genai.Client(
             vertexai=True, project=self.project_id, location=self.location
         )
-        system_instruction = self._get_system_instruction()
+        system_instruction = self._get_system_instruction(len(lines))
         payload = [
             {
                 "id": line_id,
@@ -89,7 +90,13 @@ class VertexRadioDiscourseClassifier:
                 "Vertex radio discourse classifier returned an empty response."
             )
 
-        response_json = json.loads(response.text)
+        try:
+            response_json = json.loads(response.text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response: {e}")
+            logger.error(f"Raw Response: {response.text}")
+            raise e
+
         response_json.sort(key=lambda item: item["id"])
         return {item["id"]: item["role"] for item in response_json}
 

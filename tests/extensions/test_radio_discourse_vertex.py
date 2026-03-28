@@ -9,7 +9,7 @@ from autosub.extensions.radio_discourse.vertex import (
 def test_vertex_radio_discourse_prompt_describes_roles():
     classifier = VertexRadioDiscourseClassifier(project_id="test-project")
 
-    instruction = classifier._get_system_instruction()
+    instruction = classifier._get_system_instruction(1)
 
     assert "host_meta" in instruction
     assert "listener_mail" in instruction
