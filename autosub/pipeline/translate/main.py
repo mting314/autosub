@@ -175,6 +175,7 @@ def translate_subtitles(
 
     # Walk all events in order, preserving non-translated events (e.g. Comments)
     # in place while applying translations and inserting corner markers.
+    corners_found: list[str] = []
     event_idx = 0
     for event in script.events:
         if id(event) not in translated_event_set:
@@ -201,7 +202,8 @@ def translate_subtitles(
                 text=f"=== Corner: {corner_name} ===",
             )
             new_events.append(comment)
-            logger.info(f"  Corner detected: {corner_name}")
+            corners_found.append(corner_name)
+            logger.info(f"  Corner detected at line {event_idx}: {corner_name}")
 
         # Update the event with the new text
         if bilingual:
@@ -217,6 +219,11 @@ def translate_subtitles(
         new_events.append(event)
 
     script.events = new_events
+
+    if corners_found:
+        logger.info(
+            f"Inserted {len(corners_found)} corner marker(s): {', '.join(corners_found)}"
+        )
 
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
     with open(output_ass_path, "w", encoding="utf-8") as f:
