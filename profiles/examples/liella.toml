@@ -59,3 +59,15 @@ vocab = [
 
 [translate]
 prompt = "prompts/liella.md"
+
+# Chirp 3 TranscriptNormalization — fix common mistranscriptions
+[replacements]
+# VA name corrections (Chirp frequently mishears these)
+"歌田" = "伊達"       # Date Sayuri
+"策倉" = "坂倉"       # Sakakura Sakura
+"咲倉" = "坂倉"       # Sakakura Sakura (alt)
+"藪縞" = "籔島"       # Yabushima Akane
+"鈴奈" = "さゆり"     # Date Sayuri's given name
+# Franchise name normalization
+"LoveLiveSuperstar" = "Love Live! Superstar!!"
+"チュッチュッLiella!" = "ChuChu Liella!"
