@@ -2,8 +2,7 @@ extends = ["liella"]
 
 prompt = "prompts/lieraji.md"
 vocab = [
-    # --- Program-specific ---
-    "リエラジ",
+    # --- Program-specific (リエラジ inherited from liella) ---
     "リエラのRadio Japan",
     "由宇女ランチタイム放送局",
     "投書箱",
