@@ -562,6 +562,7 @@ def run(
             num_speakers=speakers,
             start_time=start,
             end_time=end,
+            replacements=replacements or None,
         )
     except Exception as e:
         logger.error(f"Failed during transcription: {e}")

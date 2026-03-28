@@ -32,6 +32,7 @@ def transcribe(
     start_time: str | None = None,
     end_time: str | None = None,
     language_codes: list[str] | None = None,
+    replacements: dict[str, str] | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -90,6 +91,7 @@ def transcribe(
                             response = api.transcribe_uri(
                                 gcs_uri, PROJECT_ID, language_codes,
                                 vocabulary, num_speakers,
+                                replacements=replacements,
                             )
                             words_data.extend(
                                 _parse_batch_response(
@@ -110,6 +112,7 @@ def transcribe(
                     response = api.transcribe_uri(
                         gcs_uri, PROJECT_ID, language_codes,
                         vocabulary, num_speakers,
+                        replacements=replacements,
                     )
                     words_data.extend(
                         _parse_batch_response(response, gcs_uri, time_offset=offset)
@@ -126,6 +129,7 @@ def transcribe(
             response = api.transcribe_local_file(
                 audio_content, PROJECT_ID, language_codes,
                 vocabulary, num_speakers,
+                replacements=replacements,
             )
             for result in response.results:
                 for alt in result.alternatives:

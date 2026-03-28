@@ -12,6 +12,7 @@ def transcribe_uri(
     language_codes: list[str] | None = None,
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
+    replacements: dict[str, str] | None = None,
 ) -> speech_v2.BatchRecognizeResponse:
     """
     Sends a long-running batch transcription request to Chirp 3 using a GCS URI.
@@ -40,6 +41,17 @@ def transcribe_uri(
         model="chirp_3",
         features=features,
     )
+
+    if replacements:
+        config.transcript_normalization = cloud_speech.TranscriptNormalization(
+            entries=[
+                cloud_speech.TranscriptNormalization.Entry(
+                    search=search, replace=replace, case_sensitive=False,
+                )
+                for search, replace in replacements.items()
+            ]
+        )
+        logger.info(f"Transcript normalization enabled with {len(replacements)} entries")
 
     # Note: SpeechAdaptation (phrase_sets) is not supported on Chirp 3.
     # Vocabulary hints are accepted by the CLI but not passed to the API.
@@ -72,6 +84,7 @@ def transcribe_local_file(
     language_codes: list[str] | None = None,
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
+    replacements: dict[str, str] | None = None,
 ) -> speech_v2.RecognizeResponse:
     """
     Sends a standard synchronous transcription request using local audio bytes.
@@ -100,6 +113,17 @@ def transcribe_local_file(
         model="chirp_3",
         features=features,
     )
+
+    if replacements:
+        config.transcript_normalization = cloud_speech.TranscriptNormalization(
+            entries=[
+                cloud_speech.TranscriptNormalization.Entry(
+                    search=search, replace=replace, case_sensitive=False,
+                )
+                for search, replace in replacements.items()
+            ]
+        )
+        logger.info(f"Transcript normalization enabled with {len(replacements)} entries")
 
     # Note: SpeechAdaptation (phrase_sets) is not supported on Chirp 3.
     # Vocabulary hints are accepted by the CLI but not passed to the API.
