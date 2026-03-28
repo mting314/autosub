@@ -539,6 +539,12 @@ def translate(
     if not out:
         out = input_ass.with_name("translated.ass")
 
+    translate_log_dir = None
+    if save_log:
+        translate_log_dir = out.with_suffix("_logs")
+        translate_log_dir.mkdir(parents=True, exist_ok=True)
+        _add_file_logger(translate_log_dir / "run.log")
+
     final_prompt_parts = []
     if profile:
         profile_data = load_unified_profile(profile)
@@ -592,6 +598,7 @@ def translate(
             reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
             retry_chunks=retry_chunk or None,
+            log_dir=translate_log_dir,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -765,6 +772,16 @@ def run(
         min=0,
         help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
+    save_log: bool = typer.Option(
+        False,
+        "--save-log/--no-save-log",
+        help="Save full log output to a .log file in the output directory.",
+    ),
+    retry_chunk: list[int] = typer.Option(
+        None,
+        "--retry-chunk",
+        help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -829,9 +846,17 @@ def run(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    transcript_out = out_dir / "transcript.json"
-    original_ass_out = out_dir / "original.ass"
-    translated_ass_out = out_dir / "translated.ass"
+    stem = video_path.stem
+
+    translate_log_dir = None
+    if save_log:
+        translate_log_dir = out_dir / f"{stem}_logs"
+        translate_log_dir.mkdir(parents=True, exist_ok=True)
+        _add_file_logger(translate_log_dir / "run.log")
+
+    transcript_out = out_dir / f"{stem}_transcript.json"
+    original_ass_out = out_dir / f"{stem}_original.ass"
+    translated_ass_out = out_dir / f"{stem}_translated.ass"
 
     # Resolve Profile
     final_vocab = []
@@ -961,6 +986,8 @@ def run(
             provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
             chunk_size=chunk_size,
+            retry_chunks=retry_chunk or None,
+            log_dir=translate_log_dir,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
