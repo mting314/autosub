@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import logging
 import ffmpeg
@@ -5,6 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 
 logger = logging.getLogger(__name__)
+
+MAX_CHUNK_MINUTES = 18  # stay under Chirp 3's 20-min word-timestamp limit
 
 
 def extract_audio(
@@ -45,6 +48,50 @@ def extract_audio(
         raise RuntimeError(f"Failed to extract audio: {error_message}") from e
 
     return output_audio_path
+
+
+def split_audio(
+    audio_path: Path, chunk_seconds: float, output_dir: Path
+) -> list[tuple[Path, float]]:
+    """Split audio into non-overlapping chunks for Chirp 3's word-timestamp limit.
+
+    Returns list of (chunk_path, chunk_start_seconds) tuples.
+    """
+    duration = get_audio_duration(audio_path)
+
+    if duration <= chunk_seconds:
+        return [(audio_path, 0.0)]
+
+    chunks = []
+    start = 0.0
+    chunk_idx = 0
+
+    while start < duration:
+        chunk_path = output_dir / f"chunk_{chunk_idx:03d}.wav"
+        chunk_duration = min(chunk_seconds, duration - start)
+
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", str(audio_path),
+                "-ss", str(start),
+                "-t", str(chunk_duration),
+                "-acodec", "copy",
+                str(chunk_path),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        logger.info(
+            f"  Chunk {chunk_idx}: {start:.0f}s - {start + chunk_duration:.0f}s "
+            f"({chunk_duration:.0f}s)"
+        )
+        chunks.append((chunk_path, start))
+
+        start += chunk_seconds
+        chunk_idx += 1
+
+    return chunks
 
 
 def get_audio_duration(audio_path: Path) -> float:
