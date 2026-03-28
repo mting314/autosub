@@ -1200,7 +1200,7 @@ def run(
     # Step 1: Transcribe
     try:
         logger.info("[Step 1/4] Transcribing...")
-        transcribe_main.transcribe(
+        result = transcribe_main.transcribe(
             video_path,
             transcript_out,
             language,
@@ -1229,6 +1229,14 @@ def run(
                 f"{len(unique_speakers)} labels: {sorted(unique_speakers)}. "
                 f"Run 'autosub review-speakers {transcript_out} --speaker-map <map>' to review."
             )
+
+    # Check for speaker_assignments.toml from a previous review-speakers run
+    if speaker_map:
+        assignments_path = transcript_out.parent / "speaker_assignments.toml"
+        if assignments_path.exists():
+            from autosub.core.speaker_map import load_speaker_map as _load_map
+            loaded_speaker_map = _load_map(assignments_path)
+            logger.info(f"Using speaker assignments from {assignments_path}")
 
     # Step 1.5: Keyframes
     kf_ms = None
