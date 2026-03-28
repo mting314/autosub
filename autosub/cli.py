@@ -26,6 +26,21 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(help="AutoSub CLI for Japanese subtitle generation and translation")
 
+LOG_FORMAT = "%(asctime)s:%(levelname)s:%(name)s: %(message)s"
+
+
+def _add_file_logger(log_path: Path) -> None:
+    """Add a FileHandler to the root logger so all output is also saved to disk."""
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)  # allow DEBUG through to file handler
+    # Keep console at INFO
+    for h in root.handlers:
+        h.setLevel(logging.INFO)
+    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(handler)
+    logger.info(f"Saving log to {log_path}")
 
 @app.callback()
 def main(
