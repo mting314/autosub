@@ -1,10 +1,10 @@
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import Any, Sequence, cast
 from uuid import uuid4
-
 from autosub.core.config import GCS_BUCKET, PROJECT_ID
 from autosub.core.schemas import (
     TranscribedWord,
@@ -435,3 +435,24 @@ def transcribe(
         handle.write(final_result.model_dump_json(indent=2))
 
     return final_result
+
+
+def _parse_batch_response(
+    response, gcs_uri: str, time_offset: float = 0.0
+) -> list[TranscribedWord]:
+    """Parse a BatchRecognizeResponse into TranscribedWord objects."""
+    words = []
+    for result in response.results[gcs_uri].inline_result.transcript.results:
+        for alt in result.alternatives:
+            for w in alt.words:
+                words.append(
+                    TranscribedWord(
+                        word=w.word,
+                        start_time=_duration_seconds(w.start_offset) + time_offset,
+                        end_time=_duration_seconds(w.end_offset) + time_offset,
+                        speaker=w.speaker_label
+                        if hasattr(w, "speaker_label")
+                        else None,
+                    )
+                )
+    return words
