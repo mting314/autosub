@@ -448,12 +448,14 @@ def run(
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if save_log:
-        _add_file_logger(out_dir / "autosub.log")
+    stem = video_path.stem
 
-    transcript_out = out_dir / "transcript.json"
-    original_ass_out = out_dir / "original.ass"
-    translated_ass_out = out_dir / "translated.ass"
+    if save_log:
+        _add_file_logger(out_dir / f"{stem}_autosub.log")
+
+    transcript_out = out_dir / f"{stem}_transcript.json"
+    original_ass_out = out_dir / f"{stem}_original.ass"
+    translated_ass_out = out_dir / f"{stem}_translated.ass"
 
     # Resolve Profile
     final_vocab = []
