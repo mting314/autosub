@@ -155,6 +155,23 @@ uv run autosub translate .\original.ass `
   --bilingual
 ```
 
+## Model Selection
+
+For a roughly 30 minute solo seiyuu radio episode, expect the translation stage to send around 20,000 input tokens in one request if you do not enable chunking. Output token usage varies more: concise runs stay relatively small, while higher-thinking runs can use substantially more output budget because reasoning tokens are billed as output tokens by some providers.
+
+Practical recommendations:
+
+- `gemini-3-flash-preview` is the default for a reason. It is the best starting point if you want a good balance of cost and quality.
+- `claude-sonnet-4-6` and `gpt-5.4` are reasonable next steps if you want a small quality bump and are willing to pay more.
+- Frontier-tier models are currently untested in this repo. They may work, but do not assume the prompts, structured output behavior, or chunking expectations have been tuned for them yet.
+- Be especially careful with `gpt-5.4-pro`. As of April 1, 2026, OpenAI's API pricing page lists it far above `gpt-5.4`, so the cost jump is much larger than the likely quality jump for this workflow.
+
+Current vendor pricing and model pages can change. Check the official docs before large runs:
+
+- Google Vertex AI generative AI pricing: https://cloud.google.com/vertex-ai/generative-ai/pricing
+- Anthropic pricing: https://docs.anthropic.com/en/docs/about-claude/pricing
+- OpenAI API pricing: https://platform.openai.com/docs/pricing
+
 Postprocess a translated file explicitly:
 
 ```powershell
