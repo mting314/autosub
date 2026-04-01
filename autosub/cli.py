@@ -541,7 +541,10 @@ def translate(
 
     translate_log_dir = None
     if save_log:
-        translate_log_dir = out.parent / f"{out.stem}_logs"
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        translate_log_dir = out.parent / f"{out.stem}_logs_{ts}"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
@@ -850,7 +853,10 @@ def run(
 
     translate_log_dir = None
     if save_log:
-        translate_log_dir = out_dir / f"{stem}_logs"
+        from datetime import datetime
+
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        translate_log_dir = out_dir / f"{stem}_logs_{ts}"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
