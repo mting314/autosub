@@ -18,8 +18,9 @@ def translate_subtitles(
     target_lang: str = "en",
     source_lang: str = "ja",
     bilingual: bool = True,
-    model: str = "gemini-3-flash-preview",
+    model: str | None = None,
     location: str = "global",
+    provider: str = "google-vertex",
     reasoning_effort: ReasoningEffort | None = ReasoningEffort.MEDIUM,
     reasoning_budget_tokens: int | None = None,
     reasoning_dynamic: bool | None = None,
@@ -69,13 +70,13 @@ def translate_subtitles(
         logger.warning("No subtitle text found to translate. Exiting.")
         return
 
-    if not PROJECT_ID:
-        raise ValueError("AUTOSUB_PROJECT_ID is not set in the environment.")
-
     llm_trace_path: Path | None = None
 
     if engine == "vertex":
         from autosub.pipeline.translate.translator import VertexTranslator
+
+        if provider == "google-vertex" and not PROJECT_ID:
+            raise ValueError("GOOGLE_CLOUD_PROJECT is not set in the environment.")
 
         llm_trace_path = output_ass_path.with_suffix(".llm_trace.jsonl")
         if llm_trace_path.exists():
@@ -89,6 +90,7 @@ def translate_subtitles(
             system_prompt=system_prompt,
             model=model,
             location=location,
+            provider=provider,
             reasoning_effort=reasoning_effort,
             reasoning_budget_tokens=reasoning_budget_tokens,
             reasoning_dynamic=reasoning_dynamic,
@@ -96,6 +98,9 @@ def translate_subtitles(
         )
     elif engine == "cloud-v3":
         from autosub.pipeline.translate.api import CloudTranslationTranslator
+
+        if not PROJECT_ID:
+            raise ValueError("GOOGLE_CLOUD_PROJECT is not set in the environment.")
 
         translator = CloudTranslationTranslator(
             project_id=PROJECT_ID,

@@ -17,14 +17,19 @@ class TranslatedSubtitle(BaseModel):
 
 
 class VertexTranslator(BaseTranslator, BaseStructuredLLM):
+    DEFAULT_MODELS = {
+        "google-vertex": "gemini-3-flash-preview",
+        "anthropic": "claude-haiku-4-5",
+    }
+
     def __init__(
         self,
         *,
-        project_id: str,
+        project_id: str | None,
         target_lang: str = "en",
         source_lang: str = "ja",
         system_prompt: str | None = None,
-        model: str = "gemini-3-flash-preview",
+        model: str | None = None,
         location: str = "global",
         temperature: float = 0.1,
         provider: str = "google-vertex",
@@ -34,12 +39,15 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
         provider_options: dict[str, object] | None = None,
         trace_path: Path | str | None = None,
     ):
+        resolved_model = model or self.DEFAULT_MODELS.get(
+            provider, "gemini-3-flash-preview"
+        )
         super().__init__(
             project_id=project_id,
             target_lang=target_lang,
             source_lang=source_lang,
             system_prompt=system_prompt,
-            model=model,
+            model=resolved_model,
             location=location,
             temperature=temperature,
             provider=provider,
@@ -84,8 +92,9 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
             return []
 
         logger.info(
-            "Translating %s subtitle shards using Vertex AI model '%s' in '%s'...",
+            "Translating %s subtitle shards using provider '%s' model '%s' in '%s'...",
             len(texts),
+            self.provider,
             self.model,
             self.location,
         )
@@ -98,7 +107,7 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
             user_prompt=contents,
             system_prompt=system_instruction,
             output_type=list[TranslatedSubtitle],
-            operation_name="Vertex translator",
+            operation_name="LLM translator",
             output_name="subtitle_translations",
         )
 
@@ -119,7 +128,7 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
 
         except Exception as exc:
             raise VertexResponseShapeError(
-                f"Vertex translator returned JSON with an unexpected structure: {exc}",
+                f"LLM translator returned JSON with an unexpected structure: {exc}",
                 diagnostics=diagnostics,
                 project_id=self.project_id,
                 model=self.model,

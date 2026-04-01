@@ -11,9 +11,14 @@ from pydantic import BaseModel
 from pydantic_ai import Agent, NativeOutput
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 from pydantic_ai.messages import ThinkingPart
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
+
+from anthropic import AsyncAnthropic
 
 from autosub.core.errors import (
     VertexBlockedResponseError,
@@ -77,6 +82,20 @@ class BaseStructuredLLM:
         ("gemini-2.5-flash-lite", 512),
         ("gemini-2.5-pro", 128),
     )
+    _ANTHROPIC_REASONING_BUDGETS: ClassVar[dict[ReasoningEffort, int]] = {
+        ReasoningEffort.MINIMAL: 2048,
+        ReasoningEffort.LOW: 4096,
+        ReasoningEffort.MEDIUM: 16384,
+        ReasoningEffort.HIGH: 32768,
+    }
+    _ANTHROPIC_MIN_BUDGET = 1024
+    _ANTHROPIC_DEFAULT_MAX_TOKENS = 4096
+    _ANTHROPIC_REASONING_MAX_TOKENS: ClassVar[dict[ReasoningEffort, int]] = {
+        ReasoningEffort.MINIMAL: 16384,
+        ReasoningEffort.LOW: 16384,
+        ReasoningEffort.MEDIUM: 32768,
+        ReasoningEffort.HIGH: 65536,
+    }
     _TRACE_PART_FIELDS = (
         "content",
         "id",
@@ -155,25 +174,38 @@ class BaseStructuredLLM:
             ),
         )
 
-    def _build_model(self) -> GoogleModel:
+    def _build_model(self) -> Any:
         config = self._get_model_config()
 
-        if config.provider != "google-vertex":
-            raise ValueError(f"Unsupported LLM provider: {config.provider}")
+        if config.provider == "google-vertex":
+            if not config.project_id:
+                raise ValueError(
+                    "google-vertex provider requires a Google Cloud project id."
+                )
 
-        if not config.project_id:
-            raise ValueError(
-                "google-vertex provider requires a Google Cloud project id."
+            return GoogleModel(
+                config.model,
+                provider=GoogleProvider(
+                    project=config.project_id,
+                    location=config.location,
+                ),
+                settings=self._build_google_model_settings(config),
             )
 
-        return GoogleModel(
-            config.model,
-            provider=GoogleProvider(
-                project=config.project_id,
-                location=config.location,
-            ),
-            settings=self._build_google_model_settings(config),
-        )
+        if config.provider == "anthropic":
+            return AnthropicModel(
+                config.model,
+                provider=AnthropicProvider(
+                    anthropic_client=AsyncAnthropic(
+                        api_key=self._require_anthropic_api_key()
+                    )
+                ),
+                settings=cast(
+                    ModelSettings, self._build_anthropic_model_settings(config)
+                ),
+            )
+
+        raise ValueError(f"Unsupported LLM provider: {config.provider}")
 
     def _build_google_model_settings(
         self, config: LLMModelConfig
@@ -188,6 +220,95 @@ class BaseStructuredLLM:
         if config.provider_options:
             settings.update(config.provider_options)
         return cast(GoogleModelSettings, settings)
+
+    def _build_anthropic_model_settings(self, config: LLMModelConfig) -> dict[str, Any]:
+        if config.reasoning_dynamic is True:
+            raise ValueError("Provider 'anthropic' does not support reasoning_dynamic.")
+
+        settings: dict[str, Any] = {"temperature": config.temperature}
+        thinking_setting = self._build_anthropic_thinking_setting(config)
+        if thinking_setting is not None:
+            settings.update(thinking_setting)
+        self._normalize_anthropic_temperature(settings)
+        if config.provider_options:
+            settings.update(config.provider_options)
+        self._ensure_anthropic_budget_fits_max_tokens(settings)
+        return settings
+
+    def _build_anthropic_thinking_setting(
+        self, config: LLMModelConfig
+    ) -> dict[str, Any] | None:
+        if config.reasoning_budget_tokens is not None:
+            budget_tokens = self._validate_anthropic_thinking_budget(
+                config.reasoning_budget_tokens
+            )
+            return {
+                "anthropic_thinking": {
+                    "type": "enabled",
+                    "budget_tokens": budget_tokens,
+                },
+                "max_tokens": max(
+                    self._ANTHROPIC_DEFAULT_MAX_TOKENS, budget_tokens * 2
+                ),
+            }
+
+        if config.reasoning_effort is None:
+            return None
+        if config.reasoning_effort == ReasoningEffort.OFF:
+            return {"thinking": False}
+
+        settings: dict[str, Any] = {"thinking": config.reasoning_effort.value}
+        settings["max_tokens"] = self._resolve_anthropic_effort_max_tokens(config)
+        return settings
+
+    @classmethod
+    def _validate_anthropic_thinking_budget(cls, reasoning_budget_tokens: int) -> int:
+        if reasoning_budget_tokens < cls._ANTHROPIC_MIN_BUDGET:
+            raise ValueError("anthropic reasoning_budget_tokens must be at least 1024.")
+        return reasoning_budget_tokens
+
+    @classmethod
+    def _ensure_anthropic_budget_fits_max_tokens(cls, settings: dict[str, Any]) -> None:
+        thinking_config = settings.get("anthropic_thinking")
+        if not isinstance(thinking_config, dict):
+            return
+
+        budget_tokens = thinking_config.get("budget_tokens")
+        max_tokens = settings.get("max_tokens")
+        if (
+            isinstance(budget_tokens, int)
+            and isinstance(max_tokens, int)
+            and budget_tokens >= max_tokens
+        ):
+            raise ValueError(
+                "anthropic reasoning_budget_tokens must be smaller than max_tokens."
+            )
+
+    @staticmethod
+    def _resolve_anthropic_effort_budget(config: LLMModelConfig) -> int | None:
+        effort = config.reasoning_effort
+        if effort is None or effort == ReasoningEffort.OFF:
+            return None
+
+        return BaseStructuredLLM._ANTHROPIC_REASONING_BUDGETS[effort]
+
+    @staticmethod
+    def _resolve_anthropic_effort_max_tokens(config: LLMModelConfig) -> int:
+        effort = config.reasoning_effort
+        if effort is None or effort == ReasoningEffort.OFF:
+            return BaseStructuredLLM._ANTHROPIC_DEFAULT_MAX_TOKENS
+
+        return BaseStructuredLLM._ANTHROPIC_REASONING_MAX_TOKENS[effort]
+
+    @staticmethod
+    def _normalize_anthropic_temperature(settings: dict[str, Any]) -> None:
+        thinking_setting = settings.get("thinking")
+        anthropic_thinking = settings.get("anthropic_thinking")
+        thinking_enabled = thinking_setting not in (None, False) or isinstance(
+            anthropic_thinking, dict
+        )
+        if thinking_enabled:
+            settings["temperature"] = 1.0
 
     def _build_google_thinking_config(
         self, config: LLMModelConfig
@@ -239,6 +360,15 @@ class BaseStructuredLLM:
             )
 
         return thinking_level
+
+    @staticmethod
+    def _require_anthropic_api_key() -> str:
+        import os
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("anthropic provider requires ANTHROPIC_API_KEY.")
+        return api_key
 
     def _build_agent(
         self,

@@ -181,20 +181,27 @@ def translate(
     ),
     target_lang: str = typer.Option("en", "--target", help="Target language code."),
     source_lang: str = typer.Option("ja", "--source", help="Source language code."),
-    vertex_model: str = typer.Option(
-        "gemini-3-flash-preview",
+    vertex_model: str | None = typer.Option(
+        None,
+        "--llm-model",
         "--vertex-model",
-        help="Vertex model name for LLM translation.",
+        help="LLM model name for translation. Defaults to Gemini for google-vertex and Haiku for anthropic.",
     ),
     vertex_location: str = typer.Option(
         "global",
+        "--llm-location",
         "--vertex-location",
-        help="Vertex region for LLM translation.",
+        help="LLM location or region for translation.",
+    ),
+    llm_provider: str = typer.Option(
+        "google-vertex",
+        "--llm-provider",
+        help="LLM provider to use for the vertex engine ('google-vertex' or 'anthropic').",
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
         "--vertex-reasoning-effort",
-        help="Provider-agnostic reasoning effort for Vertex LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
+        help="Provider-agnostic reasoning effort for LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
     ),
     vertex_reasoning_budget: int | None = typer.Option(
         None,
@@ -251,6 +258,7 @@ def translate(
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
+            provider=llm_provider,
             reasoning_effort=vertex_reasoning_effort,
             reasoning_budget_tokens=vertex_reasoning_budget,
             reasoning_dynamic=vertex_reasoning_dynamic,
@@ -334,7 +342,12 @@ def run(
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
         "--vertex-reasoning-effort",
-        help="Provider-agnostic reasoning effort for Vertex LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
+        help="Provider-agnostic reasoning effort for LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
+    ),
+    llm_provider: str = typer.Option(
+        "google-vertex",
+        "--llm-provider",
+        help="LLM provider to use for translation ('google-vertex' or 'anthropic').",
     ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
@@ -482,6 +495,7 @@ def run(
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
+            provider=llm_provider,
             reasoning_effort=vertex_reasoning_effort,
             chunk_size=chunk_size,
         )

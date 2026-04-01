@@ -40,11 +40,14 @@ graph TD
 1. Python 3.12+
 2. `uv`
 3. FFmpeg available on `PATH`
-4. Google Cloud credentials with:
+4. Credentials for the services you plan to use:
+   - Google Cloud for transcription, Cloud Translation v3, or `google-vertex`
+   - `ANTHROPIC_API_KEY` for direct Anthropic translation or classification
+5. Google Cloud credentials when using Google-backed features:
    - `GOOGLE_APPLICATION_CREDENTIALS`
    - `GOOGLE_CLOUD_PROJECT`
    - `AUTOSUB_GCS_BUCKET` for audio longer than about 60 seconds
-5. Optional: `SCXvid` if you want automatic keyframe extraction for scene-aware timing
+6. Optional: `SCXvid` if you want automatic keyframe extraction for scene-aware timing
 
 ## Installation
 
@@ -62,7 +65,14 @@ Create a `.env` file in the repo root:
 GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 GOOGLE_CLOUD_PROJECT=your-project-id
 AUTOSUB_GCS_BUCKET=your-staging-bucket
+ANTHROPIC_API_KEY=your-anthropic-api-key
 ```
+
+Notes:
+
+- `ANTHROPIC_API_KEY` is only needed for `--llm-provider anthropic`.
+- `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `AUTOSUB_GCS_BUCKET` are only needed for Google-backed stages.
+- Long-audio transcription still requires Google Cloud Storage even if translation uses Anthropic.
 
 ## Quick Start
 
@@ -108,15 +118,29 @@ uv run autosub format .\transcript.json `
   --profile suzuhara_nozomi
 ```
 
-Translate with Vertex AI:
+Translate with Anthropic:
 
 ```powershell
 uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
   --engine vertex `
+  --llm-provider anthropic `
   --vertex-reasoning-effort low `
-  --vertex-reasoning-budget 1024 `
+  --bilingual
+```
+
+Translate with Anthropic Sonnet 4.6:
+
+```powershell
+uv run autosub translate .\original.ass `
+  --out .\translated.ass `
+  --profile suzuhara_nozomi `
+  --engine vertex `
+  --llm-provider anthropic `
+  --llm-model claude-sonnet-4-6 `
+  --vertex-reasoning-effort low `
+  --chunk-size 20 `
   --bilingual
 ```
 
@@ -159,22 +183,38 @@ Behavior notes:
 
 - `--out`: Output `.ass` path. Default: `translated.ass`
 - `--engine`, `-e`: `vertex` or `cloud-v3`
+- `--llm-provider`: `google-vertex` or `anthropic` for the `vertex` engine
 - `--prompt`, `-p`: Extra translation guidance appended after profile prompts
 - `--profile`: Loads prompt text from the selected profile
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
-- `--vertex-model`: Override the default Vertex model
-- `--vertex-location`: Override the default Vertex region
-- `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for Vertex-backed LLM calls. Current Google support varies by model family and can include `off`, `minimal`, `low`, `medium`, `high`
-- `--vertex-reasoning-budget`: Optional token-budget override. For Gemini 2.5 this is passed as thinking budget; for level-only Gemini families it is converted heuristically
-- `--vertex-reasoning-dynamic` / `--no-vertex-reasoning-dynamic`: Request dynamic reasoning budget on supported model families
+- `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex` and `claude-haiku-4-5` for `anthropic`
+- `--llm-location` / `--vertex-location`: Override the LLM location or region
+- `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for LLM-backed translation. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
+- `--vertex-reasoning-budget`: Optional token-budget override for provider-specific reasoning controls
+- `--vertex-reasoning-dynamic` / `--no-vertex-reasoning-dynamic`: Request dynamic reasoning budget on supported providers and model families
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
 - `--chunk-size`: Number of subtitle lines per translation chunk. Use `0` to disable chunking. Default: `0`
 
 Behavior notes:
 
-- `vertex` uses Vertex AI with `gemini-3-flash-preview`.
+- `vertex` uses the structured LLM path. The default provider is Vertex AI with `gemini-3-flash-preview`, and direct Anthropic is also supported with `--llm-provider anthropic`.
 - `cloud-v3` uses Google Cloud Translation v3 and ignores custom prompt text.
+
+Anthropic notes:
+
+- Supported direct Anthropic models include `claude-haiku-4-5`, `claude-sonnet-4-6`, and `claude-opus-4-6`.
+- When `--llm-provider anthropic` is selected and `--llm-model` is omitted, the default model is `claude-haiku-4-5`.
+- For longer or stricter JSON-heavy translation jobs, `claude-sonnet-4-6` is usually more reliable than Haiku.
+- `--llm-location` is ignored for direct Anthropic requests.
+- Direct Anthropic uses the same `--vertex-reasoning-effort` flag for now because the CLI predates multi-provider support.
+
+Current Anthropic reasoning defaults in this repo:
+
+- `minimal`: thinking budget `2048`, `max_tokens 16384`
+- `low`: thinking budget `4096`, `max_tokens 16384`
+- `medium`: thinking budget `16384`, `max_tokens 32768`
+- `high`: thinking budget `32768`, `max_tokens 65536`
 
 ### `autosub postprocess`
 
@@ -199,6 +239,7 @@ Behavior notes:
 - `--target`
 - `--source`
 - `--vertex-reasoning-effort`
+- `--llm-provider`
 - `--bilingual` / `--replace`
 - `--keyframes`
 - `--extract-keyframes` / `--no-extract-keyframes`
@@ -208,8 +249,18 @@ Behavior notes:
 
 Behavior notes:
 
-- `run` always uses the default Vertex translation path.
-- If you need `cloud-v3` or advanced Vertex overrides such as model, location, or dynamic reasoning settings, run the stages separately and use `autosub translate`.
+- `run` defaults to the Vertex AI translation path, but you can switch to direct Anthropic with `--llm-provider anthropic`.
+- If you need `cloud-v3` or advanced LLM overrides such as model, location, or dynamic reasoning settings, run the stages separately and use `autosub translate`.
+
+Example:
+
+```powershell
+uv run autosub run .\video.mp4 `
+  --profile suzuhara_nozomi `
+  --llm-provider anthropic `
+  --vertex-reasoning-effort low `
+  --bilingual
+```
 
 ## Unified Profile Format
 
@@ -234,9 +285,9 @@ conditional_snap_threshold_ms = 500
 [extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
-model = "gemini-3-flash-preview"
+provider = "anthropic"
+model = "claude-haiku-4-5"
 reasoning_effort = "low"
-reasoning_budget_tokens = 1024
 scope = "full_script"
 window_size = 10
 window_overlap = 3
@@ -286,15 +337,30 @@ Supported options:
 
 - `enabled`: Turn the extension on
 - `engine`: `rules`, `vertex`, or `hybrid`
-- `model`: Vertex model name for `vertex` or `hybrid`
-- `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current Google support varies by model family and can include `off`, `minimal`, `low`, `medium`, `high`
-- `reasoning_budget_tokens`: Optional token-budget override. For Gemini 2.5 this maps directly to thinking budget; for level-only Gemini families it is converted heuristically
-- `reasoning_dynamic`: Request dynamic reasoning budget when the selected model family supports it
-- `location`: Vertex region. Default: `us-central1`
+- `provider`: `google-vertex` or `anthropic` for the LLM-backed modes
+- `model`: LLM model name for `vertex` or `hybrid`
+- `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
+- `reasoning_budget_tokens`: Optional token-budget override for provider-specific reasoning controls
+- `reasoning_dynamic`: Request dynamic reasoning budget when the selected provider supports it
+- `location`: LLM location or region. Default: `global`
 - `scope`: `full_script` or windowed classification
 - `window_size`: Window size for non-`full_script` classification
 - `window_overlap`: Window overlap for non-`full_script` classification
 - `split_framing_phrases`: Split host framing suffixes into separate lines before classification
 - `label_roles`: Persist the resolved role onto subtitle events
 
-`hybrid` uses rule-based labels first and falls back to them if Vertex classification fails.
+`hybrid` uses rule-based labels first and falls back to them if LLM classification fails.
+
+Anthropic-backed `radio_discourse` example:
+
+```toml
+[extensions.radio_discourse]
+enabled = true
+engine = "hybrid"
+provider = "anthropic"
+model = "claude-haiku-4-5"
+reasoning_effort = "low"
+scope = "full_script"
+split_framing_phrases = true
+label_roles = true
+```

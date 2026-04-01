@@ -83,6 +83,30 @@ def test_classify_roles_with_vertex_defaults_to_flash_lite(monkeypatch):
     assert captured["model"] == "gemini-3.1-flash-lite-preview"
 
 
+def test_classify_roles_with_vertex_defaults_to_haiku_for_anthropic(monkeypatch):
+    captured: dict[str, str] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["model"] = self.model
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"provider": "anthropic"},
+    )
+
+    assert result == ["host"]
+    assert captured["model"] == "claude-haiku-4-5"
+
+
 def test_classify_roles_with_vertex_passes_reasoning_effort(monkeypatch):
     captured: dict[str, str | None] = {}
     lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
@@ -129,6 +153,32 @@ def test_classify_roles_with_vertex_passes_reasoning_budget(monkeypatch):
 
     assert result == ["host"]
     assert captured["reasoning_budget_tokens"] == 2048
+
+
+def test_classify_roles_with_vertex_allows_anthropic_without_project_id(monkeypatch):
+    captured: dict[str, str | None] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["provider"] = self.provider
+        captured["project_id"] = self.project_id
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"provider": "anthropic"},
+    )
+
+    assert result == ["host"]
+    assert captured["provider"] == "anthropic"
+    assert captured["project_id"] is None
 
 
 def test_apply_radio_discourse_hybrid_falls_back_to_rules_on_vertex_failure(

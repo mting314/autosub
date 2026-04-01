@@ -23,11 +23,16 @@ class RadioDiscourseDecision(BaseModel):
 
 
 class VertexRadioDiscourseClassifier(BaseStructuredLLM):
+    DEFAULT_MODELS = {
+        "google-vertex": "gemini-3.1-flash-lite-preview",
+        "anthropic": "claude-haiku-4-5",
+    }
+
     def __init__(
         self,
         *,
-        project_id: str,
-        model: str = "gemini-3.1-flash-lite-preview",
+        project_id: str | None,
+        model: str | None = None,
         location: str = "global",
         temperature: float = 0.1,
         provider: str = "google-vertex",
@@ -37,9 +42,12 @@ class VertexRadioDiscourseClassifier(BaseStructuredLLM):
         provider_options: dict[str, object] | None = None,
         trace_path: Path | str | None = None,
     ):
+        resolved_model = model or self.DEFAULT_MODELS.get(
+            provider, "gemini-3.1-flash-lite-preview"
+        )
         super().__init__(
             project_id=project_id,
-            model=model,
+            model=resolved_model,
             location=location,
             temperature=temperature,
             provider=provider,
@@ -93,7 +101,7 @@ class VertexRadioDiscourseClassifier(BaseStructuredLLM):
             user_prompt=contents,
             system_prompt=system_instruction,
             output_type=list[RadioDiscourseDecision],
-            operation_name="Vertex radio discourse classifier",
+            operation_name="LLM radio discourse classifier",
             output_name="radio_discourse_roles",
         )
 
@@ -107,7 +115,7 @@ class VertexRadioDiscourseClassifier(BaseStructuredLLM):
             return {item.id: item.role for item in ordered_decisions}
         except Exception as exc:
             raise VertexResponseShapeError(
-                "Vertex radio discourse classifier returned JSON with an unexpected structure: "
+                "LLM radio discourse classifier returned JSON with an unexpected structure: "
                 f"{exc}",
                 diagnostics=diagnostics,
                 project_id=self.project_id,
@@ -124,17 +132,18 @@ def classify_roles_with_vertex(
     if not lines:
         return []
 
+    provider = config.get("provider", "google-vertex")
     project_id = config.get("project_id")
-    if not project_id:
+    if provider == "google-vertex" and not project_id:
         raise ValueError(
             "radio_discourse Vertex mode requires a Google Cloud project id."
         )
 
     classifier = VertexRadioDiscourseClassifier(
         project_id=project_id,
-        model=config.get("model", "gemini-3.1-flash-lite-preview"),
+        model=config.get("model"),
         location=config.get("location", "global"),
-        provider=config.get("provider", "google-vertex"),
+        provider=provider,
         reasoning_effort=config.get("reasoning_effort", ReasoningEffort.MEDIUM),
         reasoning_budget_tokens=config.get("reasoning_budget_tokens"),
         reasoning_dynamic=config.get("reasoning_dynamic"),

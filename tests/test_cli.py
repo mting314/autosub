@@ -19,6 +19,7 @@ def test_translate_help_uses_chunk_size_only():
     assert result.exit_code == 0
     assert "--chunk-size" in result.output
     assert "--no-chunk" not in result.output
+    assert "--llm-provider" in result.output
     assert "--vertex-model" in result.output
     assert "--vertex-location" in result.output
 
@@ -34,6 +35,7 @@ def test_run_help_hides_advanced_translation_knobs():
     assert "--vertex-reasoning-dynamic" not in result.output
     assert "--speakers" not in result.output
     assert "--no-chunk" not in result.output
+    assert "--llm-provider" in result.output
     assert "--vertex-reasoning-effort" in result.output
     assert "--chunk-size" in result.output
     assert "--start" in result.output
