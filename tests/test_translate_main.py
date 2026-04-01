@@ -305,6 +305,54 @@ def test_translate_subtitles_allows_anthropic_without_google_project(
     assert captured["model"] is None
 
 
+def test_translate_subtitles_allows_openai_without_google_project(
+    tmp_path, monkeypatch
+):
+    input_ass_path = tmp_path / "original.ass"
+    output_ass_path = tmp_path / "translated.ass"
+    input_ass_path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "Title: Test",
+                "ScriptType: v4.00+",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,こんにちは",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeVertexTranslator:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def translate(self, texts: list[str]) -> list[str]:
+            return [f"translated:{text}" for text in texts]
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", None)
+    monkeypatch.setattr(translator_module, "VertexTranslator", FakeVertexTranslator)
+
+    translate_subtitles(
+        input_ass_path,
+        output_ass_path,
+        engine="vertex",
+        provider="openai",
+    )
+
+    assert captured["project_id"] is None
+    assert captured["provider"] == "openai"
+    assert captured["model"] is None
+
+
 def test_translate_subtitles_writes_error_file_on_failure(tmp_path, monkeypatch):
     input_ass_path = tmp_path / "original.ass"
     output_ass_path = tmp_path / "translated.ass"

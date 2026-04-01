@@ -26,6 +26,7 @@ class VertexRadioDiscourseClassifier(BaseStructuredLLM):
     DEFAULT_MODELS = {
         "google-vertex": "gemini-3.1-flash-lite-preview",
         "anthropic": "claude-haiku-4-5",
+        "openai": "gpt-5-mini",
     }
 
     def __init__(

@@ -22,6 +22,20 @@ def main():
     pass
 
 
+def _infer_llm_provider(model_name: str) -> str:
+    normalized = model_name.strip().lower()
+    if normalized.startswith("claude"):
+        return "anthropic"
+    if normalized.startswith("gemini"):
+        return "google-vertex"
+    if normalized.startswith(("gpt", "o", "chatgpt")):
+        return "openai"
+    raise typer.BadParameter(
+        f"Could not infer an LLM provider from model '{model_name}'. "
+        "Use --llm-provider explicitly."
+    )
+
+
 @app.command()
 def transcribe(
     video_path: Path = typer.Argument(
@@ -183,9 +197,10 @@ def translate(
     source_lang: str = typer.Option("ja", "--source", help="Source language code."),
     vertex_model: str | None = typer.Option(
         None,
+        "--model",
         "--llm-model",
         "--vertex-model",
-        help="LLM model name for translation. Defaults to Gemini for google-vertex and Haiku for anthropic.",
+        help="LLM model name for translation. Also infers the provider for Gemini, Claude, and OpenAI model names.",
     ),
     vertex_location: str = typer.Option(
         "global",
@@ -196,7 +211,7 @@ def translate(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for the vertex engine ('google-vertex' or 'anthropic').",
+        help="LLM provider to use for the vertex engine ('google-vertex', 'anthropic', or 'openai').",
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
@@ -247,18 +262,29 @@ def translate(
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
+    resolved_engine = engine
+    resolved_provider = llm_provider
+    if vertex_model:
+        if engine == "cloud-v3":
+            raise typer.BadParameter(
+                "--model cannot be used with --engine cloud-v3.",
+                param_hint="--model",
+            )
+        resolved_engine = "vertex"
+        resolved_provider = _infer_llm_provider(vertex_model)
+
     try:
         translate_module.translate_subtitles(
             input_ass,
             out,
-            engine=engine,
+            engine=resolved_engine,
             system_prompt=final_prompt,
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
-            provider=llm_provider,
+            provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
             reasoning_budget_tokens=vertex_reasoning_budget,
             reasoning_dynamic=vertex_reasoning_dynamic,
@@ -339,6 +365,11 @@ def run(
     ),
     target_lang: str = typer.Option("en", "--target", help="Target language code."),
     source_lang: str = typer.Option("ja", "--source", help="Source language code."),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        help="LLM model name for translation. Also infers the provider for Gemini, Claude, and OpenAI model names.",
+    ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
         "--vertex-reasoning-effort",
@@ -347,7 +378,7 @@ def run(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for translation ('google-vertex' or 'anthropic').",
+        help="LLM provider to use for translation ('google-vertex', 'anthropic', or 'openai').",
     ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
@@ -419,6 +450,7 @@ def run(
         final_prompt_parts.append(prompt)
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
+    resolved_provider = _infer_llm_provider(model) if model else llm_provider
 
     # Step 1: Transcribe
     try:
@@ -495,7 +527,8 @@ def run(
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
-            provider=llm_provider,
+            model=model,
+            provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
             chunk_size=chunk_size,
         )

@@ -107,6 +107,30 @@ def test_classify_roles_with_vertex_defaults_to_haiku_for_anthropic(monkeypatch)
     assert captured["model"] == "claude-haiku-4-5"
 
 
+def test_classify_roles_with_vertex_defaults_to_gpt_5_mini_for_openai(monkeypatch):
+    captured: dict[str, str] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["model"] = self.model
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"provider": "openai"},
+    )
+
+    assert result == ["host"]
+    assert captured["model"] == "gpt-5-mini"
+
+
 def test_classify_roles_with_vertex_passes_reasoning_effort(monkeypatch):
     captured: dict[str, str | None] = {}
     lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
@@ -178,6 +202,32 @@ def test_classify_roles_with_vertex_allows_anthropic_without_project_id(monkeypa
 
     assert result == ["host"]
     assert captured["provider"] == "anthropic"
+    assert captured["project_id"] is None
+
+
+def test_classify_roles_with_vertex_allows_openai_without_project_id(monkeypatch):
+    captured: dict[str, str | None] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["provider"] = self.provider
+        captured["project_id"] = self.project_id
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"provider": "openai"},
+    )
+
+    assert result == ["host"]
+    assert captured["provider"] == "openai"
     assert captured["project_id"] is None
 
 

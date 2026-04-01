@@ -45,6 +45,15 @@ def test_vertex_translator_defaults_to_anthropic_haiku():
     assert translator.model == "claude-haiku-4-5"
 
 
+def test_vertex_translator_defaults_to_openai_gpt_5_mini():
+    translator = VertexTranslator(
+        project_id=None,
+        provider="openai",
+    )
+
+    assert translator.model == "gpt-5-mini"
+
+
 def test_vertex_translator_defaults_to_medium_reasoning_effort():
     translator = VertexTranslator(project_id="test-project")
 
@@ -266,3 +275,55 @@ def test_anthropic_reasoning_dynamic_is_rejected():
 
     with pytest.raises(ValueError, match="does not support reasoning_dynamic"):
         llm._build_anthropic_model_settings(llm._get_model_config())
+
+
+def test_openai_reasoning_effort_maps_to_unified_thinking():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="gpt-5-mini",
+        provider="openai",
+        reasoning_effort=ReasoningEffort.LOW,
+    )
+
+    settings = llm._build_openai_model_settings(llm._get_model_config())
+
+    assert settings["thinking"] == "low"
+    assert settings["temperature"] == 0.1
+
+
+def test_openai_reasoning_off_disables_thinking():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="gpt-5-mini",
+        provider="openai",
+        reasoning_effort=ReasoningEffort.OFF,
+    )
+
+    settings = llm._build_openai_model_settings(llm._get_model_config())
+
+    assert settings["thinking"] is False
+
+
+def test_openai_reasoning_budget_maps_to_max_tokens():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="gpt-5-mini",
+        provider="openai",
+        reasoning_budget_tokens=8192,
+    )
+
+    settings = llm._build_openai_model_settings(llm._get_model_config())
+
+    assert settings["max_tokens"] == 8192
+
+
+def test_openai_reasoning_dynamic_is_rejected():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="gpt-5-mini",
+        provider="openai",
+        reasoning_dynamic=True,
+    )
+
+    with pytest.raises(ValueError, match="does not support reasoning_dynamic"):
+        llm._build_openai_model_settings(llm._get_model_config())

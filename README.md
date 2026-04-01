@@ -43,6 +43,7 @@ graph TD
 4. Credentials for the services you plan to use:
    - Google Cloud for transcription, Cloud Translation v3, or `google-vertex`
    - `ANTHROPIC_API_KEY` for direct Anthropic translation or classification
+   - `OPENAI_API_KEY` for direct OpenAI translation or classification
 5. Google Cloud credentials when using Google-backed features:
    - `GOOGLE_APPLICATION_CREDENTIALS`
    - `GOOGLE_CLOUD_PROJECT`
@@ -66,11 +67,13 @@ GOOGLE_APPLICATION_CREDENTIALS=C:\path\to\service-account.json
 GOOGLE_CLOUD_PROJECT=your-project-id
 AUTOSUB_GCS_BUCKET=your-staging-bucket
 ANTHROPIC_API_KEY=your-anthropic-api-key
+OPENAI_API_KEY=your-openai-api-key
 ```
 
 Notes:
 
 - `ANTHROPIC_API_KEY` is only needed for `--llm-provider anthropic`.
+- `OPENAI_API_KEY` is only needed for `--llm-provider openai`.
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `AUTOSUB_GCS_BUCKET` are only needed for Google-backed stages.
 - Long-audio transcription still requires Google Cloud Storage even if translation uses Anthropic.
 
@@ -124,8 +127,7 @@ Translate with Anthropic:
 uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
-  --engine vertex `
-  --llm-provider anthropic `
+  --model claude-haiku-4-5 `
   --vertex-reasoning-effort low `
   --bilingual
 ```
@@ -136,11 +138,20 @@ Translate with Anthropic Sonnet 4.6:
 uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
-  --engine vertex `
-  --llm-provider anthropic `
-  --llm-model claude-sonnet-4-6 `
+  --model claude-sonnet-4-6 `
   --vertex-reasoning-effort low `
   --chunk-size 20 `
+  --bilingual
+```
+
+Translate with OpenAI:
+
+```powershell
+uv run autosub translate .\original.ass `
+  --out .\translated.ass `
+  --profile suzuhara_nozomi `
+  --model gpt-5-mini `
+  --vertex-reasoning-effort low `
   --bilingual
 ```
 
@@ -183,12 +194,13 @@ Behavior notes:
 
 - `--out`: Output `.ass` path. Default: `translated.ass`
 - `--engine`, `-e`: `vertex` or `cloud-v3`
-- `--llm-provider`: `google-vertex` or `anthropic` for the `vertex` engine
+- `--model`: Preferred LLM selector for the `vertex` engine. Infers provider automatically for Gemini, Claude, and OpenAI model names
+- `--llm-provider`: `google-vertex`, `anthropic`, or `openai` for the `vertex` engine
 - `--prompt`, `-p`: Extra translation guidance appended after profile prompts
 - `--profile`: Loads prompt text from the selected profile
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
-- `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex` and `claude-haiku-4-5` for `anthropic`
+- `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex`, `claude-haiku-4-5` for `anthropic`, and `gpt-5-mini` for `openai`
 - `--llm-location` / `--vertex-location`: Override the LLM location or region
 - `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for LLM-backed translation. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
 - `--vertex-reasoning-budget`: Optional token-budget override for provider-specific reasoning controls
@@ -199,7 +211,10 @@ Behavior notes:
 Behavior notes:
 
 - `vertex` uses the structured LLM path. The default provider is Vertex AI with `gemini-3-flash-preview`, and direct Anthropic is also supported with `--llm-provider anthropic`.
+- `vertex` also supports direct OpenAI with `--llm-provider openai`.
 - `cloud-v3` uses Google Cloud Translation v3 and ignores custom prompt text.
+- `--model gemini-*` infers `google-vertex`, `--model claude-*` infers `anthropic`, and `--model gpt-*` or `o*` infers `openai`.
+- `--model` cannot be combined with `--engine cloud-v3`.
 
 Anthropic notes:
 
@@ -215,6 +230,13 @@ Current Anthropic reasoning defaults in this repo:
 - `low`: thinking budget `4096`, `max_tokens 16384`
 - `medium`: thinking budget `16384`, `max_tokens 32768`
 - `high`: thinking budget `32768`, `max_tokens 65536`
+
+OpenAI notes:
+
+- Direct OpenAI currently defaults to `gpt-5-mini` when `--llm-provider openai` is selected and `--llm-model` is omitted.
+- `--llm-location` is ignored for direct OpenAI requests.
+- OpenAI uses the same `--vertex-reasoning-effort` flag for now because the CLI predates multi-provider support.
+- `--vertex-reasoning-budget` is passed through as `max_tokens` for OpenAI.
 
 ### `autosub postprocess`
 
@@ -257,7 +279,7 @@ Example:
 ```powershell
 uv run autosub run .\video.mp4 `
   --profile suzuhara_nozomi `
-  --llm-provider anthropic `
+  --model claude-haiku-4-5 `
   --vertex-reasoning-effort low `
   --bilingual
 ```
@@ -338,6 +360,7 @@ Supported options:
 - `enabled`: Turn the extension on
 - `engine`: `rules`, `vertex`, or `hybrid`
 - `provider`: `google-vertex` or `anthropic` for the LLM-backed modes
+- `provider`: `google-vertex`, `anthropic`, or `openai` for the LLM-backed modes
 - `model`: LLM model name for `vertex` or `hybrid`
 - `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
 - `reasoning_budget_tokens`: Optional token-budget override for provider-specific reasoning controls
@@ -359,6 +382,20 @@ enabled = true
 engine = "hybrid"
 provider = "anthropic"
 model = "claude-haiku-4-5"
+reasoning_effort = "low"
+scope = "full_script"
+split_framing_phrases = true
+label_roles = true
+```
+
+OpenAI-backed `radio_discourse` example:
+
+```toml
+[extensions.radio_discourse]
+enabled = true
+engine = "hybrid"
+provider = "openai"
+model = "gpt-5-mini"
 reasoning_effort = "low"
 scope = "full_script"
 split_framing_phrases = true
