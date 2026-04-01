@@ -28,7 +28,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         return {
             "prompt": [],
             "vocab": [],
-            "speakers": None,
             "timing": {},
             "extensions": {},
             "glossary": {},
@@ -42,7 +41,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         return {
             "prompt": [],
             "vocab": [],
-            "speakers": None,
             "timing": {},
             "extensions": {},
             "glossary": {},
@@ -57,7 +55,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         return {
             "prompt": [],
             "vocab": [],
-            "speakers": None,
             "timing": {},
             "extensions": {},
             "glossary": {},
@@ -66,7 +63,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
 
     combined_prompt = []
     combined_vocab = []
-    final_speakers = None
     final_timing = {}
     final_extensions = {}
     final_glossary = {}
@@ -77,8 +73,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         base_data = load_unified_profile(base, visited)
         combined_prompt.extend(base_data["prompt"])
         combined_vocab.extend(base_data["vocab"])
-        if final_speakers is None and base_data.get("speakers") is not None:
-            final_speakers = base_data["speakers"]
         # Update inherited timing. Top level overrides base.
         for k, v in base_data.get("timing", {}).items():
             if k not in final_timing:
@@ -110,13 +104,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         else:
             logger.warning(f"'vocab' in {profile_name} must be a list of strings.")
 
-    # Override speakers if explicitly defined in this profile layer
-    if "speakers" in data:
-        if isinstance(data["speakers"], int):
-            final_speakers = data["speakers"]
-        else:
-            logger.warning(f"'speakers' in {profile_name} must be an integer.")
-
     if "timing" in data:
         if isinstance(data["timing"], dict):
             final_timing.update(data["timing"])
@@ -146,7 +133,6 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
     return {
         "prompt": combined_prompt,
         "vocab": combined_vocab,
-        "speakers": final_speakers,
         "timing": final_timing,
         "extensions": final_extensions,
         "glossary": final_glossary,

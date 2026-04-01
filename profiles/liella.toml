@@ -1,5 +1,4 @@
 prompt = "prompts/liella.md"
-speakers = 11
 vocab = [
     # --- Group & Sub-Units ---
     "Liella!",

@@ -50,12 +50,6 @@ def transcribe(
         "--profile",
         help="Profile name to load transcription vocabulary hints.",
     ),
-    speakers: int = typer.Option(
-        None,
-        "--speakers",
-        "-s",
-        help="Reserved for future diarization work. Ignored by the current single-speaker pipeline.",
-    ),
     start: str = typer.Option(
         None,
         "--start",
@@ -78,11 +72,6 @@ def transcribe(
         final_vocab.extend(profile_data["vocab"])
     if vocab:
         final_vocab.extend(vocab)
-
-    if speakers:
-        logger.warning(
-            "--speakers is currently ignored. The active pipeline is single-speaker only."
-        )
 
     try:
         result = transcribe_main.transcribe(
@@ -222,15 +211,11 @@ def translate(
         "--bilingual/--replace",
         help="Include original text on top, or replace completely.",
     ),
-    chunk: bool = typer.Option(
-        False,
-        "--chunk/--no-chunk",
-        help="Split translation into smaller chunks. Useful for long files.",
-    ),
     chunk_size: int = typer.Option(
-        80,
+        0,
         "--chunk-size",
-        help="Number of subtitle lines per chunk when --chunk is enabled.",
+        min=0,
+        help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
 ):
     """
@@ -254,8 +239,6 @@ def translate(
         final_prompt_parts.append(prompt)
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
-
-    chunk_size = chunk_size if chunk else 0
 
     try:
         translate_module.translate_subtitles(
@@ -343,47 +326,18 @@ def run(
     vocab: list[str] = typer.Option(
         None, "--vocab", "-v", help="Custom transcription hints."
     ),
-    engine: str = typer.Option(
-        "vertex", "--engine", "-e", help="Translation engine ('vertex' or 'cloud-v3')."
-    ),
     prompt: str = typer.Option(
         None, "--prompt", "-p", help="System prompt to guide the LLM translation."
     ),
     target_lang: str = typer.Option("en", "--target", help="Target language code."),
     source_lang: str = typer.Option("ja", "--source", help="Source language code."),
-    vertex_model: str = typer.Option(
-        "gemini-3-flash-preview",
-        "--vertex-model",
-        help="Vertex model name for LLM translation.",
-    ),
-    vertex_location: str = typer.Option(
-        "global",
-        "--vertex-location",
-        help="Vertex region for LLM translation.",
-    ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
         "--vertex-reasoning-effort",
         help="Provider-agnostic reasoning effort for Vertex LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
     ),
-    vertex_reasoning_budget: int | None = typer.Option(
-        None,
-        "--vertex-reasoning-budget",
-        help="Optional token-budget override for Vertex LLM reasoning. For Gemini 2.5 this maps directly to thinking budget; for level-only models it is converted heuristically.",
-    ),
-    vertex_reasoning_dynamic: bool | None = typer.Option(
-        None,
-        "--vertex-reasoning-dynamic/--no-vertex-reasoning-dynamic",
-        help="Request dynamic reasoning budget when the selected Vertex model family supports it.",
-    ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
-    ),
-    speakers: int = typer.Option(
-        None,
-        "--speakers",
-        "-s",
-        help="Reserved for future diarization work. Ignored by the current single-speaker pipeline.",
     ),
     keyframes: Path = typer.Option(
         None,
@@ -405,15 +359,11 @@ def run(
         "--end",
         help="End time for transcription (e.g. 00:04:00 or 240).",
     ),
-    chunk: bool = typer.Option(
-        False,
-        "--chunk/--no-chunk",
-        help="Split translation into smaller chunks. Useful for long files.",
-    ),
     chunk_size: int = typer.Option(
-        80,
+        0,
         "--chunk-size",
-        help="Number of subtitle lines per chunk when --chunk is enabled.",
+        min=0,
+        help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
 ):
     """
@@ -436,7 +386,6 @@ def run(
     final_timing = {}
     final_extensions = {}
     replacements = {}
-    profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
         final_vocab.extend(profile_data["vocab"])
@@ -444,7 +393,6 @@ def run(
         final_timing = profile_data.get("timing", {})
         final_extensions = profile_data.get("extensions", {})
         replacements = profile_data.get("replacements", {})
-        profile_speakers_requested = bool(profile_data.get("speakers"))
 
         if profile_data.get("glossary"):
             glossary_text = "Glossary (Always translate these exact phrases):\n"
@@ -456,15 +404,6 @@ def run(
         final_vocab.extend(vocab)
     if prompt:
         final_prompt_parts.append(prompt)
-
-    if speakers:
-        logger.warning(
-            "--speakers is currently ignored. The active pipeline is single-speaker only."
-        )
-    elif profile_speakers_requested:
-        logger.warning(
-            "Profile speaker settings are currently ignored. The active pipeline is single-speaker only."
-        )
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
 
@@ -534,23 +473,16 @@ def run(
         raise typer.Exit(code=1)
 
     # Step 3: Translate
-    chunk_size = chunk_size if chunk else 0
-
     try:
         logger.info("[Step 3/4] Translating...")
         translate_module.translate_subtitles(
             original_ass_out,
             translated_ass_out,
-            engine=engine,
             system_prompt=final_prompt,
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
-            model=vertex_model,
-            location=vertex_location,
             reasoning_effort=vertex_reasoning_effort,
-            reasoning_budget_tokens=vertex_reasoning_budget,
-            reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
         )
     except Exception as e:

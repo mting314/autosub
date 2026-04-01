@@ -66,36 +66,6 @@ def test_soft_punctuation_does_not_split_short_chunk_without_pause():
     assert lines[0].text == "".join(word.word for word in words)
 
 
-def test_profile_speaker_parsing(tmp_path):
-    # Mock a TOML profile
-    profile_dir = tmp_path / "profiles"
-    profile_dir.mkdir()
-
-    test_toml = profile_dir / "test.toml"
-    test_toml.write_text('vocab = ["test"]\nspeakers = 3\n')
-
-    # Monkeypatch the Path inside load_unified_profile to read from our tmp_path
-    import autosub.core.profile
-
-    original_path = autosub.core.profile.Path
-
-    class MockPath(autosub.core.profile.Path):
-        def __new__(cls, *args, **kwargs):
-            # If checking for "profiles", map down to our tmp_dir
-            if args and args[0] == "profiles":
-                return profile_dir
-            return super().__new__(cls, *args, **kwargs)
-
-    autosub.core.profile.Path = MockPath
-
-    try:
-        data = load_unified_profile("test")
-        assert data["speakers"] == 3
-        assert data["vocab"] == ["test"]
-    finally:
-        autosub.core.profile.Path = original_path
-
-
 def test_profile_prompt_inheritance(tmp_path):
     profile_dir = tmp_path / "profiles"
     prompt_dir = tmp_path / "prompts"

@@ -32,7 +32,6 @@ graph TD
 ## Current Limits
 
 - The CLI is still documented and exposed as a **single-speaker** pipeline.
-- `--speakers` and profile `speakers` values are parsed but currently ignored by the active CLI flow.
 - The transcript and formatter can preserve `speaker` labels if they are already present in `transcript.json`, and `.ass` generation will create per-speaker styles, but diarization is not wired through the transcription commands yet.
 - The formatter does **not** currently insert ASS line breaks (`\N`). Layout helpers exist in the codebase, but profile options such as `max_line_width` and `max_lines_per_subtitle` are not currently consumed by the CLI pipeline.
 
@@ -137,7 +136,6 @@ uv run autosub postprocess .\translated.ass `
 - `--language`, `-l`: Speech recognition language code. Default: `ja-JP`
 - `--vocab`, `-v`: Additional speech adaptation hints. Can be passed multiple times.
 - `--profile`: Loads profile vocabulary.
-- `--speakers`, `-s`: Reserved for future diarization support. Currently ignored.
 
 Behavior notes:
 
@@ -165,10 +163,13 @@ Behavior notes:
 - `--profile`: Loads prompt text from the selected profile
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
+- `--vertex-model`: Override the default Vertex model
+- `--vertex-location`: Override the default Vertex region
 - `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for Vertex-backed LLM calls. Current Google support varies by model family and can include `off`, `minimal`, `low`, `medium`, `high`
 - `--vertex-reasoning-budget`: Optional token-budget override. For Gemini 2.5 this is passed as thinking budget; for level-only Gemini families it is converted heuristically
 - `--vertex-reasoning-dynamic` / `--no-vertex-reasoning-dynamic`: Request dynamic reasoning budget on supported model families
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
+- `--chunk-size`: Number of subtitle lines per translation chunk. Use `0` to disable chunking. Default: `0`
 
 Behavior notes:
 
@@ -188,21 +189,27 @@ Behavior notes:
 
 ### `autosub run`
 
-`run` combines the full pipeline above and accepts the main options from each stage:
+`run` combines the full pipeline above and keeps the common end-to-end options:
 
 - `--out-dir`
 - `--language`
 - `--profile`
 - `--vocab`
-- `--engine`
 - `--prompt`
 - `--target`
 - `--source`
 - `--vertex-reasoning-effort`
 - `--bilingual` / `--replace`
-- `--speakers` (currently ignored)
 - `--keyframes`
 - `--extract-keyframes` / `--no-extract-keyframes`
+- `--start`
+- `--end`
+- `--chunk-size`
+
+Behavior notes:
+
+- `run` always uses the default Vertex translation path.
+- If you need `cloud-v3` or advanced Vertex overrides such as model, location, or dynamic reasoning settings, run the stages separately and use `autosub translate`.
 
 ## Unified Profile Format
 
@@ -218,7 +225,6 @@ vocab = [
     "鈴原希実",
     "のんちゃん",
 ]
-speakers = 1
 
 [timing]
 min_duration_ms = 700
@@ -243,7 +249,6 @@ label_roles = true
 - `extends`: List of base profile names. Base profiles are loaded first.
 - `prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
 - `vocab`: List of speech adaptation hints. Inherited lists are appended.
-- `speakers`: Parsed and inherited, but not currently used by the active CLI pipeline.
 - `[timing]`: Timing options for the formatter.
 - `[extensions]`: Nested extension configuration shared by formatting and postprocessing.
 
