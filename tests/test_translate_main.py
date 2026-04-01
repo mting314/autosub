@@ -1,14 +1,15 @@
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import autosub.pipeline.translate.main as translate_main_module
+import autosub.pipeline.translate.translator as translator_module
 
 from autosub.pipeline.translate.main import (
-    _translate_with_retry,
     _translate_chunked,
     _load_checkpoint,
     _save_checkpoint,
+    _write_error_report,
+    translate_subtitles,
 )
 
 
@@ -33,76 +34,61 @@ class FailNTimesTranslator:
         return [f"translated:{t}" for t in texts]
 
 
-# --- _translate_with_retry tests ---
+# --- Error report tests ---
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
-def test_retry_succeeds_on_first_attempt():
-    translator = FakeTranslator()
-    result = _translate_with_retry(translator, ["hello", "world"])
-    assert result == ["translated:hello", "translated:world"]
+def test_write_error_report_includes_traceback(tmp_path):
+    error_path = tmp_path / "translated.error.txt"
 
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        _write_error_report(error_path, exc)
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
-def test_retry_succeeds_after_failures():
-    translator = FailNTimesTranslator(fail_count=2)
-    result = _translate_with_retry(translator, ["hello"])
-    assert result == ["translated:hello"]
-    assert translator.attempts == 3
-
-
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
-def test_retry_raises_after_max_retries():
-    translator = FailNTimesTranslator(fail_count=5)
-    with pytest.raises(ConnectionError):
-        _translate_with_retry(translator, ["hello"])
-    assert translator.attempts == 3  # MAX_RETRIES = 3
-
-
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
-def test_retry_with_label_logs_correctly(caplog):
-    translator = FailNTimesTranslator(fail_count=1)
-    with caplog.at_level("WARNING"):
-        _translate_with_retry(translator, ["hello"], label="Chunk 1")
-    assert "Chunk 1" in caplog.text
-    assert "Attempt 1 failed" in caplog.text
+    report = error_path.read_text(encoding="utf-8")
+    assert "Traceback" in report
+    assert "RuntimeError: boom" in report
 
 
 # --- _translate_chunked tests ---
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
 def test_chunked_splits_and_merges(tmp_path):
     translator = FakeTranslator()
     texts = [f"line{i}" for i in range(5)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result = _translate_chunked(
+        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
+    )
 
     assert result == [f"translated:line{i}" for i in range(5)]
     # Checkpoint should still exist (caller is responsible for cleanup)
     assert checkpoint_path.exists()
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
-def test_chunked_retries_failing_chunk(tmp_path):
+def test_chunked_fails_fast_on_error(tmp_path):
     translator = FailNTimesTranslator(fail_count=1)
     texts = ["a", "b", "c"]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    with pytest.raises(ConnectionError):
+        _translate_chunked(
+            translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
+        )
 
-    assert result == ["translated:a", "translated:b", "translated:c"]
-    assert translator.attempts > 1
+    assert translator.attempts == 1
+    assert not checkpoint_path.exists()
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
 def test_chunked_preserves_order(tmp_path):
     translator = FakeTranslator()
     texts = [f"line{i}" for i in range(10)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(translator, texts, chunk_size=3, checkpoint_path=checkpoint_path)
+    result = _translate_chunked(
+        translator, texts, chunk_size=3, checkpoint_path=checkpoint_path
+    )
 
     assert len(result) == 10
     for i in range(10):
@@ -174,14 +160,16 @@ def test_load_checkpoint_skips_non_string_elements(tmp_path):
     assert result == {0: ["a", "b"]}
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
 def test_chunked_resumes_from_checkpoint(tmp_path):
     """Simulate a previous run that completed chunks 0 and 1, then resume."""
     checkpoint_path = tmp_path / "test.checkpoint.json"
     texts = ["a", "b", "c", "d", "e", "f"]
 
     # Pre-populate checkpoint with chunks 0 and 1 already done
-    existing = {0: ["translated:a", "translated:b"], 1: ["translated:c", "translated:d"]}
+    existing = {
+        0: ["translated:a", "translated:b"],
+        1: ["translated:c", "translated:d"],
+    }
     _save_checkpoint(checkpoint_path, existing)
 
     # Track which texts the translator actually receives
@@ -195,55 +183,137 @@ def test_chunked_resumes_from_checkpoint(tmp_path):
     translator = FakeTranslator()
     translator.translate = lambda texts: tracking_translate(translator, texts)
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result = _translate_chunked(
+        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
+    )
 
     # Should only translate chunk 2 (lines e, f)
     assert translated_inputs == ["e", "f"]
     # Full result should include checkpointed + new
     assert result == [
-        "translated:a", "translated:b",
-        "translated:c", "translated:d",
-        "translated:e", "translated:f",
+        "translated:a",
+        "translated:b",
+        "translated:c",
+        "translated:d",
+        "translated:e",
+        "translated:f",
     ]
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
 def test_checkpoint_saved_after_each_chunk(tmp_path):
     """Verify checkpoint file is written after each chunk completes."""
     checkpoint_path = tmp_path / "test.checkpoint.json"
     texts = ["a", "b", "c", "d"]
 
-    saved_states = []
-    original_save = _save_checkpoint.__wrapped__ if hasattr(_save_checkpoint, '__wrapped__') else None
-
-    def tracking_save(path, completed):
-        # Snapshot the state at each save
-        saved_states.append(dict(completed))
-        _save_checkpoint.__wrapped__(path, completed) if original_save else json.dump(
-            completed, open(path, "w", encoding="utf-8"), ensure_ascii=False
-        )
-
     translator = FakeTranslator()
 
     with patch("autosub.pipeline.translate.main._save_checkpoint") as mock_save:
-        mock_save.side_effect = lambda path, completed: _save_checkpoint(path, completed)
-        _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+        mock_save.side_effect = lambda path, completed: _save_checkpoint(
+            path, completed
+        )
+        _translate_chunked(
+            translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
+        )
         # Should be called once per chunk
         assert mock_save.call_count == 2
 
 
-@patch("autosub.pipeline.translate.main.RETRY_BASE_DELAY", 0)
+def test_translate_subtitles_sets_llm_trace_path(tmp_path, monkeypatch):
+    input_ass_path = tmp_path / "original.ass"
+    output_ass_path = tmp_path / "translated.ass"
+    input_ass_path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "Title: Test",
+                "ScriptType: v4.00+",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,こんにちは",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeVertexTranslator:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def translate(self, texts: list[str]) -> list[str]:
+            return [f"translated:{text}" for text in texts]
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", "test-project")
+    monkeypatch.setattr(translator_module, "VertexTranslator", FakeVertexTranslator)
+
+    translate_subtitles(input_ass_path, output_ass_path, engine="vertex")
+
+    assert captured["trace_path"] == output_ass_path.with_suffix(".llm_trace.jsonl")
+
+
+def test_translate_subtitles_writes_error_file_on_failure(tmp_path, monkeypatch):
+    input_ass_path = tmp_path / "original.ass"
+    output_ass_path = tmp_path / "translated.ass"
+    input_ass_path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "Title: Test",
+                "ScriptType: v4.00+",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,こんにちは",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FailingVertexTranslator:
+        def __init__(self, **kwargs):
+            pass
+
+        def translate(self, texts: list[str]) -> list[str]:
+            raise RuntimeError("translation exploded")
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", "test-project")
+    monkeypatch.setattr(translator_module, "VertexTranslator", FailingVertexTranslator)
+
+    with pytest.raises(RuntimeError, match="translation exploded"):
+        translate_subtitles(input_ass_path, output_ass_path, engine="vertex")
+
+    error_path = output_ass_path.with_suffix(".error.txt")
+    report = error_path.read_text(encoding="utf-8")
+    assert "Traceback" in report
+    assert "RuntimeError: translation exploded" in report
+
+
 def test_chunked_all_checkpointed_skips_translation(tmp_path):
     """If all chunks are in the checkpoint, no translation calls should be made."""
     checkpoint_path = tmp_path / "test.checkpoint.json"
     texts = ["a", "b", "c", "d"]
 
-    existing = {0: ["translated:a", "translated:b"], 1: ["translated:c", "translated:d"]}
+    existing = {
+        0: ["translated:a", "translated:b"],
+        1: ["translated:c", "translated:d"],
+    }
     _save_checkpoint(checkpoint_path, existing)
 
     translator = MagicMock()
 
-    result = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
+    result = _translate_chunked(
+        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
+    )
 
     translator.translate.assert_not_called()
     assert result == ["translated:a", "translated:b", "translated:c", "translated:d"]

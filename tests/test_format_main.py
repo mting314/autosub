@@ -1,6 +1,7 @@
 import json
 
 import pyass
+import autosub.extensions.radio_discourse.main as radio_discourse_main
 
 from autosub.pipeline.format.main import format_subtitles
 
@@ -61,3 +62,30 @@ def test_format_subtitles_applies_radio_discourse_extension_and_preserves_role(
     assert dialogue_events[0].name == "listener_mail"
     assert dialogue_events[1].text == "といただきました。"
     assert dialogue_events[1].name == "host_meta"
+
+
+def test_format_subtitles_sets_radio_discourse_trace_path(tmp_path, monkeypatch):
+    transcript_path = tmp_path / "transcript.json"
+    output_path = tmp_path / "original.ass"
+
+    words = [{"word": "こんにちは", "start_time": 0.0, "end_time": 1.0}]
+    transcript_path.write_text(
+        json.dumps({"words": words}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    def fake_apply(lines, config):
+        captured["llm_trace_path"] = config.get("llm_trace_path")
+        return lines
+
+    monkeypatch.setattr(radio_discourse_main, "apply_radio_discourse", fake_apply)
+
+    format_subtitles(
+        transcript_path,
+        output_path,
+        extensions_config={"radio_discourse": {"enabled": True, "engine": "hybrid"}},
+    )
+
+    assert captured["llm_trace_path"] == output_path.with_suffix(".llm_trace.jsonl")

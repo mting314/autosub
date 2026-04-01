@@ -1,9 +1,11 @@
 import logging
 import json
+from pathlib import Path
+
 from pydantic import BaseModel
 
 from autosub.core.errors import VertexResponseShapeError
-from autosub.core.llm import BaseVertexLLM
+from autosub.core.llm import BaseStructuredLLM, ReasoningEffort
 from autosub.pipeline.translate.base import BaseTranslator
 
 logger = logging.getLogger(__name__)
@@ -14,7 +16,7 @@ class TranslatedSubtitle(BaseModel):
     translated: str
 
 
-class VertexTranslator(BaseTranslator, BaseVertexLLM):
+class VertexTranslator(BaseTranslator, BaseStructuredLLM):
     def __init__(
         self,
         *,
@@ -25,6 +27,12 @@ class VertexTranslator(BaseTranslator, BaseVertexLLM):
         model: str = "gemini-3-flash-preview",
         location: str = "global",
         temperature: float = 0.1,
+        provider: str = "google-vertex",
+        reasoning_effort: ReasoningEffort | None = ReasoningEffort.MEDIUM,
+        reasoning_budget_tokens: int | None = None,
+        reasoning_dynamic: bool | None = None,
+        provider_options: dict[str, object] | None = None,
+        trace_path: Path | str | None = None,
     ):
         super().__init__(
             project_id=project_id,
@@ -34,6 +42,12 @@ class VertexTranslator(BaseTranslator, BaseVertexLLM):
             model=model,
             location=location,
             temperature=temperature,
+            provider=provider,
+            reasoning_effort=reasoning_effort,
+            reasoning_budget_tokens=reasoning_budget_tokens,
+            reasoning_dynamic=reasoning_dynamic,
+            provider_options=provider_options,
+            trace_path=trace_path,
         )
 
     def _get_system_instruction(self, num_lines: int) -> str:
@@ -80,18 +94,21 @@ class VertexTranslator(BaseTranslator, BaseVertexLLM):
         payload = [{"id": i, "text": t} for i, t in enumerate(texts)]
         contents = json.dumps(payload, ensure_ascii=False, indent=2)
 
-        response_json, diagnostics = self._generate_structured_json(
-            contents=contents,
-            system_instruction=system_instruction,
-            response_schema=list[TranslatedSubtitle],
+        translations, diagnostics = self._run_structured_output(
+            user_prompt=contents,
+            system_prompt=system_instruction,
+            output_type=list[TranslatedSubtitle],
             operation_name="Vertex translator",
+            output_name="subtitle_translations",
         )
 
         try:
-            # Sort by id to guarantee ordering
-            response_json.sort(key=lambda x: x["id"])
+            ordered_translations = sorted(translations, key=lambda item: item.id)
+            translated_texts = [item.translated for item in ordered_translations]
+            returned_ids = [item.id for item in ordered_translations]
 
-            translated_texts = [item["translated"] for item in response_json]
+            if returned_ids != list(range(len(texts))):
+                raise ValueError(f"returned ids were {returned_ids!r}")
 
             if len(translated_texts) != len(texts):
                 logger.warning(

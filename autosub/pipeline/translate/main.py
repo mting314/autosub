@@ -1,15 +1,13 @@
 import json
 import logging
-import time
+import traceback
 from pathlib import Path
 
 import pyass
 from autosub.core.config import PROJECT_ID
+from autosub.core.llm import ReasoningEffort
 
 logger = logging.getLogger(__name__)
-
-MAX_RETRIES = 3
-RETRY_BASE_DELAY = 10  # seconds
 
 
 def translate_subtitles(
@@ -22,6 +20,9 @@ def translate_subtitles(
     bilingual: bool = True,
     model: str = "gemini-3-flash-preview",
     location: str = "global",
+    reasoning_effort: ReasoningEffort | None = ReasoningEffort.MEDIUM,
+    reasoning_budget_tokens: int | None = None,
+    reasoning_dynamic: bool | None = None,
     chunk_size: int = 0,
 ) -> None:
     """
@@ -37,7 +38,10 @@ def translate_subtitles(
         bilingual: If True, keep the original text above the translated text. If False, replace completely.
         model: Vertex model name for LLM translation.
         location: Vertex region for LLM translation.
-        chunk_size: If > 0, split into chunks of this size with retry logic.
+        reasoning_effort: Provider-agnostic reasoning effort for LLM translation.
+        reasoning_budget_tokens: Optional token-budget override for LLM reasoning.
+        reasoning_dynamic: Whether to request dynamic reasoning budget when supported.
+        chunk_size: If > 0, split into chunks of this size.
     """
     logger.info(f"Loading '{input_ass_path}' for translation...")
 
@@ -68,8 +72,15 @@ def translate_subtitles(
     if not PROJECT_ID:
         raise ValueError("AUTOSUB_PROJECT_ID is not set in the environment.")
 
+    llm_trace_path: Path | None = None
+
     if engine == "vertex":
         from autosub.pipeline.translate.translator import VertexTranslator
+
+        llm_trace_path = output_ass_path.with_suffix(".llm_trace.jsonl")
+        if llm_trace_path.exists():
+            llm_trace_path.unlink()
+            logger.info("Removed previous LLM trace file.")
 
         translator = VertexTranslator(
             project_id=PROJECT_ID,
@@ -78,6 +89,10 @@ def translate_subtitles(
             system_prompt=system_prompt,
             model=model,
             location=location,
+            reasoning_effort=reasoning_effort,
+            reasoning_budget_tokens=reasoning_budget_tokens,
+            reasoning_dynamic=reasoning_dynamic,
+            trace_path=llm_trace_path,
         )
     elif engine == "cloud-v3":
         from autosub.pipeline.translate.api import CloudTranslationTranslator
@@ -92,13 +107,23 @@ def translate_subtitles(
         raise ValueError(f"Unknown translation engine: {engine}")
 
     checkpoint_path = output_ass_path.with_suffix(".checkpoint.json")
+    error_path = output_ass_path.with_suffix(".error.txt")
 
-    if chunk_size > 0:
-        translated_texts = _translate_chunked(
-            translator, texts_to_translate, chunk_size, checkpoint_path
-        )
-    else:
-        translated_texts = _translate_with_retry(translator, texts_to_translate)
+    if error_path.exists():
+        error_path.unlink()
+        logger.info("Removed previous translation error file.")
+
+    try:
+        if chunk_size > 0:
+            translated_texts = _translate_chunked(
+                translator, texts_to_translate, chunk_size, checkpoint_path
+            )
+        else:
+            translated_texts = translator.translate(texts_to_translate)
+    except Exception as exc:
+        _write_error_report(error_path, exc)
+        logger.error(f"Wrote translation error details to {error_path}.")
+        raise
 
     # Clean up checkpoint file on successful completion
     if checkpoint_path.exists():
@@ -133,29 +158,17 @@ def translate_subtitles(
     with open(output_ass_path, "w", encoding="utf-8") as f:
         pyass.dump(script, f)
 
+    if llm_trace_path is not None and llm_trace_path.exists():
+        logger.info(f"Wrote LLM trace to {llm_trace_path}.")
+
     logger.info("Translation complete!")
 
 
-def _translate_with_retry(translator, texts: list[str], label: str = "") -> list[str]:
-    """Translate texts with exponential backoff retry."""
-    prefix = f"  {label}: " if label else ""
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            return translator.translate(texts)
-        except Exception as e:
-            if attempt < MAX_RETRIES:
-                delay = RETRY_BASE_DELAY * (2 ** (attempt - 1))
-                logger.warning(
-                    f"{prefix}Attempt {attempt} failed: {e}. "
-                    f"Retrying in {delay}s..."
-                )
-                time.sleep(delay)
-            else:
-                logger.error(
-                    f"{prefix}Failed after {MAX_RETRIES} attempts: {e}"
-                )
-                raise
-    return []  # unreachable
+def _write_error_report(error_path: Path, exc: Exception) -> None:
+    error_path.write_text(
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        encoding="utf-8",
+    )
 
 
 def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
@@ -175,7 +188,7 @@ def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
         return {}
 
     if not isinstance(data, dict):
-        logger.warning(f"Checkpoint is not a JSON object, starting fresh.")
+        logger.warning("Checkpoint is not a JSON object, starting fresh.")
         return {}
 
     validated: dict[int, list[str]] = {}
@@ -191,11 +204,15 @@ def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
             continue
 
         if not isinstance(v, list) or not v:
-            logger.warning(f"Skipping checkpoint entry {chunk_idx}: value must be a non-empty list.")
+            logger.warning(
+                f"Skipping checkpoint entry {chunk_idx}: value must be a non-empty list."
+            )
             continue
 
         if not all(isinstance(s, str) for s in v):
-            logger.warning(f"Skipping checkpoint entry {chunk_idx}: list contains non-string elements.")
+            logger.warning(
+                f"Skipping checkpoint entry {chunk_idx}: list contains non-string elements."
+            )
             continue
 
         validated[chunk_idx] = v
@@ -203,9 +220,7 @@ def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
     return validated
 
 
-def _save_checkpoint(
-    checkpoint_path: Path, completed: dict[int, list[str]]
-) -> None:
+def _save_checkpoint(checkpoint_path: Path, completed: dict[int, list[str]]) -> None:
     """Save completed chunk results to checkpoint file."""
     with open(checkpoint_path, "w", encoding="utf-8") as f:
         json.dump(completed, f, ensure_ascii=False, indent=2)
@@ -214,7 +229,7 @@ def _save_checkpoint(
 def _translate_chunked(
     translator, texts: list[str], chunk_size: int, checkpoint_path: Path
 ) -> list[str]:
-    """Split texts into chunks, translate each with retry logic, and merge results."""
+    """Split texts into chunks, translate each once, and merge results."""
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
     completed = _load_checkpoint(checkpoint_path)
 
@@ -230,17 +245,11 @@ def _translate_chunked(
 
     for chunk_idx, chunk in enumerate(chunks):
         if chunk_idx in completed:
-            logger.info(
-                f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)"
-            )
+            logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)")
             continue
 
-        logger.info(
-            f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)..."
-        )
-        results = _translate_with_retry(
-            translator, chunk, label=f"Chunk {chunk_idx + 1}"
-        )
+        logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)} ({len(chunk)} lines)...")
+        results = translator.translate(chunk)
         completed[chunk_idx] = results
         _save_checkpoint(checkpoint_path, completed)
 

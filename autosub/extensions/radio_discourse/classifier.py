@@ -3,12 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from pathlib import Path
 from typing import Iterable, Literal
 
 from pydantic import BaseModel
 
 from autosub.core.errors import VertexResponseShapeError
-from autosub.core.llm import BaseVertexLLM
+from autosub.core.llm import BaseStructuredLLM, ReasoningEffort
 from autosub.core.schemas import SubtitleLine
 
 logger = logging.getLogger(__name__)
@@ -21,7 +22,7 @@ class RadioDiscourseDecision(BaseModel):
     role: Literal["host", "listener_mail", "host_meta"]
 
 
-class VertexRadioDiscourseClassifier(BaseVertexLLM):
+class VertexRadioDiscourseClassifier(BaseStructuredLLM):
     def __init__(
         self,
         *,
@@ -29,12 +30,24 @@ class VertexRadioDiscourseClassifier(BaseVertexLLM):
         model: str = "gemini-3.1-flash-lite-preview",
         location: str = "global",
         temperature: float = 0.1,
+        provider: str = "google-vertex",
+        reasoning_effort: ReasoningEffort | None = ReasoningEffort.MEDIUM,
+        reasoning_budget_tokens: int | None = None,
+        reasoning_dynamic: bool | None = None,
+        provider_options: dict[str, object] | None = None,
+        trace_path: Path | str | None = None,
     ):
         super().__init__(
             project_id=project_id,
             model=model,
             location=location,
             temperature=temperature,
+            provider=provider,
+            reasoning_effort=reasoning_effort,
+            reasoning_budget_tokens=reasoning_budget_tokens,
+            reasoning_dynamic=reasoning_dynamic,
+            provider_options=provider_options,
+            trace_path=trace_path,
         )
 
     def _get_system_instruction(self, num_lines: int) -> str:
@@ -76,16 +89,22 @@ class VertexRadioDiscourseClassifier(BaseVertexLLM):
         ]
         contents = json.dumps(payload, ensure_ascii=False, indent=2)
 
-        response_json, diagnostics = self._generate_structured_json(
-            contents=contents,
-            system_instruction=system_instruction,
-            response_schema=list[RadioDiscourseDecision],
+        decisions, diagnostics = self._run_structured_output(
+            user_prompt=contents,
+            system_prompt=system_instruction,
+            output_type=list[RadioDiscourseDecision],
             operation_name="Vertex radio discourse classifier",
+            output_name="radio_discourse_roles",
         )
 
         try:
-            response_json.sort(key=lambda item: item["id"])
-            return {item["id"]: item["role"] for item in response_json}
+            ordered_decisions = sorted(decisions, key=lambda item: item.id)
+            returned_ids = [item.id for item in ordered_decisions]
+
+            if returned_ids != [line_id for line_id, _ in lines]:
+                raise ValueError(f"returned ids were {returned_ids!r}")
+
+            return {item.id: item.role for item in ordered_decisions}
         except Exception as exc:
             raise VertexResponseShapeError(
                 "Vertex radio discourse classifier returned JSON with an unexpected structure: "
@@ -113,8 +132,14 @@ def classify_roles_with_vertex(
 
     classifier = VertexRadioDiscourseClassifier(
         project_id=project_id,
-        model=config.get("model", "gemini-3-flash-preview"),
+        model=config.get("model", "gemini-3.1-flash-lite-preview"),
         location=config.get("location", "global"),
+        provider=config.get("provider", "google-vertex"),
+        reasoning_effort=config.get("reasoning_effort", ReasoningEffort.MEDIUM),
+        reasoning_budget_tokens=config.get("reasoning_budget_tokens"),
+        reasoning_dynamic=config.get("reasoning_dynamic"),
+        provider_options=config.get("provider_options"),
+        trace_path=config.get("llm_trace_path"),
     )
 
     windows = _build_windows_for_config(lines, config)

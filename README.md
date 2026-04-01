@@ -83,7 +83,9 @@ By default, `run` writes these files next to the input media:
 
 - `transcript.json`
 - `original.ass`
+- `original.llm_trace.jsonl` when radio-discourse classification uses an LLM-backed engine
 - `translated.ass`
+- `translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
 
 If keyframe extraction is enabled and succeeds, it also writes `<input-stem>_keyframes.log`.
 
@@ -114,6 +116,8 @@ uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
   --engine vertex `
+  --vertex-reasoning-effort low `
+  --vertex-reasoning-budget 1024 `
   --bilingual
 ```
 
@@ -161,6 +165,9 @@ Behavior notes:
 - `--profile`: Loads prompt text from the selected profile
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
+- `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for Vertex-backed LLM calls. Current Google support varies by model family and can include `off`, `minimal`, `low`, `medium`, `high`
+- `--vertex-reasoning-budget`: Optional token-budget override. For Gemini 2.5 this is passed as thinking budget; for level-only Gemini families it is converted heuristically
+- `--vertex-reasoning-dynamic` / `--no-vertex-reasoning-dynamic`: Request dynamic reasoning budget on supported model families
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
 
 Behavior notes:
@@ -191,6 +198,7 @@ Behavior notes:
 - `--prompt`
 - `--target`
 - `--source`
+- `--vertex-reasoning-effort`
 - `--bilingual` / `--replace`
 - `--speakers` (currently ignored)
 - `--keyframes`
@@ -221,6 +229,8 @@ conditional_snap_threshold_ms = 500
 enabled = true
 engine = "hybrid"
 model = "gemini-3-flash-preview"
+reasoning_effort = "low"
+reasoning_budget_tokens = 1024
 scope = "full_script"
 window_size = 10
 window_overlap = 3
@@ -272,6 +282,9 @@ Supported options:
 - `enabled`: Turn the extension on
 - `engine`: `rules`, `vertex`, or `hybrid`
 - `model`: Vertex model name for `vertex` or `hybrid`
+- `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current Google support varies by model family and can include `off`, `minimal`, `low`, `medium`, `high`
+- `reasoning_budget_tokens`: Optional token-budget override. For Gemini 2.5 this maps directly to thinking budget; for level-only Gemini families it is converted heuristically
+- `reasoning_dynamic`: Request dynamic reasoning budget when the selected model family supports it
 - `location`: Vertex region. Default: `us-central1`
 - `scope`: `full_script` or windowed classification
 - `window_size`: Window size for non-`full_script` classification

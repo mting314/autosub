@@ -52,6 +52,17 @@ def format_subtitles(
         logger.info("Applying radio discourse extension...")
         from autosub.extensions.radio_discourse.main import apply_radio_discourse
 
+        if str(radio_discourse_config.get("engine", "rules")).lower() in {
+            "vertex",
+            "hybrid",
+        }:
+            llm_trace_path = output_ass_path.with_suffix(".llm_trace.jsonl")
+            radio_discourse_config = dict(radio_discourse_config)
+            radio_discourse_config.setdefault("llm_trace_path", llm_trace_path)
+            if llm_trace_path.exists():
+                llm_trace_path.unlink()
+                logger.info("Removed previous LLM trace file.")
+
         lines = apply_radio_discourse(lines, radio_discourse_config)
         logger.info(f"Radio discourse extension produced {len(lines)} subtitle lines.")
 
@@ -72,4 +83,7 @@ def format_subtitles(
 
     logger.info(f"Writing .ass file to {output_ass_path}...")
     generator.generate_ass_file(lines, output_ass_path)
+    llm_trace_path = output_ass_path.with_suffix(".llm_trace.jsonl")
+    if llm_trace_path.exists():
+        logger.info(f"Wrote LLM trace to {llm_trace_path}.")
     logger.info("Subtitle formatting complete!")

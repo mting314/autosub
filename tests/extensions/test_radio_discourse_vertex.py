@@ -3,6 +3,7 @@ from autosub.core.schemas import SubtitleLine
 from autosub.extensions.radio_discourse.main import apply_radio_discourse
 from autosub.extensions.radio_discourse.classifier import (
     VertexRadioDiscourseClassifier,
+    classify_roles_with_vertex,
     _build_windows_for_config,
 )
 
@@ -56,6 +57,78 @@ def test_vertex_radio_discourse_full_script_scope_uses_single_window():
     assert len(windows[0]) == 25
     assert windows[0][0][0] == 0
     assert windows[0][-1][0] == 24
+
+
+def test_classify_roles_with_vertex_defaults_to_flash_lite(monkeypatch):
+    captured: dict[str, str] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["model"] = self.model
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"project_id": "test-project"},
+    )
+
+    assert result == ["host"]
+    assert captured["model"] == "gemini-3.1-flash-lite-preview"
+
+
+def test_classify_roles_with_vertex_passes_reasoning_effort(monkeypatch):
+    captured: dict[str, str | None] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["reasoning_effort"] = self.reasoning_effort
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"project_id": "test-project", "reasoning_effort": "high"},
+    )
+
+    assert result == ["host"]
+    assert captured["reasoning_effort"] == "high"
+
+
+def test_classify_roles_with_vertex_passes_reasoning_budget(monkeypatch):
+    captured: dict[str, int | None] = {}
+    lines = [SubtitleLine(text="line 0", start_time=0.0, end_time=1.0)]
+
+    def fake_classify_window(self, window):
+        captured["reasoning_budget_tokens"] = self.reasoning_budget_tokens
+        return {0: "host"}
+
+    monkeypatch.setattr(
+        VertexRadioDiscourseClassifier,
+        "classify_window",
+        fake_classify_window,
+    )
+
+    result = classify_roles_with_vertex(
+        lines,
+        fallback_roles=[None],
+        config={"project_id": "test-project", "reasoning_budget_tokens": 2048},
+    )
+
+    assert result == ["host"]
+    assert captured["reasoning_budget_tokens"] == 2048
 
 
 def test_apply_radio_discourse_hybrid_falls_back_to_rules_on_vertex_failure(

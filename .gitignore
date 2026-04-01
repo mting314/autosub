@@ -245,5 +245,6 @@ __marimo__/
 
 # Data files
 *.json
+*.jsonl
 *.ass
 *.txt

@@ -2,6 +2,7 @@ import typer
 import logging
 from pathlib import Path
 
+from autosub.core.llm import ReasoningEffort
 from autosub.pipeline.transcribe import main as transcribe_main
 from autosub.pipeline.format import main as format_module
 from autosub.pipeline.postprocess import main as postprocess_module
@@ -201,6 +202,21 @@ def translate(
         "--vertex-location",
         help="Vertex region for LLM translation.",
     ),
+    vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
+        "medium",
+        "--vertex-reasoning-effort",
+        help="Provider-agnostic reasoning effort for Vertex LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
+    ),
+    vertex_reasoning_budget: int | None = typer.Option(
+        None,
+        "--vertex-reasoning-budget",
+        help="Optional token-budget override for Vertex LLM reasoning. For Gemini 2.5 this maps directly to thinking budget; for level-only models it is converted heuristically.",
+    ),
+    vertex_reasoning_dynamic: bool | None = typer.Option(
+        None,
+        "--vertex-reasoning-dynamic/--no-vertex-reasoning-dynamic",
+        help="Request dynamic reasoning budget when the selected Vertex model family supports it.",
+    ),
     bilingual: bool = typer.Option(
         False,
         "--bilingual/--replace",
@@ -209,7 +225,7 @@ def translate(
     chunk: bool = typer.Option(
         False,
         "--chunk/--no-chunk",
-        help="Split translation into smaller chunks with retry logic. Useful for long files.",
+        help="Split translation into smaller chunks. Useful for long files.",
     ),
     chunk_size: int = typer.Option(
         80,
@@ -252,6 +268,9 @@ def translate(
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
+            reasoning_effort=vertex_reasoning_effort,
+            reasoning_budget_tokens=vertex_reasoning_budget,
+            reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
         )
     except Exception as e:
@@ -342,6 +361,21 @@ def run(
         "--vertex-location",
         help="Vertex region for LLM translation.",
     ),
+    vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
+        "medium",
+        "--vertex-reasoning-effort",
+        help="Provider-agnostic reasoning effort for Vertex LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
+    ),
+    vertex_reasoning_budget: int | None = typer.Option(
+        None,
+        "--vertex-reasoning-budget",
+        help="Optional token-budget override for Vertex LLM reasoning. For Gemini 2.5 this maps directly to thinking budget; for level-only models it is converted heuristically.",
+    ),
+    vertex_reasoning_dynamic: bool | None = typer.Option(
+        None,
+        "--vertex-reasoning-dynamic/--no-vertex-reasoning-dynamic",
+        help="Request dynamic reasoning budget when the selected Vertex model family supports it.",
+    ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
     ),
@@ -374,7 +408,7 @@ def run(
     chunk: bool = typer.Option(
         False,
         "--chunk/--no-chunk",
-        help="Split translation into smaller chunks with retry logic. Useful for long files.",
+        help="Split translation into smaller chunks. Useful for long files.",
     ),
     chunk_size: int = typer.Option(
         80,
@@ -514,6 +548,9 @@ def run(
             bilingual=bilingual,
             model=vertex_model,
             location=vertex_location,
+            reasoning_effort=vertex_reasoning_effort,
+            reasoning_budget_tokens=vertex_reasoning_budget,
+            reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
         )
     except Exception as e:
