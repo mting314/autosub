@@ -304,7 +304,7 @@ def test_openai_reasoning_off_disables_thinking():
     assert settings["thinking"] is False
 
 
-def test_openai_reasoning_budget_maps_to_max_tokens():
+def test_openai_reasoning_budget_is_ignored():
     llm = BaseStructuredLLM(
         project_id=None,
         model="gpt-5-mini",
@@ -314,7 +314,7 @@ def test_openai_reasoning_budget_maps_to_max_tokens():
 
     settings = llm._build_openai_model_settings(llm._get_model_config())
 
-    assert settings["max_tokens"] == 8192
+    assert "max_tokens" not in settings
 
 
 def test_openai_reasoning_dynamic_is_rejected():

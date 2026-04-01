@@ -249,8 +249,6 @@ class BaseStructuredLLM:
             raise ValueError("Provider 'openai' does not support reasoning_dynamic.")
 
         settings: dict[str, Any] = {"temperature": config.temperature}
-        if config.reasoning_budget_tokens is not None:
-            settings["max_tokens"] = config.reasoning_budget_tokens
         if config.reasoning_effort is not None:
             if config.reasoning_effort == ReasoningEffort.OFF:
                 settings["thinking"] = False

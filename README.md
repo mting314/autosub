@@ -236,7 +236,7 @@ OpenAI notes:
 - Direct OpenAI currently defaults to `gpt-5-mini` when `--llm-provider openai` is selected and `--llm-model` is omitted.
 - `--llm-location` is ignored for direct OpenAI requests.
 - OpenAI uses the same `--vertex-reasoning-effort` flag for now because the CLI predates multi-provider support.
-- `--vertex-reasoning-budget` is passed through as `max_tokens` for OpenAI.
+- `--vertex-reasoning-budget` is currently ignored for OpenAI. Use reasoning effort only.
 
 ### `autosub postprocess`
 
