@@ -871,68 +871,184 @@ def postprocess(
         raise typer.Exit(code=1)
 
 
-@app.command(name="review-speakers")
-def review_speakers(
-    transcript: Path = typer.Argument(
+@app.command(name="assign-speakers")
+def assign_speakers(
+    ass_file: Path = typer.Argument(
         ...,
-        help="Path to the transcript JSON file from the transcribe step.",
+        help="Path to the .ass subtitle file to update.",
         exists=True,
         dir_okay=False,
     ),
     speaker_map_path: Path = typer.Option(
         ...,
         "--speaker-map",
-        help="Path to speaker_map.toml with the real speaker identities (not modified).",
+        help="Path to speaker_map.toml with the real speaker identities.",
         exists=True,
         dir_okay=False,
     ),
-    output: Path = typer.Option(
-        None,
-        "--out",
-        help="Output path for speaker assignments (default: speaker_assignments.toml next to transcript).",
-    ),
     sample_lines: int = typer.Option(
-        3,
+        5,
         "--sample-lines",
         help="Number of sample lines to show per speaker label.",
     ),
 ):
     """
-    Review diarized speaker labels and interactively map them to real speakers.
+    Assign diarized speaker labels to real speakers in a .ass subtitle file.
 
-    Shows sample transcript lines per speaker label, then prompts you to assign
-    each label to a speaker from the speaker map. Writes assignments to a
-    separate file (speaker_assignments.toml) — the original speaker map is not modified.
+    Parses the .ass file, groups events by style (raw diarization labels),
+    shows sample lines for each label, and prompts you to assign each label
+    to a speaker from the speaker map. Rewrites the .ass file in-place with
+    updated style names and colors.
+
+    Run this after reviewing the subtitle file in Aegisub where you can hear
+    who is speaking.
     """
-    import json
+    import pyass
 
-    from autosub.core.schemas import TranscriptionResult
-    from autosub.core.speaker_map import load_speaker_map
+    from autosub.core.speaker_map import load_speaker_map, hex_to_pyass_color
 
-    logger.info(f"Loading transcript from {transcript}...")
-    with open(transcript, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    result = TranscriptionResult(**data)
+    speaker_map = load_speaker_map(speaker_map_path)
 
-    if not result.words:
-        logger.error("Transcript has no words.")
+    # Parse the .ass file
+    with open(ass_file, "r", encoding="utf-8") as f:
+        script = pyass.load(f)
+
+    # Group events by style name
+    style_events: dict[str, list[pyass.Event]] = {}
+    for event in script.events:
+        style_name = event.style
+        if style_name not in style_events:
+            style_events[style_name] = []
+        style_events[style_name].append(event)
+
+    if not style_events:
+        logger.error("No events found in .ass file.")
         raise typer.Exit(code=1)
 
-    logger.info(f"Loaded {len(result.words)} words from transcript.")
+    # Deduplicate real speakers from the map
+    real_speakers: list[dict] = []
+    seen_names: set[str] = set()
+    for entry in speaker_map.values():
+        if entry["name"] not in seen_names:
+            real_speakers.append(entry)
+            seen_names.add(entry["name"])
 
-    existing_map = load_speaker_map(speaker_map_path)
+    if not real_speakers:
+        logger.error("Speaker map has no speaker entries.")
+        raise typer.Exit(code=1)
 
-    if not output:
-        output = transcript.parent / "speaker_assignments.toml"
+    # Display samples per style/label
+    sorted_labels = sorted(style_events.keys())
+    typer.echo("\n=== Speaker Labels in Subtitle File ===\n")
 
-    assigned = _interactive_speaker_review(
-        result, existing_map, output, sample_count=sample_lines,
-        transcript_path=transcript,
-    )
-    if not assigned:
+    for label in sorted_labels:
+        events = style_events[label]
+        total_chars = sum(len(e.text) for e in events)
+
+        # Time range
+        first_time = min(e.start.total_seconds() for e in events)
+        last_time = max(e.end.total_seconds() for e in events)
+        first_mins, first_secs = int(first_time // 60), first_time % 60
+        last_mins, last_secs = int(last_time // 60), last_time % 60
+
+        typer.echo(
+            f"Style \"{label}\" ({len(events)} lines, {total_chars} chars, "
+            f"{first_mins:02d}:{first_secs:04.1f}-{last_mins:02d}:{last_secs:04.1f}):"
+        )
+
+        # Show evenly distributed samples
+        count = min(sample_lines, len(events))
+        if len(events) <= count:
+            indices = list(range(len(events)))
+        else:
+            step = len(events) // count
+            indices = [i * step for i in range(count)]
+
+        for idx in indices:
+            event = events[idx]
+            t = event.start.total_seconds()
+            mins = int(t // 60)
+            secs = t % 60
+            text = event.text
+            if len(text) > 100:
+                text = text[:97] + "..."
+            typer.echo(f"  [{mins:02d}:{secs:04.1f}] {text}")
+        typer.echo()
+
+    # Interactive mapping
+    typer.echo("=== Known Speakers ===\n")
+    for i, sp in enumerate(real_speakers, 1):
+        char = f" ({sp['character']})" if sp.get("character") else ""
+        typer.echo(f"  {i}. {sp['name']}{char}")
+    typer.echo()
+
+    assignments: dict[str, dict] = {}
+    for label in sorted_labels:
+        while True:
+            choice = typer.prompt(
+                f"Assign style \"{label}\" → [1-{len(real_speakers)}/skip]",
+                default="skip",
+            )
+            if choice.lower() == "skip":
+                break
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(real_speakers):
+                    assignments[label] = real_speakers[idx - 1]
+                    typer.echo(f"  → {real_speakers[idx - 1]['name']}")
+                    break
+                else:
+                    typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+            except ValueError:
+                typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+
+    if not assignments:
+        logger.info("No assignments made.")
         raise typer.Exit()
 
-    logger.info(f"Use with: autosub format ... --speaker-map {output}")
+    # Build new styles and remap events
+    # Track which speaker names we've already created styles for
+    new_styles: dict[str, pyass.Style] = {}
+
+    for old_label, speaker_entry in assignments.items():
+        name = speaker_entry["name"]
+        if name not in new_styles:
+            color = pyass.Color(r=255, g=255, b=255, a=0)  # default white
+            if speaker_entry.get("color"):
+                color = hex_to_pyass_color(speaker_entry["color"])
+            new_styles[name] = pyass.Style(
+                name=name,
+                fontName="Arial",
+                fontSize=48,
+                isBold=True,
+                primaryColor=color,
+                outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
+                backColor=pyass.Color(r=0, g=0, b=0, a=0),
+                outline=2.0,
+                shadow=2.0,
+                alignment=pyass.Alignment.BOTTOM,
+                marginV=20,
+            )
+
+    # Keep styles for unassigned labels
+    kept_styles = [s for s in script.styles if s.name not in assignments]
+    script.styles = kept_styles + list(new_styles.values())
+
+    # Remap event styles and names
+    for event in script.events:
+        if event.style in assignments:
+            speaker_entry = assignments[event.style]
+            event.style = speaker_entry["name"]
+            event.name = speaker_entry["name"]
+
+    # Write back
+    with open(ass_file, "w", encoding="utf-8") as f:
+        pyass.dump(script, f)
+
+    logger.info(f"Updated {ass_file} with speaker assignments.")
+    for old_label, entry in sorted(assignments.items()):
+        count = len(style_events[old_label])
+        logger.info(f"  \"{old_label}\" ({count} lines) → {entry['name']}")
 
 
 @app.command()
@@ -1233,43 +1349,15 @@ def run(
         logger.exception("Failed during transcription (%s)", _exception_summary(e))
         raise typer.Exit(code=1)
 
-    # Interactive speaker review when extra labels are detected
-    if speakers and result and loaded_speaker_map:
+    # Log speaker label count for awareness (assignment deferred to assign-speakers)
+    if speakers and result:
         unique_speakers = {w.speaker for w in result.words if w.speaker}
         if len(unique_speakers) > speakers:
             logger.warning(
                 f"Requested {speakers} speakers but transcription returned "
-                f"{len(unique_speakers)} labels: {sorted(unique_speakers)}."
+                f"{len(unique_speakers)} labels: {sorted(unique_speakers)}. "
+                f"Use 'autosub assign-speakers' after reviewing in Aegisub."
             )
-            assignments_path = transcript_out.parent / "speaker_assignments.toml"
-
-            # Check for existing assignments from a previous review
-            run_review = True
-            if assignments_path.exists():
-                import tomllib as _tomllib
-                with open(assignments_path, "rb") as _f:
-                    _adata = _tomllib.load(_f)
-                stored_hash = _adata.get("transcript_hash")
-                current_hash = _transcript_hash(transcript_out)
-                if stored_hash == current_hash:
-                    from autosub.core.speaker_map import load_speaker_map as _load_map
-                    loaded_speaker_map = _load_map(assignments_path)
-                    logger.info(f"Using existing speaker assignments from {assignments_path}")
-                    run_review = False
-                else:
-                    logger.warning(
-                        f"Speaker assignments in {assignments_path} are stale "
-                        f"(transcript changed). Re-running speaker review."
-                    )
-
-            if run_review:
-                logger.info("Starting interactive speaker review...")
-                assigned = _interactive_speaker_review(
-                    result, loaded_speaker_map, assignments_path,
-                    transcript_path=transcript_out,
-                )
-                if assigned:
-                    loaded_speaker_map = assigned
 
     # Step 1.5: Keyframes
     kf_ms = None

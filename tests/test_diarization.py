@@ -385,19 +385,3 @@ def test_many_to_one_speaker_mapping():
     assert all(l.speaker == "Date Sayuri" for l in lines)
 
 
-def test_transcript_hash_consistency(tmp_path):
-    """Same transcript produces the same hash, different transcript produces different hash."""
-    from autosub.cli import _transcript_hash
-
-    t1 = tmp_path / "t1.json"
-    t2 = tmp_path / "t2.json"
-    t1.write_text('{"words": []}', encoding="utf-8")
-    t2.write_text('{"words": [{"word": "hi"}]}', encoding="utf-8")
-
-    h1a = _transcript_hash(t1)
-    h1b = _transcript_hash(t1)
-    h2 = _transcript_hash(t2)
-
-    assert h1a == h1b  # same file → same hash
-    assert h1a != h2   # different file → different hash
-    assert len(h1a) == 16  # truncated to 16 chars
