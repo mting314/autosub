@@ -116,7 +116,9 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
         # Store for structured logging by the caller
         self.last_system_instruction = system_instruction
         self.last_input = contents
-        self.last_output = json.dumps(response_json, ensure_ascii=False, indent=2)
+        self.last_output = json.dumps(
+            [t.model_dump() for t in translations], ensure_ascii=False, indent=2
+        )
         self.last_diagnostics = diagnostics
 
         try:
