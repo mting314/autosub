@@ -31,11 +31,11 @@ def _write_minimal_ass(path):
     )
 
 
-def test_transcribe_help_omits_speakers_option():
+def test_transcribe_help_includes_speakers_option():
     result = runner.invoke(app, ["transcribe", "--help"])
 
     assert result.exit_code == 0
-    assert "--speakers" not in result.output
+    assert "--speakers" in result.output
     assert "--backend" in result.output
     assert "--whisper-model" in result.output
 
