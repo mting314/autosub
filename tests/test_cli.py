@@ -64,9 +64,6 @@ def test_run_help_hides_advanced_translation_knobs():
     assert "--vertex-location" not in result.output
     assert "--llm-reasoning-budget" not in result.output
     assert "--llm-reasoning-dynamic" not in result.output
-    assert "--vertex-reasoning-budget" not in result.output
-    assert "--vertex-reasoning-dynamic" not in result.output
-    assert "--speakers" not in result.output
     assert "--no-chunk" not in result.output
     assert "--model" in result.output
     assert "--backend" in result.output

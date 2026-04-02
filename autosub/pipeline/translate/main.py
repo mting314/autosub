@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import traceback
@@ -8,6 +9,23 @@ from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_fingerprint(
+    texts: list[str], chunk_size: int, corner_cues: list[str] | None
+) -> str:
+    """Hash input texts and chunking config to detect stale checkpoints."""
+    h = hashlib.sha256()
+    h.update(str(chunk_size).encode())
+    h.update(b"\x00")
+    for cue in corner_cues or []:
+        h.update(cue.encode())
+        h.update(b"\x00")
+    h.update(b"\x01")
+    for t in texts:
+        h.update(t.encode())
+        h.update(b"\x00")
+    return h.hexdigest()
 
 
 def translate_subtitles(
@@ -180,12 +198,15 @@ def _write_error_report(error_path: Path, exc: Exception) -> None:
     )
 
 
-def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
+def _load_checkpoint(
+    checkpoint_path: Path, fingerprint: str
+) -> dict[int, list[str]]:
     """Load and validate completed chunk results from checkpoint file.
 
     Returns dict[int, list[str]] mapping chunk index to translated strings.
     JSON serializes int keys as strings, so they are converted back on load.
     Invalid entries are skipped with a warning.
+    Discards the checkpoint if the fingerprint doesn't match (input changed).
     """
     if not checkpoint_path.exists():
         return {}
@@ -200,8 +221,24 @@ def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
         logger.warning("Checkpoint is not a JSON object, starting fresh.")
         return {}
 
+    # Validate fingerprint
+    if "_fingerprint" not in data:
+        logger.warning("Legacy checkpoint without fingerprint, discarding.")
+        return {}
+    if data["_fingerprint"] != fingerprint:
+        logger.warning(
+            "Checkpoint fingerprint mismatch (input or chunking config changed), "
+            "discarding stale checkpoint."
+        )
+        return {}
+
+    chunks_data = data.get("chunks", {})
+    if not isinstance(chunks_data, dict):
+        logger.warning("Checkpoint 'chunks' is not a dict, starting fresh.")
+        return {}
+
     validated: dict[int, list[str]] = {}
-    for k, v in data.items():
+    for k, v in chunks_data.items():
         try:
             chunk_idx = int(k)
         except (ValueError, TypeError):
@@ -229,10 +266,13 @@ def _load_checkpoint(checkpoint_path: Path) -> dict[int, list[str]]:
     return validated
 
 
-def _save_checkpoint(checkpoint_path: Path, completed: dict[int, list[str]]) -> None:
+def _save_checkpoint(
+    checkpoint_path: Path, completed: dict[int, list[str]], fingerprint: str
+) -> None:
     """Save completed chunk results to checkpoint file."""
+    payload = {"_fingerprint": fingerprint, "chunks": completed}
     with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump(completed, f, ensure_ascii=False, indent=2)
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
 def _translate_chunked(
@@ -245,6 +285,7 @@ def _translate_chunked(
 ) -> list[str]:
     """Split texts into chunks, translate each once, and merge results."""
     chunks = [texts[i : i + chunk_size] for i in range(0, len(texts), chunk_size)]
+    fingerprint = _compute_fingerprint(texts, chunk_size, corner_cues=None)
 
     # Set up structured log directory
     chunks_dir = None
@@ -259,7 +300,7 @@ def _translate_chunked(
                 "chunk\tlines\tprompt\tcandidates\tthoughts\ttotal\n",
                 encoding="utf-8",
             )
-    completed = _load_checkpoint(checkpoint_path)
+    completed = _load_checkpoint(checkpoint_path, fingerprint)
 
     # Remove specified chunks from checkpoint to force re-translation
     if retry_chunks and completed:
@@ -270,7 +311,7 @@ def _translate_chunked(
                 logger.info(f"Cleared checkpoint for chunk {idx} — will re-translate.")
             else:
                 logger.warning(f"Chunk {idx} not in checkpoint — nothing to retry.")
-        _save_checkpoint(checkpoint_path, completed)
+        _save_checkpoint(checkpoint_path, completed, fingerprint)
 
     if completed:
         logger.info(
@@ -304,7 +345,7 @@ def _translate_chunked(
         logger.info(f"    last:  {last}")
         results = translator.translate(chunk)
         completed[chunk_idx] = results
-        _save_checkpoint(checkpoint_path, completed)
+        _save_checkpoint(checkpoint_path, completed, fingerprint)
 
         # Write structured log files per chunk
         if chunks_dir and hasattr(translator, "last_diagnostics"):
