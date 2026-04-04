@@ -21,6 +21,7 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
         "google-vertex": "gemini-3-flash-preview",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
+        "openrouter": "openai/gpt-5-mini",
     }
 
     def __init__(

@@ -14,9 +14,11 @@ from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.providers.openrouter import OpenRouterProvider
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 
@@ -214,6 +216,16 @@ class BaseStructuredLLM:
                 settings=cast(ModelSettings, self._build_openai_model_settings(config)),
             )
 
+        if config.provider == "openrouter":
+            return OpenRouterModel(
+                config.model,
+                provider=OpenRouterProvider(api_key=self._require_openrouter_api_key()),
+                settings=cast(
+                    OpenRouterModelSettings,
+                    self._build_openrouter_model_settings(config),
+                ),
+            )
+
         raise ValueError(f"Unsupported LLM provider: {config.provider}")
 
     def _build_google_model_settings(
@@ -254,6 +266,24 @@ class BaseStructuredLLM:
                 settings["thinking"] = False
             else:
                 settings["thinking"] = config.reasoning_effort.value
+        if config.provider_options:
+            settings.update(config.provider_options)
+        return settings
+
+    def _build_openrouter_model_settings(
+        self, config: LLMModelConfig
+    ) -> dict[str, Any]:
+        if config.reasoning_dynamic is True:
+            raise ValueError(
+                "Provider 'openrouter' does not support reasoning_dynamic."
+            )
+
+        settings: dict[str, Any] = {"temperature": config.temperature}
+        if (
+            config.reasoning_effort is not None
+            and config.reasoning_effort != ReasoningEffort.OFF
+        ):
+            settings["openrouter_reasoning"] = {"effort": config.reasoning_effort.value}
         if config.provider_options:
             settings.update(config.provider_options)
         return settings
@@ -400,6 +430,15 @@ class BaseStructuredLLM:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("openai provider requires OPENAI_API_KEY.")
+        return api_key
+
+    @staticmethod
+    def _require_openrouter_api_key() -> str:
+        import os
+
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError("openrouter provider requires OPENROUTER_API_KEY.")
         return api_key
 
     def _build_agent(

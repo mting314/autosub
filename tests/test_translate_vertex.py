@@ -54,6 +54,15 @@ def test_vertex_translator_defaults_to_openai_gpt_5_mini():
     assert translator.model == "gpt-5-mini"
 
 
+def test_vertex_translator_defaults_to_openrouter_openai_gpt_5_mini():
+    translator = VertexTranslator(
+        project_id=None,
+        provider="openrouter",
+    )
+
+    assert translator.model == "openai/gpt-5-mini"
+
+
 def test_vertex_translator_defaults_to_medium_reasoning_effort():
     translator = VertexTranslator(project_id="test-project")
 
@@ -327,3 +336,42 @@ def test_openai_reasoning_dynamic_is_rejected():
 
     with pytest.raises(ValueError, match="does not support reasoning_dynamic"):
         llm._build_openai_model_settings(llm._get_model_config())
+
+
+def test_openrouter_reasoning_effort_maps_to_openrouter_reasoning():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="openai/gpt-5-mini",
+        provider="openrouter",
+        reasoning_effort=ReasoningEffort.HIGH,
+    )
+
+    settings = llm._build_openrouter_model_settings(llm._get_model_config())
+
+    assert settings["openrouter_reasoning"] == {"effort": "high"}
+    assert settings["temperature"] == 0.1
+
+
+def test_openrouter_reasoning_off_omits_openrouter_reasoning():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="openai/gpt-5-mini",
+        provider="openrouter",
+        reasoning_effort=ReasoningEffort.OFF,
+    )
+
+    settings = llm._build_openrouter_model_settings(llm._get_model_config())
+
+    assert "openrouter_reasoning" not in settings
+
+
+def test_openrouter_reasoning_dynamic_is_rejected():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="openai/gpt-5-mini",
+        provider="openrouter",
+        reasoning_dynamic=True,
+    )
+
+    with pytest.raises(ValueError, match="does not support reasoning_dynamic"):
+        llm._build_openrouter_model_settings(llm._get_model_config())

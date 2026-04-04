@@ -186,7 +186,7 @@ dependencies = [
     { name = "google-genai" },
     { name = "pyass" },
     { name = "pydantic" },
-    { name = "pydantic-ai-slim", extra = ["anthropic", "google", "openai"] },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "google", "openai", "openrouter"] },
     { name = "python-dotenv" },
     { name = "typer" },
 ]
@@ -210,7 +210,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.64.0" },
     { name = "pyass", specifier = ">=0.1.4" },
     { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "google", "openai"], specifier = ">=1.74.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "google", "openai", "openrouter"], specifier = ">=1.74.0" },
     { name = "python-dotenv", specifier = ">=1.2.1" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
@@ -1550,6 +1550,9 @@ google = [
 openai = [
     { name = "openai" },
     { name = "tiktoken" },
+]
+openrouter = [
+    { name = "openai" },
 ]
 
 [[package]]

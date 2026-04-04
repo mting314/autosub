@@ -71,6 +71,7 @@ def test_run_help_hides_advanced_translation_knobs():
 def test_translate_model_infers_provider_and_engine(tmp_path, monkeypatch):
     input_ass = tmp_path / "original.ass"
     _write_minimal_ass(input_ass)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic")
 
     captured: dict[str, object] = {}
 
@@ -107,6 +108,7 @@ def test_translate_model_rejects_cloud_v3(tmp_path):
 def test_run_model_infers_provider(tmp_path, monkeypatch):
     video_path = tmp_path / "video.mp4"
     video_path.write_text("fake", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
@@ -131,6 +133,33 @@ def test_run_model_infers_provider(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert captured["provider"] == "openai"
     assert captured["model"] == "gpt-5-mini"
+
+
+def test_translate_model_falls_back_to_openrouter_when_only_openrouter_key_exists(
+    tmp_path, monkeypatch
+):
+    input_ass = tmp_path / "original.ass"
+    _write_minimal_ass(input_ass)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter")
+
+    captured: dict[str, object] = {}
+
+    def fake_translate_subtitles(*args, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        cli_module.translate_module, "translate_subtitles", fake_translate_subtitles
+    )
+
+    result = runner.invoke(app, ["translate", str(input_ass), "--model", "gpt-5-mini"])
+
+    assert result.exit_code == 0
+    assert captured["engine"] == "vertex"
+    assert captured["provider"] == "openrouter"
+    assert captured["model"] == "openai/gpt-5-mini"
 
 
 def test_transcribe_supports_multiple_ranges(tmp_path, monkeypatch):
@@ -302,6 +331,7 @@ def test_no_config_ignores_default_config_file(tmp_path, monkeypatch):
 def test_run_inherits_stage_defaults_without_run_section(tmp_path, monkeypatch):
     video_path = tmp_path / "video.mp4"
     video_path.write_text("fake", encoding="utf-8")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-openai")
     (tmp_path / "config.toml").write_text(
         "\n".join(
             [

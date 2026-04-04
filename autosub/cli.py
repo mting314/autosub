@@ -11,7 +11,7 @@ from autosub.core.cli_config import (
     apply_run_config,
     load_cli_config,
 )
-from autosub.core.llm import ReasoningEffort
+from autosub.core.llm import LLMResolutionError, ReasoningEffort, resolve_llm_selection
 from autosub.core.utils import parse_timestamp
 from autosub.pipeline.transcribe import main as transcribe_main
 from autosub.pipeline.format import main as format_module
@@ -63,18 +63,30 @@ def main(
     ctx.obj["cli_config"] = {}
 
 
-def _infer_llm_provider(model_name: str) -> str:
-    normalized = model_name.strip().lower()
-    if normalized.startswith("claude"):
-        return "anthropic"
-    if normalized.startswith("gemini"):
-        return "google-vertex"
-    if normalized.startswith(("gpt", "o", "chatgpt")):
-        return "openai"
-    raise typer.BadParameter(
-        f"Could not infer an LLM provider from model '{model_name}'. "
-        "Use --llm-provider explicitly."
-    )
+def _command_option_has_config_override(
+    ctx: typer.Context, command_name: str, parameter_name: str
+) -> bool:
+    cli_config = (ctx.obj or {}).get("cli_config", {})
+    return parameter_name in cli_config.get(command_name, {})
+
+
+def _run_option_has_config_override(ctx: typer.Context, parameter_name: str) -> bool:
+    cli_config = (ctx.obj or {}).get("cli_config", {})
+    return parameter_name in cli_config.get(
+        "run", {}
+    ) or parameter_name in cli_config.get("translate", {})
+
+
+def _resolve_model_selection_or_exit(
+    *,
+    model: str,
+    provider: str | None,
+) -> tuple[str, str]:
+    try:
+        selection = resolve_llm_selection(model=model, provider=provider)
+    except LLMResolutionError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--model") from exc
+    return selection.provider, selection.model or model
 
 
 def _coerce_time_values(
@@ -347,7 +359,7 @@ def translate(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for the vertex engine ('google-vertex', 'anthropic', or 'openai').",
+        help="LLM provider to use for the vertex engine ('google-vertex', 'anthropic', 'openai', or 'openrouter').",
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
@@ -435,6 +447,14 @@ def translate(
 
     resolved_engine = engine
     resolved_provider = llm_provider
+    resolved_model = vertex_model
+    provider_override = None
+    if ctx.get_parameter_source(
+        "llm_provider"
+    ) != ParameterSource.DEFAULT or _command_option_has_config_override(
+        ctx, "translate", "llm_provider"
+    ):
+        provider_override = llm_provider
     if vertex_model:
         if engine == "cloud-v3":
             raise typer.BadParameter(
@@ -442,7 +462,10 @@ def translate(
                 param_hint="--model",
             )
         resolved_engine = "vertex"
-        resolved_provider = _infer_llm_provider(vertex_model)
+        resolved_provider, resolved_model = _resolve_model_selection_or_exit(
+            model=vertex_model,
+            provider=provider_override,
+        )
 
     try:
         translate_module.translate_subtitles(
@@ -453,7 +476,7 @@ def translate(
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
-            model=vertex_model,
+            model=resolved_model,
             location=vertex_location,
             provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
@@ -564,7 +587,7 @@ def run(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for translation ('google-vertex', 'anthropic', or 'openai').",
+        help="LLM provider to use for translation ('google-vertex', 'anthropic', 'openai', or 'openrouter').",
     ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."
@@ -675,7 +698,20 @@ def run(
         final_prompt_parts.append(prompt)
 
     final_prompt = "\n\n".join(final_prompt_parts) if final_prompt_parts else None
-    resolved_provider = _infer_llm_provider(model) if model else llm_provider
+    resolved_provider = llm_provider
+    resolved_model = model
+    provider_override = None
+    if ctx.get_parameter_source(
+        "llm_provider"
+    ) != ParameterSource.DEFAULT or _run_option_has_config_override(
+        ctx, "llm_provider"
+    ):
+        provider_override = llm_provider
+    if model:
+        resolved_provider, resolved_model = _resolve_model_selection_or_exit(
+            model=model,
+            provider=provider_override,
+        )
 
     # Step 1: Transcribe
     try:
@@ -751,7 +787,7 @@ def run(
             target_lang=target_lang,
             source_lang=source_lang,
             bilingual=bilingual,
-            model=model,
+            model=resolved_model,
             provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
             chunk_size=chunk_size,
