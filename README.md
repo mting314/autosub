@@ -70,17 +70,26 @@ To enable the optional local WhisperX backend:
 uv sync --extra whisperx
 ```
 
-If you want GPU WhisperX on Windows, keep `whisperx` as the optional repo extra and install the matching CUDA-enabled PyTorch build into the same repo environment separately:
+If you want GPU WhisperX on Windows, keep `whisperx` as the optional repo extra and then replace any CPU-only PyTorch packages in the same repo environment with the matching CUDA-enabled build:
 
 ```powershell
-uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+uv pip uninstall torch torchvision torchaudio
+uv pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision torchaudio
 ```
 
 Notes:
 
 - This PyTorch step is intentionally **not** in `pyproject.toml`, because the correct wheel depends on the user's platform and CUDA version.
+- `uv sync --extra whisperx` can leave you with a CPU-only `torch` build from dependency resolution, so GPU users must replace it explicitly.
 - `uv sync --extra whisperx` installs the WhisperX package, but the large Whisper/alignment models are still downloaded later on first use.
 - If you do not want GPU acceleration, skip the PyTorch CUDA wheel install and run WhisperX with `--whisper-device cpu`.
+- Verify the result before running a long transcription:
+
+```powershell
+uv run python -c "import torch; print(torch.__version__); print(torch.version.cuda); print(torch.cuda.is_available())"
+```
+
+You want to see a CUDA-tagged build such as `+cu128`, a non-`None` CUDA version, and `True`.
 
 ## Configuration
 

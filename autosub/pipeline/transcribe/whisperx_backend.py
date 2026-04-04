@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 from typing import Any
+import warnings
 
 from autosub.core.schemas import TranscribedWord
 
@@ -13,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 def _load_whisperx_module() -> Any:
     try:
+        warnings.filterwarnings(
+            "ignore",
+            message=r".*torchcodec is not installed correctly so built-in audio decoding will fail\..*",
+            category=UserWarning,
+        )
         return importlib.import_module("whisperx")
     except ImportError as exc:
         raise RuntimeError(
@@ -94,7 +100,12 @@ def transcribe_file(
         device,
         compute_type,
     )
-    model = whisperx.load_model(model_name, device, compute_type=compute_type)
+    model = whisperx.load_model(
+        model_name,
+        device,
+        compute_type=compute_type,
+        language=whisper_language,
+    )
     audio = whisperx.load_audio(str(audio_path))
     result = model.transcribe(audio, batch_size=batch_size, language=whisper_language)
 
