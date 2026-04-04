@@ -1,3 +1,1 @@
-"""
-Speech-to-Text module using Chirp 3 API.
-"""
+"""Speech-to-text pipeline backends and orchestration."""

@@ -35,6 +35,8 @@ def test_transcribe_help_omits_speakers_option():
 
     assert result.exit_code == 0
     assert "--speakers" not in result.output
+    assert "--backend" in result.output
+    assert "--whisper-model" in result.output
 
 
 def test_translate_help_uses_chunk_size_only():
@@ -66,6 +68,8 @@ def test_run_help_hides_advanced_translation_knobs():
     assert "--speakers" not in result.output
     assert "--no-chunk" not in result.output
     assert "--model" in result.output
+    assert "--backend" in result.output
+    assert "--whisper-model" in result.output
     assert "--llm-provider" in result.output
     assert "--llm-reasoning-effort" in result.output
     assert "--chunk-size" in result.output
@@ -226,6 +230,48 @@ def test_transcribe_supports_multiple_ranges(tmp_path, monkeypatch):
     assert captured["time_ranges"] == [("0", "5"), ("15", "20")]
 
 
+def test_transcribe_supports_whisperx_backend_options(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_transcribe(*args, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(words=[])
+
+    monkeypatch.setattr(cli_module.transcribe_main, "transcribe", fake_transcribe)
+
+    result = runner.invoke(
+        app,
+        [
+            "transcribe",
+            str(video_path),
+            "--backend",
+            "whisperx",
+            "--whisper-model",
+            "medium",
+            "--whisper-device",
+            "cuda",
+            "--whisper-compute-type",
+            "float16",
+            "--whisper-batch-size",
+            "8",
+            "--whisper-diarize",
+            "--whisper-hf-token",
+            "hf-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["transcription_backend"] == "whisperx"
+    assert captured["whisper_model"] == "medium"
+    assert captured["whisper_device"] == "cuda"
+    assert captured["whisper_compute_type"] == "float16"
+    assert captured["whisper_batch_size"] == 8
+    assert captured["whisper_diarize"] is True
+    assert captured["whisper_hf_token"] == "hf-token"
+
+
 def test_transcribe_rejects_mismatched_multiple_ranges(tmp_path):
     video_path = tmp_path / "video.mp4"
     video_path.write_text("fake", encoding="utf-8")
@@ -371,6 +417,13 @@ def test_run_inherits_stage_defaults_without_run_section(tmp_path, monkeypatch):
                 "[transcribe]",
                 'language = "en-US"',
                 'vocab = ["idol", "seiyuu"]',
+                'backend = "whisperx"',
+                'whisper_model = "medium"',
+                'whisper_device = "cuda"',
+                'whisper_compute_type = "float16"',
+                "whisper_batch_size = 8",
+                "whisper_diarize = true",
+                'whisper_hf_token = "hf-token"',
                 'start = "00:01:00"',
                 'end = "00:02:00"',
                 "",
@@ -422,6 +475,13 @@ def test_run_inherits_stage_defaults_without_run_section(tmp_path, monkeypatch):
     assert transcribe_kwargs is not None
     assert transcribe_args[2] == "en-US"
     assert transcribe_args[3] == ["idol", "seiyuu"]
+    assert transcribe_kwargs["transcription_backend"] == "whisperx"
+    assert transcribe_kwargs["whisper_model"] == "medium"
+    assert transcribe_kwargs["whisper_device"] == "cuda"
+    assert transcribe_kwargs["whisper_compute_type"] == "float16"
+    assert transcribe_kwargs["whisper_batch_size"] == 8
+    assert transcribe_kwargs["whisper_diarize"] is True
+    assert transcribe_kwargs["whisper_hf_token"] == "hf-token"
     assert transcribe_kwargs["time_ranges"] == [("00:01:00", "00:02:00")]
     assert captured_translate["provider"] == "openai"
     assert captured_translate["model"] == "gpt-5-mini"
@@ -473,3 +533,58 @@ def test_run_supports_multiple_transcription_ranges(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     assert captured_transcribe["time_ranges"] == [("0", "5"), ("15", "20")]
+
+
+def test_run_supports_whisperx_backend_options(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+
+    captured_transcribe: dict[str, object] = {}
+
+    def fake_transcribe(*args, **kwargs):
+        captured_transcribe.update(kwargs)
+
+    monkeypatch.setattr(cli_module.transcribe_main, "transcribe", fake_transcribe)
+    monkeypatch.setattr(
+        cli_module.format_module, "format_subtitles", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        cli_module.postprocess_module,
+        "postprocess_subtitles",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        cli_module.translate_module,
+        "translate_subtitles",
+        lambda *args, **kwargs: None,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            str(video_path),
+            "--backend",
+            "whisperx",
+            "--whisper-model",
+            "medium",
+            "--whisper-device",
+            "cuda",
+            "--whisper-compute-type",
+            "float16",
+            "--whisper-batch-size",
+            "8",
+            "--whisper-diarize",
+            "--whisper-hf-token",
+            "hf-token",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured_transcribe["transcription_backend"] == "whisperx"
+    assert captured_transcribe["whisper_model"] == "medium"
+    assert captured_transcribe["whisper_device"] == "cuda"
+    assert captured_transcribe["whisper_compute_type"] == "float16"
+    assert captured_transcribe["whisper_batch_size"] == 8
+    assert captured_transcribe["whisper_diarize"] is True
+    assert captured_transcribe["whisper_hf_token"] == "hf-token"

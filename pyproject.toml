@@ -21,6 +21,11 @@ dependencies = [
     "typer>=0.24.1",
 ]
 
+[project.optional-dependencies]
+whisperx = [
+    "whisperx>=3.8.5",
+]
+
 [project.scripts]
 autosub = "autosub.cli:app"
 

@@ -3,6 +3,7 @@ from threading import Barrier
 import time
 from types import SimpleNamespace
 
+from autosub.core.schemas import TranscribedWord
 from autosub.pipeline.transcribe import main as transcribe_main
 
 
@@ -141,3 +142,71 @@ def test_transcribe_fails_if_any_segment_fails(tmp_path, monkeypatch):
 
     assert not output_path.exists()
     assert all(not path.exists() for path in created_audio_paths)
+
+
+def test_transcribe_whisperx_does_not_require_google_project_or_gcs(
+    tmp_path, monkeypatch
+):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    output_path = tmp_path / "transcript.json"
+    created_audio_paths: list[Path] = []
+
+    monkeypatch.setattr(transcribe_main, "PROJECT_ID", None)
+
+    def fake_extract_audio(
+        input_video_path: Path,
+        start_time: str | None = None,
+        end_time: str | None = None,
+    ) -> Path:
+        audio_path = tmp_path / "audio.wav"
+        audio_path.write_text("fake", encoding="utf-8")
+        created_audio_paths.append(audio_path)
+        return audio_path
+
+    monkeypatch.setattr(transcribe_main.audio, "extract_audio", fake_extract_audio)
+    monkeypatch.setattr(
+        transcribe_main.audio, "get_audio_duration", lambda audio_path: 125.0
+    )
+    monkeypatch.setattr(
+        transcribe_main.gcs,
+        "upload_to_gcs",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("WhisperX should not upload to GCS.")
+        ),
+    )
+    monkeypatch.setattr(
+        transcribe_main.whisperx_backend,
+        "transcribe_file",
+        lambda *args, **kwargs: [
+            TranscribedWord(word="hello", start_time=0.25, end_time=0.75)
+        ],
+    )
+
+    result = transcribe_main.transcribe(
+        video_path,
+        output_path,
+        time_ranges=[("15", "20")],
+        transcription_backend="whisperx",
+    )
+
+    assert [word.word for word in result.words] == ["hello"]
+    assert [word.start_time for word in result.words] == [15.25]
+    assert output_path.exists()
+    assert all(not path.exists() for path in created_audio_paths)
+
+
+def test_transcribe_whisperx_rejects_unknown_backend(tmp_path):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    output_path = tmp_path / "transcript.json"
+
+    try:
+        transcribe_main.transcribe(
+            video_path,
+            output_path,
+            transcription_backend="unknown-backend",
+        )
+        assert False, "Expected unsupported backends to fail."
+    except ValueError as exc:
+        assert "Unsupported transcription backend" in str(exc)

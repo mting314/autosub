@@ -8,11 +8,14 @@ from uuid import uuid4
 from autosub.core.config import GCS_BUCKET, PROJECT_ID
 from autosub.core.schemas import TranscribedWord, TranscriptionResult
 from autosub.core.utils import parse_timestamp
-from autosub.pipeline.transcribe import api, audio, gcs
+from autosub.pipeline.transcribe import api, audio, gcs, whisperx_backend
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_TRANSCRIPTION_BACKEND = "chirp_2"
+SUPPORTED_TRANSCRIPTION_BACKENDS = {DEFAULT_TRANSCRIPTION_BACKEND, "whisperx"}
 MAX_CONCURRENT_TRANSCRIPTION_JOBS = 4
+MAX_CONCURRENT_WHISPERX_JOBS = 1
 
 
 @dataclass(frozen=True)
@@ -73,13 +76,45 @@ def _parse_words(results: Any, offset_seconds: float) -> list[TranscribedWord]:
     return words_data
 
 
+def _apply_offset(
+    words: Sequence[TranscribedWord], offset_seconds: float
+) -> list[TranscribedWord]:
+    return [
+        TranscribedWord(
+            word=word.word,
+            start_time=word.start_time + offset_seconds,
+            end_time=word.end_time + offset_seconds,
+            speaker=word.speaker,
+        )
+        for word in words
+    ]
+
+
+def _validate_transcription_backend(transcription_backend: str) -> str:
+    normalized = transcription_backend.strip().lower()
+    if normalized not in SUPPORTED_TRANSCRIPTION_BACKENDS:
+        supported = ", ".join(sorted(SUPPORTED_TRANSCRIPTION_BACKENDS))
+        raise ValueError(
+            f"Unsupported transcription backend: {transcription_backend}. "
+            f"Supported values: {supported}."
+        )
+    return normalized
+
+
 def _transcribe_time_range(
     video_path: Path,
-    project_id: str,
+    project_id: str | None,
     language_code: str,
     vocabulary: list[str] | None,
     num_speakers: int | None,
     time_range: TimeRange,
+    transcription_backend: str,
+    whisper_model: str,
+    whisper_device: str,
+    whisper_compute_type: str,
+    whisper_batch_size: int,
+    whisper_diarize: bool,
+    whisper_hf_token: str | None,
 ) -> list[TranscribedWord]:
     logger.info(
         "Extracting audio for segment %s (start=%s, end=%s)...",
@@ -98,6 +133,23 @@ def _transcribe_time_range(
             time_range.index + 1,
             duration,
         )
+
+        if transcription_backend == "whisperx":
+            words = whisperx_backend.transcribe_file(
+                audio_path,
+                language_code=language_code,
+                model_name=whisper_model,
+                device=whisper_device,
+                compute_type=whisper_compute_type,
+                batch_size=whisper_batch_size,
+                diarize=whisper_diarize,
+                hf_token=whisper_hf_token,
+                num_speakers=num_speakers,
+            )
+            return _apply_offset(words, time_range.offset_seconds)
+
+        if not project_id:
+            raise ValueError("GOOGLE_CLOUD_PROJECT is not set in the environment.")
 
         if duration > 60:
             if not GCS_BUCKET:
@@ -147,6 +199,13 @@ def transcribe(
     start_time: str | None = None,
     end_time: str | None = None,
     time_ranges: Sequence[tuple[str | None, str | None]] | None = None,
+    transcription_backend: str = DEFAULT_TRANSCRIPTION_BACKEND,
+    whisper_model: str = "large-v2",
+    whisper_device: str = "cpu",
+    whisper_compute_type: str = "int8",
+    whisper_batch_size: int = 16,
+    whisper_diarize: bool = False,
+    whisper_hf_token: str | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -155,13 +214,20 @@ def transcribe(
     3. Calls the Chirp 2 API for each segment
     4. Merges results and saves to disk
     """
-    if not PROJECT_ID:
-        raise ValueError("AUTOSUB_PROJECT_ID is not set in the environment.")
-    project_id = PROJECT_ID
+    resolved_backend = _validate_transcription_backend(transcription_backend)
+    project_id = (
+        PROJECT_ID if resolved_backend == DEFAULT_TRANSCRIPTION_BACKEND else None
+    )
+    if resolved_backend == "whisperx" and vocabulary:
+        logger.warning(
+            "Ignoring vocabulary hints for WhisperX transcription; this backend "
+            "does not support Chirp-style phrase adaptation."
+        )
 
     normalized_ranges = _normalize_time_ranges(start_time, end_time, time_ranges)
     logger.info(
-        "Starting transcription for %s segment(s) from %s",
+        "Starting %s transcription for %s segment(s) from %s",
+        resolved_backend,
         len(normalized_ranges),
         video_path,
     )
@@ -172,10 +238,27 @@ def transcribe(
     if len(normalized_ranges) == 1:
         segment = normalized_ranges[0]
         segment_results[segment.index] = _transcribe_time_range(
-            video_path, project_id, language_code, vocabulary, num_speakers, segment
+            video_path,
+            project_id,
+            language_code,
+            vocabulary,
+            num_speakers,
+            segment,
+            resolved_backend,
+            whisper_model,
+            whisper_device,
+            whisper_compute_type,
+            whisper_batch_size,
+            whisper_diarize,
+            whisper_hf_token,
         )
     else:
-        max_workers = min(MAX_CONCURRENT_TRANSCRIPTION_JOBS, len(normalized_ranges))
+        concurrency_cap = (
+            MAX_CONCURRENT_WHISPERX_JOBS
+            if resolved_backend == "whisperx"
+            else MAX_CONCURRENT_TRANSCRIPTION_JOBS
+        )
+        max_workers = min(concurrency_cap, len(normalized_ranges))
         logger.info(
             "Submitting %s transcription segment(s) with up to %s concurrent worker(s)...",
             len(normalized_ranges),
@@ -191,6 +274,13 @@ def transcribe(
                     vocabulary,
                     num_speakers,
                     segment,
+                    resolved_backend,
+                    whisper_model,
+                    whisper_device,
+                    whisper_compute_type,
+                    whisper_batch_size,
+                    whisper_diarize,
+                    whisper_hf_token,
                 ): segment
                 for segment in normalized_ranges
             }

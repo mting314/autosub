@@ -6,14 +6,14 @@ Automatic Japanese subtitle generation and translation pipeline for speech-heavy
 
 `autosub` currently runs a four-stage CLI pipeline:
 
-1. **Transcribe**: Extract audio, send it to Google Cloud Speech-to-Text (`chirp_2`), and write a word-timed `transcript.json`.
+1. **Transcribe**: Extract audio, send it to the selected transcription backend (`chirp_2` by default, optional local `whisperx`), and write a word-timed `transcript.json`.
 2. **Format**: Chunk words into subtitle lines, optionally apply discourse-aware radio segmentation, apply timing and optional keyframe snapping, and write `original.ass`.
 3. **Translate**: Translate subtitle events with either Vertex AI (`gemini-3-flash-preview`) or Cloud Translation v3, then write `translated.ass`.
 4. **Postprocess**: Apply profile-driven editorial cleanup to the translated `.ass` file. The built-in `run` command includes this step automatically.
 
 ```mermaid
 graph TD
-    A[Video or Audio Input] --> B[Transcribe<br/>Google Speech-to-Text chirp_2]
+    A[Video or Audio Input] --> B[Transcribe<br/>chirp_2 or WhisperX]
     B --> C[Format<br/>Chunking + Timing + Optional Keyframe Snapping]
     C --> D[Translate<br/>Vertex Gemini 3 Flash or Cloud Translation v3]
     D --> E[Postprocess<br/>Profile Extensions]
@@ -22,8 +22,9 @@ graph TD
 
 ## Current Capabilities
 
-- Word-level transcript timing from Google Speech-to-Text.
+- Word-level transcript timing from Google Speech-to-Text or WhisperX.
 - Automatic short-audio local transcription and long-audio GCS batch transcription.
+- Optional local WhisperX transcription that avoids Google-backed STT.
 - Subtitle timing cleanup with minimum-duration padding, gap snapping, and optional keyframe alignment.
 - Radio-show discourse extensions that can split listener mail framing and label subtitle roles.
 - Optional bilingual output with original Japanese stacked above the translation.
@@ -31,8 +32,9 @@ graph TD
 
 ## Current Limits
 
-- The CLI is still documented and exposed as a **single-speaker** pipeline.
+- The CLI is still documented and exposed as a **single-speaker** pipeline by default.
 - The transcript and formatter can preserve `speaker` labels if they are already present in `transcript.json`, and `.ass` generation will create per-speaker styles, but diarization is not wired through the transcription commands yet.
+- WhisperX is an alternate backend, not a parity backend for `chirp_2`; vocabulary hints, runtime characteristics, and recognition quality can differ.
 - The formatter does **not** currently insert ASS line breaks (`\N`). Layout helpers exist in the codebase, but profile options such as `max_line_width` and `max_lines_per_subtitle` are not currently consumed by the CLI pipeline.
 
 ## Prerequisites
@@ -44,11 +46,15 @@ graph TD
    - Google Cloud for transcription, Cloud Translation v3, or `google-vertex`
    - `ANTHROPIC_API_KEY` for direct Anthropic translation or classification
    - `OPENAI_API_KEY` for direct OpenAI translation or classification
-5. Google Cloud credentials when using Google-backed features:
+5. Optional for local WhisperX transcription:
+   - install the optional extra with `uv sync --extra whisperx`
+   - a working PyTorch/CUDA setup if you want GPU transcription
+   - `HF_TOKEN` or `--whisper-hf-token` if you enable WhisperX diarization
+6. Google Cloud credentials when using Google-backed features:
    - `GOOGLE_APPLICATION_CREDENTIALS`
    - `GOOGLE_CLOUD_PROJECT`
    - `AUTOSUB_GCS_BUCKET` for audio longer than about 60 seconds
-6. Optional: `SCXvid` if you want automatic keyframe extraction for scene-aware timing
+7. Optional: `SCXvid` if you want automatic keyframe extraction for scene-aware timing
 
 ## Installation
 
@@ -57,6 +63,24 @@ git clone https://github.com/yourusername/autosub.git
 Set-Location autosub
 uv sync
 ```
+
+To enable the optional local WhisperX backend:
+
+```powershell
+uv sync --extra whisperx
+```
+
+If you want GPU WhisperX on Windows, keep `whisperx` as the optional repo extra and install the matching CUDA-enabled PyTorch build into the same repo environment separately:
+
+```powershell
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+```
+
+Notes:
+
+- This PyTorch step is intentionally **not** in `pyproject.toml`, because the correct wheel depends on the user's platform and CUDA version.
+- `uv sync --extra whisperx` installs the WhisperX package, but the large Whisper/alignment models are still downloaded later on first use.
+- If you do not want GPU acceleration, skip the PyTorch CUDA wheel install and run WhisperX with `--whisper-device cpu`.
 
 ## Configuration
 
@@ -77,7 +101,7 @@ Notes:
 - `OPENAI_API_KEY` is only needed for `--llm-provider openai`.
 - `OPENROUTER_API_KEY` is only needed for `--llm-provider openrouter`, or when `--model` falls back to OpenRouter because no higher-priority compatible provider is credentialed.
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `AUTOSUB_GCS_BUCKET` are only needed for Google-backed stages.
-- Long-audio transcription still requires Google Cloud Storage even if translation uses Anthropic.
+- Long-audio transcription only requires Google Cloud Storage when using the default `chirp_2` backend.
 
 ## Quick Start
 
@@ -102,6 +126,25 @@ By default, `run` writes these files next to the input media:
 - `translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
 
 If keyframe extraction is enabled and succeeds, it also writes `<input-stem>_keyframes.log`.
+
+Use WhisperX instead of Chirp 2:
+
+```powershell
+uv run autosub transcribe .\video.mp4 `
+  --backend whisperx `
+  --whisper-model large-v2 `
+  --whisper-device cpu
+```
+
+Use WhisperX with GPU on Windows after installing a CUDA-enabled PyTorch wheel:
+
+```powershell
+uv run autosub transcribe .\video.mp4 `
+  --backend whisperx `
+  --whisper-model large-v2 `
+  --whisper-device cuda `
+  --whisper-compute-type float16
+```
 
 ## Running Stages Individually
 
@@ -262,8 +305,15 @@ Keep reusable content in `profiles/*.toml` instead:
 
 - `--out`, `-o`: Output transcript path. Default: `transcript.json`
 - `--language`, `-l`: Speech recognition language code. Default: `ja-JP`
+- `--backend` / `--transcription-backend`: `chirp_2` or `whisperx`
 - `--vocab`, `-v`: Additional speech adaptation hints. Can be passed multiple times.
 - `--profile`: Loads profile vocabulary.
+- `--whisper-model`: WhisperX model name when `--backend whisperx` is selected
+- `--whisper-device`: WhisperX device, usually `cpu` or `cuda`
+- `--whisper-compute-type`: WhisperX/CTranslate2 compute type such as `int8` or `float16`
+- `--whisper-batch-size`: WhisperX batch size
+- `--whisper-diarize` / `--no-whisper-diarize`: Enable or disable WhisperX diarization
+- `--whisper-hf-token`: Optional Hugging Face token for WhisperX diarization
 - `--start`: Start time for transcription. Can be passed multiple times and pairs by order with `--end`.
 - `--end`: End time for transcription. Can be passed multiple times and pairs by order with `--start`.
 
@@ -271,8 +321,10 @@ Behavior notes:
 
 - Audio shorter than about 60 seconds is sent directly to the API.
 - Longer audio is uploaded to GCS first and transcribed as a batch job.
+- WhisperX runs locally on the extracted segment audio and does not use GCS.
+- `--vocab` and profile vocabulary currently only affect `chirp_2`; WhisperX ignores them.
 - Repeated `--start` and `--end` flags are grouped by position, so `--start 0 --start 15 --end 5 --end 20` transcribes `0-5` and `15-20`.
-- When multiple ranges are provided, segment transcription requests run concurrently and the merged `transcript.json` keeps original video timestamps.
+- When multiple ranges are provided, segment transcription requests are merged back into original video timestamps. `chirp_2` ranges run concurrently; WhisperX ranges currently run one at a time to avoid repeated heavy local model loads.
 
 ### `autosub format`
 

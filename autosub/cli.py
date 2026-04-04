@@ -176,6 +176,43 @@ def transcribe(
         "--profile",
         help="Profile name to load transcription vocabulary hints.",
     ),
+    transcription_backend: str = typer.Option(
+        "chirp_2",
+        "--backend",
+        "--transcription-backend",
+        help="Transcription backend to use ('chirp_2' or 'whisperx').",
+    ),
+    whisper_model: str = typer.Option(
+        "large-v2",
+        "--whisper-model",
+        help="WhisperX model name when --backend whisperx is selected.",
+    ),
+    whisper_device: str = typer.Option(
+        "cpu",
+        "--whisper-device",
+        help="Device for WhisperX transcription ('cpu' or 'cuda').",
+    ),
+    whisper_compute_type: str = typer.Option(
+        "int8",
+        "--whisper-compute-type",
+        help="CTranslate2 compute type for WhisperX (for example 'int8' or 'float16').",
+    ),
+    whisper_batch_size: int = typer.Option(
+        16,
+        "--whisper-batch-size",
+        min=1,
+        help="Batch size for WhisperX transcription.",
+    ),
+    whisper_diarize: bool = typer.Option(
+        False,
+        "--whisper-diarize/--no-whisper-diarize",
+        help="Enable WhisperX diarization and populate speaker labels.",
+    ),
+    whisper_hf_token: str = typer.Option(
+        None,
+        "--whisper-hf-token",
+        help="Optional Hugging Face token for WhisperX diarization.",
+    ),
     start: list[str] = typer.Option(
         None,
         "--start",
@@ -188,7 +225,7 @@ def transcribe(
     ),
 ):
     """
-    Extracts audio and transcribes Japanese speech with Google Cloud Speech-to-Text.
+    Extracts audio and transcribes speech with the selected backend.
     """
     resolved = apply_command_config(
         ctx,
@@ -198,6 +235,13 @@ def transcribe(
             "language": language,
             "vocab": vocab,
             "profile": profile,
+            "transcription_backend": transcription_backend,
+            "whisper_model": whisper_model,
+            "whisper_device": whisper_device,
+            "whisper_compute_type": whisper_compute_type,
+            "whisper_batch_size": whisper_batch_size,
+            "whisper_diarize": whisper_diarize,
+            "whisper_hf_token": whisper_hf_token,
             "start": start,
             "end": end,
         },
@@ -206,6 +250,13 @@ def transcribe(
     language = resolved["language"]
     vocab = resolved["vocab"]
     profile = resolved["profile"]
+    transcription_backend = resolved["transcription_backend"]
+    whisper_model = resolved["whisper_model"]
+    whisper_device = resolved["whisper_device"]
+    whisper_compute_type = resolved["whisper_compute_type"]
+    whisper_batch_size = resolved["whisper_batch_size"]
+    whisper_diarize = resolved["whisper_diarize"]
+    whisper_hf_token = resolved["whisper_hf_token"]
     start = resolved["start"]
     end = resolved["end"]
     time_ranges = _normalize_time_ranges(start, end)
@@ -226,6 +277,13 @@ def transcribe(
             language,
             final_vocab,
             time_ranges=time_ranges,
+            transcription_backend=transcription_backend,
+            whisper_model=whisper_model,
+            whisper_device=whisper_device,
+            whisper_compute_type=whisper_compute_type,
+            whisper_batch_size=whisper_batch_size,
+            whisper_diarize=whisper_diarize,
+            whisper_hf_token=whisper_hf_token,
         )
         logger.info(f"Success! Saved {len(result.words)} words to {output}")
     except Exception as e:
@@ -572,6 +630,43 @@ def run(
     vocab: list[str] = typer.Option(
         None, "--vocab", "-v", help="Custom transcription hints."
     ),
+    transcription_backend: str = typer.Option(
+        "chirp_2",
+        "--backend",
+        "--transcription-backend",
+        help="Transcription backend to use ('chirp_2' or 'whisperx').",
+    ),
+    whisper_model: str = typer.Option(
+        "large-v2",
+        "--whisper-model",
+        help="WhisperX model name when --backend whisperx is selected.",
+    ),
+    whisper_device: str = typer.Option(
+        "cpu",
+        "--whisper-device",
+        help="Device for WhisperX transcription ('cpu' or 'cuda').",
+    ),
+    whisper_compute_type: str = typer.Option(
+        "int8",
+        "--whisper-compute-type",
+        help="CTranslate2 compute type for WhisperX (for example 'int8' or 'float16').",
+    ),
+    whisper_batch_size: int = typer.Option(
+        16,
+        "--whisper-batch-size",
+        min=1,
+        help="Batch size for WhisperX transcription.",
+    ),
+    whisper_diarize: bool = typer.Option(
+        False,
+        "--whisper-diarize/--no-whisper-diarize",
+        help="Enable WhisperX diarization and populate speaker labels.",
+    ),
+    whisper_hf_token: str = typer.Option(
+        None,
+        "--whisper-hf-token",
+        help="Optional Hugging Face token for WhisperX diarization.",
+    ),
     prompt: str = typer.Option(
         None, "--prompt", "-p", help="System prompt to guide the LLM translation."
     ),
@@ -633,6 +728,13 @@ def run(
             "language": language,
             "profile": profile,
             "vocab": vocab,
+            "transcription_backend": transcription_backend,
+            "whisper_model": whisper_model,
+            "whisper_device": whisper_device,
+            "whisper_compute_type": whisper_compute_type,
+            "whisper_batch_size": whisper_batch_size,
+            "whisper_diarize": whisper_diarize,
+            "whisper_hf_token": whisper_hf_token,
             "prompt": prompt,
             "target_lang": target_lang,
             "source_lang": source_lang,
@@ -651,6 +753,13 @@ def run(
     language = resolved["language"]
     profile = resolved["profile"]
     vocab = resolved["vocab"]
+    transcription_backend = resolved["transcription_backend"]
+    whisper_model = resolved["whisper_model"]
+    whisper_device = resolved["whisper_device"]
+    whisper_compute_type = resolved["whisper_compute_type"]
+    whisper_batch_size = resolved["whisper_batch_size"]
+    whisper_diarize = resolved["whisper_diarize"]
+    whisper_hf_token = resolved["whisper_hf_token"]
     prompt = resolved["prompt"]
     target_lang = resolved["target_lang"]
     source_lang = resolved["source_lang"]
@@ -726,6 +835,13 @@ def run(
             language,
             final_vocab,
             time_ranges=time_ranges,
+            transcription_backend=transcription_backend,
+            whisper_model=whisper_model,
+            whisper_device=whisper_device,
+            whisper_compute_type=whisper_compute_type,
+            whisper_batch_size=whisper_batch_size,
+            whisper_diarize=whisper_diarize,
+            whisper_hf_token=whisper_hf_token,
         )
     except Exception as e:
         logger.error(f"Failed during transcription: {e}")
