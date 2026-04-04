@@ -97,18 +97,21 @@ COMMAND_OPTION_SPECS: dict[str, dict[str, OptionSpec]] = {
         ),
         "llm_provider": OptionSpec(("llm_provider", "provider"), _as_str),
         "vertex_reasoning_effort": OptionSpec(
-            ("reasoning_effort", "vertex_reasoning_effort"), _as_reasoning_effort
+            ("reasoning_effort", "llm_reasoning_effort", "vertex_reasoning_effort"),
+            _as_reasoning_effort,
         ),
         "vertex_reasoning_budget": OptionSpec(
             (
                 "reasoning_budget",
+                "llm_reasoning_budget",
                 "vertex_reasoning_budget",
                 "reasoning_budget_tokens",
             ),
             _as_int,
         ),
         "vertex_reasoning_dynamic": OptionSpec(
-            ("reasoning_dynamic", "vertex_reasoning_dynamic"), _as_bool
+            ("reasoning_dynamic", "llm_reasoning_dynamic", "vertex_reasoning_dynamic"),
+            _as_bool,
         ),
         "bilingual": OptionSpec(("bilingual",), _as_bool),
         "chunk_size": OptionSpec(("chunk_size",), _as_int),
@@ -128,7 +131,8 @@ COMMAND_OPTION_SPECS: dict[str, dict[str, OptionSpec]] = {
         "source_lang": OptionSpec(("source", "source_lang"), _as_str),
         "model": OptionSpec(("model", "llm_model"), _as_str),
         "vertex_reasoning_effort": OptionSpec(
-            ("reasoning_effort", "vertex_reasoning_effort"), _as_reasoning_effort
+            ("reasoning_effort", "llm_reasoning_effort", "vertex_reasoning_effort"),
+            _as_reasoning_effort,
         ),
         "llm_provider": OptionSpec(("llm_provider", "provider"), _as_str),
         "bilingual": OptionSpec(("bilingual",), _as_bool),

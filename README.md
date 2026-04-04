@@ -68,12 +68,14 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 AUTOSUB_GCS_BUCKET=your-staging-bucket
 ANTHROPIC_API_KEY=your-anthropic-api-key
 OPENAI_API_KEY=your-openai-api-key
+OPENROUTER_API_KEY=your-openrouter-api-key
 ```
 
 Notes:
 
 - `ANTHROPIC_API_KEY` is only needed for `--llm-provider anthropic`.
 - `OPENAI_API_KEY` is only needed for `--llm-provider openai`.
+- `OPENROUTER_API_KEY` is only needed for `--llm-provider openrouter`, or when `--model` falls back to OpenRouter because no higher-priority compatible provider is credentialed.
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `AUTOSUB_GCS_BUCKET` are only needed for Google-backed stages.
 - Long-audio transcription still requires Google Cloud Storage even if translation uses Anthropic.
 
@@ -132,7 +134,7 @@ uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
   --model claude-haiku-4-5 `
-  --vertex-reasoning-effort low `
+  --llm-reasoning-effort low `
   --bilingual
 ```
 
@@ -143,7 +145,7 @@ uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
   --model claude-sonnet-4-6 `
-  --vertex-reasoning-effort low `
+  --llm-reasoning-effort low `
   --chunk-size 20 `
   --bilingual
 ```
@@ -155,8 +157,29 @@ uv run autosub translate .\original.ass `
   --out .\translated.ass `
   --profile suzuhara_nozomi `
   --model gpt-5-mini `
-  --vertex-reasoning-effort low `
+  --llm-reasoning-effort low `
   --bilingual
+```
+
+Translate with OpenRouter explicitly:
+
+```powershell
+uv run autosub translate .\original.ass `
+  --out .\translated.ass `
+  --profile suzuhara_nozomi `
+  --llm-provider openrouter `
+  --model anthropic/claude-sonnet-4-6 `
+  --llm-reasoning-effort low `
+  --bilingual
+```
+
+Translate with an OpenRouter-native model ID:
+
+```powershell
+uv run autosub translate .\original.ass `
+  --out .\translated.ass `
+  --llm-provider openrouter `
+  --model qwen/qwen3.6-plus:free
 ```
 
 ## Model Selection
@@ -269,25 +292,29 @@ Behavior notes:
 - `--out`: Output `.ass` path. Default: `translated.ass`
 - `--engine`, `-e`: `vertex` or `cloud-v3`
 - `--model`: Preferred LLM selector for the `vertex` engine. Infers provider automatically for Gemini, Claude, and OpenAI model names
-- `--llm-provider`: `google-vertex`, `anthropic`, or `openai` for the `vertex` engine
+- `--llm-provider`: `google-vertex`, `anthropic`, `openai`, or `openrouter` for the `vertex` engine
 - `--prompt`, `-p`: Extra translation guidance appended after profile prompts
 - `--profile`: Loads prompt text from the selected profile
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
-- `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex`, `claude-haiku-4-5` for `anthropic`, and `gpt-5-mini` for `openai`
+- `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex`, `claude-haiku-4-5` for `anthropic`, `gpt-5-mini` for `openai`, and `openai/gpt-5-mini` for `openrouter`
 - `--llm-location` / `--vertex-location`: Override the LLM location or region
-- `--vertex-reasoning-effort`: Provider-agnostic reasoning effort for LLM-backed translation. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
-- `--vertex-reasoning-budget`: Optional token-budget override for provider-specific reasoning controls
-- `--vertex-reasoning-dynamic` / `--no-vertex-reasoning-dynamic`: Request dynamic reasoning budget on supported providers and model families
+- `--llm-reasoning-effort`: Provider-agnostic reasoning effort for LLM-backed translation. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
+- `--llm-reasoning-budget`: Optional token-budget override for provider-specific reasoning controls
+- `--llm-reasoning-dynamic` / `--no-llm-reasoning-dynamic`: Request dynamic reasoning budget on supported providers and model families
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
 - `--chunk-size`: Number of subtitle lines per translation chunk. Use `0` to disable chunking. Default: `0`
 
 Behavior notes:
 
-- `vertex` uses the structured LLM path. The default provider is Vertex AI with `gemini-3-flash-preview`, and direct Anthropic is also supported with `--llm-provider anthropic`.
-- `vertex` also supports direct OpenAI with `--llm-provider openai`.
+- `vertex` uses the structured LLM path. The default provider is Vertex AI with `gemini-3-flash-preview`, and direct Anthropic, OpenAI, and OpenRouter are also supported.
 - `cloud-v3` uses Google Cloud Translation v3 and ignores custom prompt text.
-- `--model gemini-*` infers `google-vertex`, `--model claude-*` infers `anthropic`, and `--model gpt-*` or `o*` infers `openai`.
+- The older `--vertex-reasoning-*` spellings still work as legacy aliases, but `--llm-reasoning-*` is the preferred public interface now.
+- `--model` now resolves in two steps: identify a supported model family, then choose a compatible credentialed provider.
+- Supported family shortcuts are currently `gemini-*`, `claude-*`, `gpt-*`, `chatgpt*`, and OpenAI `o`-series names like `o3` or `o4-mini`.
+- When more than one compatible provider is credentialed, autosub prefers direct providers over OpenRouter: `google-vertex`, then `anthropic`, then `openai`, then `openrouter`.
+- `--llm-provider` always overrides automatic provider selection.
+- OpenRouter-native `vendor/model` IDs such as `qwen/qwen3.6-plus:free` are accepted directly. If `OPENROUTER_API_KEY` is available, bare vendor-prefixed model IDs also auto-resolve to OpenRouter.
 - `--model` cannot be combined with `--engine cloud-v3`.
 
 Anthropic notes:
@@ -296,7 +323,7 @@ Anthropic notes:
 - When `--llm-provider anthropic` is selected and `--llm-model` is omitted, the default model is `claude-haiku-4-5`.
 - For longer or stricter JSON-heavy translation jobs, `claude-sonnet-4-6` is usually more reliable than Haiku.
 - `--llm-location` is ignored for direct Anthropic requests.
-- Direct Anthropic uses the same `--vertex-reasoning-effort` flag for now because the CLI predates multi-provider support.
+- Direct Anthropic uses the same `--llm-reasoning-effort` flag as the other providers.
 
 Current Anthropic reasoning defaults in this repo:
 
@@ -309,8 +336,16 @@ OpenAI notes:
 
 - Direct OpenAI currently defaults to `gpt-5-mini` when `--llm-provider openai` is selected and `--llm-model` is omitted.
 - `--llm-location` is ignored for direct OpenAI requests.
-- OpenAI uses the same `--vertex-reasoning-effort` flag for now because the CLI predates multi-provider support.
-- `--vertex-reasoning-budget` is currently ignored for OpenAI. Use reasoning effort only.
+- OpenAI uses the same `--llm-reasoning-effort` flag as the other providers.
+- `--llm-reasoning-budget` is currently ignored for OpenAI. Use reasoning effort only.
+
+OpenRouter notes:
+
+- OpenRouter currently defaults to `openai/gpt-5-mini` when `--llm-provider openrouter` is selected and `--llm-model` is omitted.
+- For recognized bare model families, autosub rewrites the model to the OpenRouter vendor-prefixed form automatically when OpenRouter is selected. For example, `gpt-5-mini` becomes `openai/gpt-5-mini`, and `claude-sonnet-4-6` becomes `anthropic/claude-sonnet-4-6`.
+- You can also pass OpenRouter-native model IDs directly, such as `qwen/qwen3.6-plus:free`.
+- OpenRouter uses the same `--llm-reasoning-effort` flag as the other providers.
+- `--llm-location` is ignored for OpenRouter requests.
 
 ### `autosub postprocess`
 
@@ -334,7 +369,7 @@ Behavior notes:
 - `--prompt`
 - `--target`
 - `--source`
-- `--vertex-reasoning-effort`
+- `--llm-reasoning-effort`
 - `--llm-provider`
 - `--bilingual` / `--replace`
 - `--keyframes`
@@ -346,6 +381,7 @@ Behavior notes:
 Behavior notes:
 
 - `run` defaults to the Vertex AI translation path, but you can switch to direct Anthropic with `--llm-provider anthropic`.
+- `run` uses the same model resolution rules as `translate`, including credential-aware fallback to OpenRouter for supported model families.
 - If you need `cloud-v3` or advanced LLM overrides such as model, location, or dynamic reasoning settings, run the stages separately and use `autosub translate`.
 - Repeated `--start` and `--end` flags behave the same as `autosub transcribe`, and the selected transcription segments run concurrently before the downstream stages continue.
 
@@ -355,7 +391,7 @@ Example:
 uv run autosub run .\video.mp4 `
   --profile suzuhara_nozomi `
   --model claude-haiku-4-5 `
-  --vertex-reasoning-effort low `
+  --llm-reasoning-effort low `
   --bilingual
 ```
 

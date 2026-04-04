@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from pydantic import BaseModel
-from pydantic_ai import Agent, NativeOutput
+from pydantic_ai import Agent, NativeOutput, PromptedOutput, ToolOutput
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
 from pydantic_ai.messages import ThinkingPart
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -30,10 +30,12 @@ from autosub.core.errors import (
     VertexResponseDiagnostics,
     VertexResponseParseError,
 )
+from autosub.core.llm.resolver import classify_model
 
 logger = logging.getLogger(__name__)
 
 OutputT = TypeVar("OutputT")
+StructuredOutputMode = Literal["native", "tool", "prompted"]
 
 
 class ReasoningEffort(StrEnum):
@@ -448,11 +450,31 @@ class BaseStructuredLLM:
         output_type: Any,
         output_name: str,
     ) -> Agent[Any, Any]:
+        wrapped_output_type = self._build_agent_output_type(
+            output_type=output_type,
+            output_name=output_name,
+        )
         return Agent(
             self._build_model(),
             system_prompt=system_prompt,
-            output_type=cast(Any, NativeOutput(output_type, name=output_name)),
+            output_type=wrapped_output_type,
         )
+
+    def _build_agent_output_type(self, *, output_type: Any, output_name: str) -> Any:
+        output_mode = self._resolve_structured_output_mode()
+        if output_mode == "native":
+            return cast(Any, NativeOutput(output_type, name=output_name))
+        if output_mode == "prompted":
+            return cast(Any, PromptedOutput(output_type, name=output_name))
+        return cast(Any, ToolOutput(output_type, name=output_name))
+
+    def _resolve_structured_output_mode(self) -> StructuredOutputMode:
+        if self.provider == "openrouter":
+            classification = classify_model(self.model)
+            if classification is None or classification.model_family is None:
+                return "prompted"
+            return "tool"
+        return "native"
 
     def _run_structured_output(
         self,

@@ -45,6 +45,9 @@ def test_translate_help_uses_chunk_size_only():
     assert "--no-chunk" not in result.output
     assert "--model" in result.output
     assert "--llm-provider" in result.output
+    assert "--llm-reasoning-effort" in result.output
+    assert "--llm-reasoning-budget" in result.output
+    assert "--llm-reasoning-dynamic" in result.output
     assert "--vertex-model" in result.output
     assert "--vertex-location" in result.output
 
@@ -56,13 +59,15 @@ def test_run_help_hides_advanced_translation_knobs():
     assert "--engine" not in result.output
     assert "--vertex-model" not in result.output
     assert "--vertex-location" not in result.output
+    assert "--llm-reasoning-budget" not in result.output
+    assert "--llm-reasoning-dynamic" not in result.output
     assert "--vertex-reasoning-budget" not in result.output
     assert "--vertex-reasoning-dynamic" not in result.output
     assert "--speakers" not in result.output
     assert "--no-chunk" not in result.output
     assert "--model" in result.output
     assert "--llm-provider" in result.output
-    assert "--vertex-reasoning-effort" in result.output
+    assert "--llm-reasoning-effort" in result.output
     assert "--chunk-size" in result.output
     assert "--start" in result.output
     assert "--end" in result.output
@@ -160,6 +165,34 @@ def test_translate_model_falls_back_to_openrouter_when_only_openrouter_key_exist
     assert captured["engine"] == "vertex"
     assert captured["provider"] == "openrouter"
     assert captured["model"] == "openai/gpt-5-mini"
+
+
+def test_translate_accepts_openrouter_native_model_id(tmp_path, monkeypatch):
+    input_ass = tmp_path / "original.ass"
+    _write_minimal_ass(input_ass)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter")
+
+    captured: dict[str, object] = {}
+
+    def fake_translate_subtitles(*args, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        cli_module.translate_module, "translate_subtitles", fake_translate_subtitles
+    )
+
+    result = runner.invoke(
+        app,
+        ["translate", str(input_ass), "--model", "qwen/qwen3.6-plus:free"],
+    )
+
+    assert result.exit_code == 0
+    assert captured["engine"] == "vertex"
+    assert captured["provider"] == "openrouter"
+    assert captured["model"] == "qwen/qwen3.6-plus:free"
 
 
 def test_transcribe_supports_multiple_ranges(tmp_path, monkeypatch):

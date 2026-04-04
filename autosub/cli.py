@@ -363,18 +363,21 @@ def translate(
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
+        "--llm-reasoning-effort",
         "--vertex-reasoning-effort",
         help="Provider-agnostic reasoning effort for LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
     ),
     vertex_reasoning_budget: int | None = typer.Option(
         None,
+        "--llm-reasoning-budget",
         "--vertex-reasoning-budget",
-        help="Optional token-budget override for Vertex LLM reasoning. For Gemini 2.5 this maps directly to thinking budget; for level-only models it is converted heuristically.",
+        help="Optional token-budget override for LLM reasoning. For Gemini 2.5 this maps directly to thinking budget; for level-only models it is converted heuristically.",
     ),
     vertex_reasoning_dynamic: bool | None = typer.Option(
         None,
+        "--llm-reasoning-dynamic/--no-llm-reasoning-dynamic",
         "--vertex-reasoning-dynamic/--no-vertex-reasoning-dynamic",
-        help="Request dynamic reasoning budget when the selected Vertex model family supports it.",
+        help="Request dynamic reasoning budget when the selected provider and model family support it.",
     ),
     bilingual: bool = typer.Option(
         False,
@@ -581,6 +584,7 @@ def run(
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
+        "--llm-reasoning-effort",
         "--vertex-reasoning-effort",
         help="Provider-agnostic reasoning effort for LLM translation ('off', 'minimal', 'low', 'medium', or 'high').",
     ),

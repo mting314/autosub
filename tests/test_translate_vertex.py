@@ -1,4 +1,5 @@
 import pytest
+from pydantic_ai import NativeOutput, PromptedOutput, ToolOutput
 
 from autosub.core.llm import BaseStructuredLLM, ReasoningEffort
 from autosub.pipeline.translate.translator import VertexTranslator
@@ -67,6 +68,51 @@ def test_vertex_translator_defaults_to_medium_reasoning_effort():
     translator = VertexTranslator(project_id="test-project")
 
     assert translator.reasoning_effort == ReasoningEffort.MEDIUM
+
+
+def test_direct_providers_use_native_structured_output():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="gpt-5-mini",
+        provider="openai",
+    )
+
+    wrapped = llm._build_agent_output_type(
+        output_type=list[dict],
+        output_name="test_output",
+    )
+
+    assert isinstance(wrapped, NativeOutput)
+
+
+def test_openrouter_uses_tool_structured_output():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="openai/gpt-5-mini",
+        provider="openrouter",
+    )
+
+    wrapped = llm._build_agent_output_type(
+        output_type=list[dict],
+        output_name="test_output",
+    )
+
+    assert isinstance(wrapped, ToolOutput)
+
+
+def test_openrouter_native_model_ids_use_prompted_structured_output():
+    llm = BaseStructuredLLM(
+        project_id=None,
+        model="qwen/qwen3.6-plus:free",
+        provider="openrouter",
+    )
+
+    wrapped = llm._build_agent_output_type(
+        output_type=list[dict],
+        output_name="test_output",
+    )
+
+    assert isinstance(wrapped, PromptedOutput)
 
 
 def test_google_reasoning_effort_maps_to_thinking_config():

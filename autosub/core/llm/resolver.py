@@ -63,7 +63,7 @@ class ResolvedLLMSelection:
 class ModelClassification:
     original_model: str
     direct_model: str
-    model_family: str
+    model_family: str | None
     compatible_providers: tuple[LLMProvider, ...]
     openrouter_only: bool = False
 
@@ -166,6 +166,9 @@ def classify_model(model: str) -> ModelClassification | None:
 
     direct_family = _detect_direct_model_family(normalized)
     if direct_family is None:
+        generic_openrouter = _classify_generic_openrouter_model(normalized)
+        if generic_openrouter is not None:
+            return generic_openrouter
         return None
 
     direct_provider = DIRECT_PROVIDER_BY_FAMILY[direct_family]
@@ -235,10 +238,24 @@ def _classify_openrouter_prefixed_model(model: str) -> ModelClassification | Non
     )
 
 
+def _classify_generic_openrouter_model(model: str) -> ModelClassification | None:
+    vendor, separator, tail = model.partition("/")
+    if not separator or not vendor or not tail:
+        return None
+
+    return ModelClassification(
+        original_model=model,
+        direct_model=model,
+        model_family=None,
+        compatible_providers=("openrouter",),
+        openrouter_only=True,
+    )
+
+
 def _normalize_model_for_provider(
     direct_model: str,
     provider: str,
-    model_family: str,
+    model_family: str | None,
     *,
     original_model: str,
 ) -> str:
@@ -246,9 +263,9 @@ def _normalize_model_for_provider(
         return direct_model
     if "/" in original_model:
         return original_model
-    vendor_prefix = OPENROUTER_VENDOR_PREFIX.get(model_family)
-    if vendor_prefix is None:
+    if model_family is None:
         return original_model
+    vendor_prefix = OPENROUTER_VENDOR_PREFIX.get(model_family)
     return f"{vendor_prefix}/{direct_model}"
 
 
