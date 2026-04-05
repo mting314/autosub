@@ -6,6 +6,26 @@ import autosub.extensions.radio_discourse.main as radio_discourse_main
 from autosub.pipeline.format.main import format_subtitles
 
 
+REAL_WHISPERX_INTRO_WORDS = [
+    {"word": "こ", "start_time": 15.343, "end_time": 15.443, "confidence": 0.796},
+    {"word": "ん", "start_time": 15.443, "end_time": 15.543, "confidence": 0.777},
+    {"word": "ば", "start_time": 15.543, "end_time": 15.643, "confidence": 0.8},
+    {"word": "ん", "start_time": 15.643, "end_time": 15.763, "confidence": 0.822},
+    {"word": "は", "start_time": 15.763, "end_time": 16.023, "confidence": 0.88},
+    {"word": "、", "start_time": 16.023, "end_time": 16.163, "confidence": 0.888},
+    {"word": "声", "start_time": 16.163, "end_time": 16.383, "confidence": 0.907},
+    {"word": "優", "start_time": 16.383, "end_time": 16.503, "confidence": 0.833},
+    {"word": "の", "start_time": 16.503, "end_time": 16.883, "confidence": 0.941},
+    {"word": "鈴", "start_time": 16.883, "end_time": 17.003, "confidence": 0.827},
+    {"word": "原", "start_time": 17.003, "end_time": 17.083, "confidence": 0.725},
+    {"word": "の", "start_time": 17.083, "end_time": 17.323, "confidence": 0.893},
+    {"word": "ぞ", "start_time": 17.323, "end_time": 17.483, "confidence": 0.869},
+    {"word": "み", "start_time": 17.483, "end_time": 17.604, "confidence": 0.989},
+    {"word": "で", "start_time": 17.604, "end_time": 17.824, "confidence": 0.975},
+    {"word": "す", "start_time": 17.824, "end_time": 18.224, "confidence": 0.996},
+]
+
+
 def test_format_subtitles_does_not_insert_ass_line_breaks(tmp_path):
     transcript_path = tmp_path / "transcript.json"
     output_path = tmp_path / "original.ass"
@@ -89,3 +109,87 @@ def test_format_subtitles_sets_radio_discourse_trace_path(tmp_path, monkeypatch)
     )
 
     assert captured["llm_trace_path"] == output_path.with_suffix(".llm_trace.jsonl")
+
+
+def test_format_subtitles_prefers_whisperx_segments_when_present(tmp_path):
+    transcript_path = tmp_path / "transcript.json"
+    output_path = tmp_path / "original.ass"
+
+    transcript_path.write_text(
+        json.dumps(
+            {
+                # Real WhisperX sample from nonshichotto/143/whisper.json.
+                "words": REAL_WHISPERX_INTRO_WORDS,
+                "segments": [
+                    {
+                        "text": "こんばんは、声優の鈴原のぞみです",
+                        "start_time": 15.343,
+                        "end_time": 18.224,
+                        "words": REAL_WHISPERX_INTRO_WORDS,
+                        "kind": "sentence",
+                    }
+                ],
+                "metadata": {
+                    "backend": "whisperx",
+                    "language": "ja",
+                    "model": "large-v2",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    format_subtitles(transcript_path, output_path)
+
+    with open(output_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    dialogue_events = [
+        event for event in script.events if isinstance(event, pyass.Event)
+    ]
+    assert len(dialogue_events) == 1
+    assert dialogue_events[0].text == "こんばんは、声優の鈴原のぞみです"
+
+
+def test_format_subtitles_keeps_legacy_word_chunking_for_non_whisperx(tmp_path):
+    transcript_path = tmp_path / "transcript.json"
+    output_path = tmp_path / "original.ass"
+
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"word": "おすすめ", "start_time": 0.0, "end_time": 0.6},
+                    {"word": "です。", "start_time": 0.6, "end_time": 1.0},
+                ],
+                "segments": [
+                    {
+                        "text": "SHOULD NOT USE",
+                        "start_time": 0.0,
+                        "end_time": 1.0,
+                        "words": [],
+                        "kind": "result",
+                    }
+                ],
+                "metadata": {
+                    "backend": "chirp_2",
+                    "language": "ja-JP",
+                    "model": "chirp_2",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    format_subtitles(transcript_path, output_path)
+
+    with open(output_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    dialogue_events = [
+        event for event in script.events if isinstance(event, pyass.Event)
+    ]
+    assert len(dialogue_events) == 1
+    assert dialogue_events[0].text == "おすすめです。"

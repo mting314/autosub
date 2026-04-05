@@ -6,7 +6,12 @@ from typing import Any, Sequence, cast
 from uuid import uuid4
 
 from autosub.core.config import GCS_BUCKET, PROJECT_ID
-from autosub.core.schemas import TranscribedWord, TranscriptionResult
+from autosub.core.schemas import (
+    TranscribedWord,
+    TranscriptionMetadata,
+    TranscriptionResult,
+    TranscriptionSegment,
+)
 from autosub.core.utils import parse_timestamp
 from autosub.pipeline.transcribe import api, audio, gcs, whisperx_backend
 
@@ -76,6 +81,63 @@ def _parse_words(results: Any, offset_seconds: float) -> list[TranscribedWord]:
     return words_data
 
 
+def _segment_speaker(words: Sequence[TranscribedWord]) -> str | None:
+    speakers = {word.speaker for word in words if word.speaker}
+    if len(speakers) == 1:
+        return next(iter(speakers))
+    return None
+
+
+def _segment_confidence(alternative: Any) -> float | None:
+    confidence = getattr(alternative, "confidence", None)
+    if confidence is None:
+        return None
+    return float(confidence)
+
+
+def _parse_chirp_segments(
+    results: Any, offset_seconds: float
+) -> list[TranscriptionSegment]:
+    segments: list[TranscriptionSegment] = []
+    for result in results:
+        alternatives = getattr(result, "alternatives", [])
+        if not alternatives:
+            continue
+        alternative = alternatives[0]
+        segment_words: list[TranscribedWord] = []
+        for word_info in getattr(alternative, "words", []):
+            segment_words.append(
+                TranscribedWord(
+                    word=word_info.word,
+                    start_time=_duration_seconds(word_info.start_offset)
+                    + offset_seconds,
+                    end_time=_duration_seconds(word_info.end_offset) + offset_seconds,
+                    speaker=(
+                        word_info.speaker_label
+                        if hasattr(word_info, "speaker_label")
+                        else None
+                    ),
+                )
+            )
+        if segment_words:
+            segment_start = segment_words[0].start_time
+            segment_end = segment_words[-1].end_time
+        else:
+            continue
+        segments.append(
+            TranscriptionSegment(
+                text=str(getattr(alternative, "transcript", "")).strip(),
+                start_time=segment_start,
+                end_time=segment_end,
+                words=segment_words,
+                speaker=_segment_speaker(segment_words),
+                confidence=_segment_confidence(alternative),
+                kind="result",
+            )
+        )
+    return segments
+
+
 def _apply_offset(
     words: Sequence[TranscribedWord], offset_seconds: float
 ) -> list[TranscribedWord]:
@@ -85,8 +147,26 @@ def _apply_offset(
             start_time=word.start_time + offset_seconds,
             end_time=word.end_time + offset_seconds,
             speaker=word.speaker,
+            confidence=word.confidence,
         )
         for word in words
+    ]
+
+
+def _apply_offset_to_segments(
+    segments: Sequence[TranscriptionSegment], offset_seconds: float
+) -> list[TranscriptionSegment]:
+    return [
+        TranscriptionSegment(
+            text=segment.text,
+            start_time=segment.start_time + offset_seconds,
+            end_time=segment.end_time + offset_seconds,
+            words=_apply_offset(segment.words, offset_seconds),
+            speaker=segment.speaker,
+            confidence=segment.confidence,
+            kind=segment.kind,
+        )
+        for segment in segments
     ]
 
 
@@ -115,7 +195,7 @@ def _transcribe_time_range(
     whisper_batch_size: int,
     whisper_diarize: bool,
     whisper_hf_token: str | None,
-) -> list[TranscribedWord]:
+) -> TranscriptionResult:
     logger.info(
         "Extracting audio for segment %s (start=%s, end=%s)...",
         time_range.index + 1,
@@ -135,7 +215,7 @@ def _transcribe_time_range(
         )
 
         if transcription_backend == "whisperx":
-            words = whisperx_backend.transcribe_file(
+            whisper_result = whisperx_backend.transcribe_file(
                 audio_path,
                 language_code=language_code,
                 model_name=whisper_model,
@@ -146,7 +226,13 @@ def _transcribe_time_range(
                 hf_token=whisper_hf_token,
                 num_speakers=num_speakers,
             )
-            return _apply_offset(words, time_range.offset_seconds)
+            return TranscriptionResult(
+                words=_apply_offset(whisper_result.words, time_range.offset_seconds),
+                segments=_apply_offset_to_segments(
+                    whisper_result.segments, time_range.offset_seconds
+                ),
+                metadata=whisper_result.metadata,
+            )
 
         if not project_id:
             raise ValueError("GOOGLE_CLOUD_PROJECT is not set in the environment.")
@@ -170,9 +256,14 @@ def _transcribe_time_range(
                 response = api.transcribe_uri(
                     gcs_uri, project_id, language_code, vocabulary, num_speakers
                 )
-                return _parse_words(
-                    response.results[gcs_uri].inline_result.transcript.results,
-                    time_range.offset_seconds,
+                chirp_results = response.results[
+                    gcs_uri
+                ].inline_result.transcript.results
+                return TranscriptionResult(
+                    words=_parse_words(chirp_results, time_range.offset_seconds),
+                    segments=_parse_chirp_segments(
+                        chirp_results, time_range.offset_seconds
+                    ),
                 )
             finally:
                 logger.info("Cleaning up GCS staging file %s...", gcs_uri)
@@ -184,7 +275,10 @@ def _transcribe_time_range(
         response = api.transcribe_local_file(
             audio_content, project_id, language_code, vocabulary, num_speakers
         )
-        return _parse_words(response.results, time_range.offset_seconds)
+        return TranscriptionResult(
+            words=_parse_words(response.results, time_range.offset_seconds),
+            segments=_parse_chirp_segments(response.results, time_range.offset_seconds),
+        )
     finally:
         if audio_path.exists():
             audio_path.unlink()
@@ -232,7 +326,7 @@ def transcribe(
         video_path,
     )
 
-    segment_results: dict[int, list[TranscribedWord]] = {}
+    segment_results: dict[int, TranscriptionResult] = {}
     failures: list[tuple[int, Exception]] = []
 
     if len(normalized_ranges) == 1:
@@ -302,12 +396,34 @@ def transcribe(
         ) from failures[0][1]
 
     words_data: list[TranscribedWord] = []
+    segments_data: list[TranscriptionSegment] = []
+    metadata: TranscriptionMetadata | None = None
     for segment in normalized_ranges:
-        words_data.extend(segment_results.get(segment.index, []))
+        segment_result = segment_results.get(segment.index)
+        if segment_result is None:
+            continue
+        words_data.extend(segment_result.words)
+        segments_data.extend(segment_result.segments)
+        if metadata is None and segment_result.metadata is not None:
+            metadata = segment_result.metadata
 
     words_data.sort(key=lambda word: (word.start_time, word.end_time))
+    segments_data.sort(key=lambda segment: (segment.start_time, segment.end_time))
 
-    final_result = TranscriptionResult(words=words_data)
+    final_result = TranscriptionResult(
+        words=words_data,
+        segments=segments_data,
+        metadata=metadata
+        or TranscriptionMetadata(
+            backend=cast(Any, resolved_backend),
+            language=language_code,
+            model=(
+                whisper_model
+                if resolved_backend == "whisperx"
+                else DEFAULT_TRANSCRIPTION_BACKEND
+            ),
+        ),
+    )
     logger.info(
         "Found %s transcribed words across %s segment(s). Saving to %s...",
         len(words_data),

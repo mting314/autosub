@@ -14,7 +14,14 @@ def test_transcribe_file_passes_language_to_load_model_and_transcribe(monkeypatc
             captured["transcribe_language"] = language
             return {
                 "language": language,
-                "segments": [{"words": [{"word": "hello", "start": 1.0, "end": 2.0}]}],
+                "segments": [
+                    {
+                        "text": "hello",
+                        "start": 1.0,
+                        "end": 2.0,
+                        "words": [{"word": "hello", "start": 1.0, "end": 2.0}],
+                    }
+                ],
             }
 
     def fake_load_model(model_name, device, compute_type, language):
@@ -54,7 +61,7 @@ def test_transcribe_file_passes_language_to_load_model_and_transcribe(monkeypatc
         whisperx_backend, "_load_whisperx_module", lambda: fake_whisperx
     )
 
-    words = whisperx_backend.transcribe_file(
+    result = whisperx_backend.transcribe_file(
         Path("audio.wav"),
         language_code="ja-JP",
         model_name="large-v2",
@@ -66,6 +73,10 @@ def test_transcribe_file_passes_language_to_load_model_and_transcribe(monkeypatc
     assert captured["load_model_language"] == "ja"
     assert captured["transcribe_language"] == "ja"
     assert captured["align_language_code"] == "ja"
-    assert words[0].word == "hello"
-    assert words[0].start_time == 1.0
-    assert words[0].end_time == 2.0
+    assert result.metadata is not None
+    assert result.metadata.backend == "whisperx"
+    assert result.metadata.model == "large-v2"
+    assert result.words[0].word == "hello"
+    assert result.words[0].start_time == 1.0
+    assert result.words[0].end_time == 2.0
+    assert result.segments[0].text == "hello"

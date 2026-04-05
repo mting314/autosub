@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 import warnings
 
-from autosub.core.schemas import TranscribedWord
+from autosub.core.schemas import (
+    TranscribedWord,
+    TranscriptionMetadata,
+    TranscriptionResult,
+    TranscriptionSegment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,28 +60,73 @@ def _word_from_mapping(
         start_time=float(start_time),
         end_time=float(end_time),
         speaker=word_info.get("speaker") or segment_speaker,
+        confidence=(
+            float(word_info["score"]) if word_info.get("score") is not None else None
+        ),
     )
 
 
-def _extract_transcribed_words(result: dict[str, Any]) -> list[TranscribedWord]:
+def _extract_transcription_segments(
+    result: dict[str, Any],
+) -> tuple[list[TranscriptionSegment], list[TranscribedWord]]:
+    segments: list[TranscriptionSegment] = []
     words: list[TranscribedWord] = []
 
     for segment in result.get("segments", []):
         segment_speaker = segment.get("speaker")
+        segment_words: list[TranscribedWord] = []
         for word_info in segment.get("words", []):
             parsed = _word_from_mapping(word_info, segment_speaker=segment_speaker)
             if parsed is not None:
+                segment_words.append(parsed)
                 words.append(parsed)
+        segment_start = segment.get("start")
+        segment_end = segment.get("end")
+        if segment_start is None or segment_end is None:
+            continue
+        segments.append(
+            TranscriptionSegment(
+                text=str(segment.get("text") or "").strip(),
+                start_time=float(segment_start),
+                end_time=float(segment_end),
+                words=segment_words,
+                speaker=segment_speaker,
+                confidence=(
+                    float(segment["avg_logprob"])
+                    if segment.get("avg_logprob") is not None
+                    else None
+                ),
+                kind="sentence",
+            )
+        )
 
     if words:
-        return words
+        return segments, words
 
     for word_info in result.get("word_segments", []):
         parsed = _word_from_mapping(word_info)
         if parsed is not None:
             words.append(parsed)
 
-    return words
+    return segments, words
+
+
+def _with_metadata(
+    *,
+    words: list[TranscribedWord],
+    segments: list[TranscriptionSegment],
+    language: str,
+    model_name: str,
+) -> TranscriptionResult:
+    return TranscriptionResult(
+        words=words,
+        segments=segments,
+        metadata=TranscriptionMetadata(
+            backend="whisperx",
+            language=language,
+            model=model_name,
+        ),
+    )
 
 
 def transcribe_file(
@@ -90,7 +140,7 @@ def transcribe_file(
     diarize: bool = False,
     hf_token: str | None = None,
     num_speakers: int | None = None,
-) -> list[TranscribedWord]:
+) -> TranscriptionResult:
     whisperx = _load_whisperx_module()
     whisper_language = _normalize_language_code(language_code)
 
@@ -141,9 +191,16 @@ def transcribe_file(
         diarize_segments = diarize_pipeline(audio, **diarize_kwargs)
         aligned = whisperx.assign_word_speakers(diarize_segments, aligned)
 
-    words = _extract_transcribed_words(aligned)
+    segments, words = _extract_transcription_segments(aligned)
     if not words:
         raise RuntimeError(
             "WhisperX completed but did not return any aligned word timestamps."
         )
-    return words
+    return _with_metadata(
+        words=words,
+        segments=segments,
+        language=str(
+            aligned.get("language") or result.get("language") or whisper_language
+        ),
+        model_name=model_name,
+    )

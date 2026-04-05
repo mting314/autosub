@@ -2,12 +2,35 @@ import json
 import logging
 from pathlib import Path
 
-from autosub.core.schemas import TranscriptionResult
+from autosub.core.schemas import SubtitleLine, TranscriptionResult
 from autosub.pipeline.format import chunker
 from autosub.pipeline.format import generator
 from autosub.pipeline.format.timing import apply_timing_rules
 
 logger = logging.getLogger(__name__)
+
+
+def _segments_to_lines(transcript: TranscriptionResult) -> list[SubtitleLine]:
+    lines: list[SubtitleLine] = []
+    for segment in transcript.segments:
+        lines.append(
+            SubtitleLine(
+                text=segment.text,
+                start_time=segment.start_time,
+                end_time=segment.end_time,
+                speaker=segment.speaker,
+            )
+        )
+    lines.sort(key=lambda line: line.start_time)
+    return lines
+
+
+def _initial_lines(transcript: TranscriptionResult) -> list[SubtitleLine]:
+    backend = transcript.metadata.backend if transcript.metadata else None
+    if backend == "whisperx" and transcript.segments:
+        logger.info("Using transcript segments as initial subtitle lines.")
+        return _segments_to_lines(transcript)
+    return chunker.chunk_words_to_lines(transcript.words)
 
 
 def format_subtitles(
@@ -35,7 +58,7 @@ def format_subtitles(
     transcript = TranscriptionResult(**data)
 
     logger.info("Chunking transcript into semantic subtitle lines...")
-    lines = chunker.chunk_words_to_lines(transcript.words)
+    lines = _initial_lines(transcript)
     logger.info(f"Generated {len(lines)} subtitle lines.")
 
     if replacements:

@@ -3,7 +3,12 @@ from threading import Barrier
 import time
 from types import SimpleNamespace
 
-from autosub.core.schemas import TranscribedWord
+from autosub.core.schemas import (
+    TranscribedWord,
+    TranscriptionMetadata,
+    TranscriptionResult,
+    TranscriptionSegment,
+)
 from autosub.pipeline.transcribe import main as transcribe_main
 
 
@@ -84,6 +89,9 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
 
     assert [word.word for word in result.words] == ["word-0", "word-15"]
     assert [word.start_time for word in result.words] == [0.1, 15.1]
+    assert len(result.segments) == 2
+    assert result.metadata is not None
+    assert result.metadata.backend == "chirp_2"
     assert output_path.exists()
     assert all(not path.exists() for path in created_audio_paths)
 
@@ -178,9 +186,29 @@ def test_transcribe_whisperx_does_not_require_google_project_or_gcs(
     monkeypatch.setattr(
         transcribe_main.whisperx_backend,
         "transcribe_file",
-        lambda *args, **kwargs: [
-            TranscribedWord(word="hello", start_time=0.25, end_time=0.75)
-        ],
+        lambda *args, **kwargs: TranscriptionResult(
+            words=[TranscribedWord(word="hello", start_time=0.25, end_time=0.75)],
+            segments=[
+                TranscriptionSegment(
+                    text="hello",
+                    start_time=0.25,
+                    end_time=0.75,
+                    words=[
+                        TranscribedWord(
+                            word="hello",
+                            start_time=0.25,
+                            end_time=0.75,
+                        )
+                    ],
+                    kind="sentence",
+                )
+            ],
+            metadata=TranscriptionMetadata(
+                backend="whisperx",
+                language="ja",
+                model="large-v2",
+            ),
+        ),
     )
 
     result = transcribe_main.transcribe(
@@ -192,6 +220,10 @@ def test_transcribe_whisperx_does_not_require_google_project_or_gcs(
 
     assert [word.word for word in result.words] == ["hello"]
     assert [word.start_time for word in result.words] == [15.25]
+    assert result.segments[0].text == "hello"
+    assert result.segments[0].start_time == 15.25
+    assert result.metadata is not None
+    assert result.metadata.backend == "whisperx"
     assert output_path.exists()
     assert all(not path.exists() for path in created_audio_paths)
 
