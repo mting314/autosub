@@ -76,10 +76,10 @@ def test_profile_prompt_inheritance(tmp_path):
     (prompt_dir / "child.md").write_text("child guidance", encoding="utf-8")
 
     (profile_dir / "base.toml").write_text(
-        'prompt = "prompts/base.md"\n', encoding="utf-8"
+        '[translate]\nprompt = "prompts/base.md"\n', encoding="utf-8"
     )
     (profile_dir / "child.toml").write_text(
-        'extends = ["base"]\nprompt = "prompts/child.md"\n',
+        'extends = ["base"]\n[translate]\nprompt = "prompts/child.md"\n',
         encoding="utf-8",
     )
 
@@ -101,6 +101,61 @@ def test_profile_prompt_inheritance(tmp_path):
 
     try:
         data = load_unified_profile("child")
+        assert data["translate"]["prompt"] == ["base guidance", "child guidance"]
         assert data["prompt"] == ["base guidance", "child guidance"]
+    finally:
+        autosub.core.profile.Path = original_path
+
+
+def test_legacy_flat_profile_keys_are_mapped_to_stages(tmp_path):
+    profile_dir = tmp_path / "profiles"
+    prompt_dir = tmp_path / "prompts"
+    profile_dir.mkdir()
+    prompt_dir.mkdir()
+
+    (prompt_dir / "legacy.md").write_text("legacy guidance", encoding="utf-8")
+    (profile_dir / "legacy.toml").write_text(
+        """
+prompt = "prompts/legacy.md"
+vocab = ["鈴原希実"]
+
+[timing]
+min_duration_ms = 900
+
+[extensions.radio_discourse]
+enabled = true
+
+[glossary]
+"鈴原希実" = "Suzuhara Nozomi"
+
+[replacements]
+"鈴原のぞみ" = "鈴原希実"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profile_dir
+            if args and args[0] == "prompts/legacy.md":
+                return prompt_dir / "legacy.md"
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("legacy")
+        assert data["transcribe"]["vocab"] == ["鈴原希実"]
+        assert data["translate"]["prompt"] == ["legacy guidance"]
+        assert data["translate"]["glossary"] == {"鈴原希実": "Suzuhara Nozomi"}
+        assert data["format"]["min_duration_ms"] == 900
+        assert data["format"]["replacements"] == {"鈴原のぞみ": "鈴原希実"}
+        assert data["format"]["extensions"]["radio_discourse"]["enabled"] is True
+        assert data["postprocess"]["extensions"]["radio_discourse"]["enabled"] is True
     finally:
         autosub.core.profile.Path = original_path

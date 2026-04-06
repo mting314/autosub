@@ -1,4 +1,7 @@
-prompt = "prompts/concert_mc.md"
+[transcribe]
 vocab = [
     "Love Live",
 ]
+
+[translate]
+prompt = "prompts/concert_mc.md"

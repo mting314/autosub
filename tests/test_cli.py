@@ -1,5 +1,6 @@
 import autosub.cli as cli_module
 from types import SimpleNamespace
+from typing import cast
 from typer.testing import CliRunner
 
 from autosub.cli import app
@@ -142,6 +143,64 @@ def test_run_model_infers_provider(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert captured["provider"] == "openai"
     assert captured["model"] == "gpt-5-mini"
+
+
+def test_run_uses_stage_grouped_profile_settings(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    format_kwargs: dict[str, object] = {}
+    translate_kwargs: dict[str, object] = {}
+    postprocess_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli_module.transcribe_main, "transcribe", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(
+        cli_module.format_module,
+        "format_subtitles",
+        lambda *args, **kwargs: format_kwargs.update(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module.translate_module,
+        "translate_subtitles",
+        lambda *args, **kwargs: translate_kwargs.update(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module.postprocess_module,
+        "postprocess_subtitles",
+        lambda *args, **kwargs: postprocess_kwargs.update(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "load_unified_profile",
+        lambda profile: {
+            "transcribe": {"vocab": ["鈴原希実"]},
+            "format": {
+                "min_duration_ms": 900,
+                "extensions": {"radio_discourse": {"enabled": True}},
+                "replacements": {"鈴原のぞみ": "鈴原希実"},
+            },
+            "translate": {
+                "prompt": ["Keep honorifics consistent."],
+                "glossary": {"鈴原希実": "Suzuhara Nozomi"},
+            },
+            "postprocess": {"extensions": {"radio_discourse": {"enabled": False}}},
+        },
+    )
+
+    result = runner.invoke(app, ["run", str(video_path), "--profile", "test_profile"])
+
+    assert result.exit_code == 0
+    assert format_kwargs["timing_config"] == {"min_duration_ms": 900}
+    assert format_kwargs["extensions_config"] == {"radio_discourse": {"enabled": True}}
+    assert format_kwargs["replacements"] == {"鈴原のぞみ": "鈴原希実"}
+    assert (
+        cast(str, translate_kwargs["system_prompt"])
+        == 'Keep honorifics consistent.\n\nGlossary (Always translate these exact phrases):\n- "鈴原希実" -> "Suzuhara Nozomi"\n'
+    )
+    assert postprocess_kwargs["extensions_config"] == {
+        "radio_discourse": {"enabled": False}
+    }
 
 
 def test_translate_model_falls_back_to_openrouter_when_only_openrouter_key_exists(

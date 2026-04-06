@@ -1,4 +1,4 @@
-prompt = "prompts/liella.md"
+[transcribe]
 vocab = [
     # --- Group & Sub-Units ---
     "Liella!",
@@ -56,3 +56,6 @@ vocab = [
     "お便り",
     "告知", # Announcement
 ]
+
+[translate]
+prompt = "prompts/liella.md"

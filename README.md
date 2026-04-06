@@ -316,7 +316,7 @@ Keep reusable content in `profiles/*.toml` instead:
 - `--language`, `-l`: Speech recognition language code. Default: `ja-JP`
 - `--backend` / `--transcription-backend`: `chirp_2` or `whisperx`
 - `--vocab`, `-v`: Additional speech adaptation hints. Can be passed multiple times.
-- `--profile`: Loads profile vocabulary.
+- `--profile`: Loads `[transcribe].vocab`.
 - `--whisper-model`: WhisperX model name when `--backend whisperx` is selected
 - `--whisper-device`: WhisperX device, usually `cpu` or `cuda`
 - `--whisper-compute-type`: WhisperX/CTranslate2 compute type such as `int8` or `float16`
@@ -340,7 +340,7 @@ Behavior notes:
 - `--out`: Output `.ass` path. Default: `original.ass` in the transcript directory
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
-- `--profile`: Loads `[timing]` and `[extensions]`
+- `--profile`: Loads `[format]`, including timing keys, replacements, and extensions
 
 Behavior notes:
 
@@ -355,7 +355,7 @@ Behavior notes:
 - `--model`: Preferred LLM selector for the `vertex` engine. Infers provider automatically for Gemini, Claude, and OpenAI model names
 - `--llm-provider`: `google-vertex`, `anthropic`, `openai`, or `openrouter` for the `vertex` engine
 - `--prompt`, `-p`: Extra translation guidance appended after profile prompts
-- `--profile`: Loads prompt text from the selected profile
+- `--profile`: Loads `[translate]`, including prompt text and glossary entries
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
 - `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex`, `claude-haiku-4-5` for `anthropic`, `gpt-5-mini` for `openai`, and `openai/gpt-5-mini` for `openrouter`
@@ -411,7 +411,7 @@ OpenRouter notes:
 ### `autosub postprocess`
 
 - `--out`: Output `.ass` path. Default: overwrite the input file
-- `--profile`: Loads `[extensions]`
+- `--profile`: Loads `[postprocess.extensions]`
 - `--bilingual` / `--replace`: Tells postprocess whether it is operating on stacked bilingual text or translated-only text
 
 Behavior notes:
@@ -465,18 +465,15 @@ Example:
 ```toml
 extends = ["solo_seiyuu_radio"]
 
-prompt = "prompts/suzuhara_nozomi.md"
-vocab = [
-    "鈴原希実",
-    "のんちゃん",
-]
+[transcribe]
+vocab = ["鈴原希実", "のんちゃん"]
 
-[timing]
+[format]
 min_duration_ms = 700
 snap_threshold_ms = 250
 conditional_snap_threshold_ms = 500
 
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "anthropic"
@@ -487,20 +484,36 @@ window_size = 10
 window_overlap = 3
 split_framing_phrases = true
 label_roles = true
+
+[translate]
+prompt = "prompts/suzuhara_nozomi.md"
+
+[translate.glossary]
+"鈴原希実" = "Suzuhara Nozomi"
+
+[postprocess.extensions.radio_discourse]
+enabled = true
 ```
 
 ### Profile Keys
 
 - `extends`: List of base profile names. Base profiles are loaded first.
-- `prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
-- `vocab`: List of speech adaptation hints. Inherited lists are appended.
-- `[timing]`: Timing options for the formatter.
-- `[extensions]`: Nested extension configuration shared by formatting and postprocessing.
+- `[transcribe].vocab`: List of speech adaptation hints. Inherited lists are appended.
+- `[format]`: Formatter-specific settings. Timing keys such as `min_duration_ms` live directly under this table.
+- `[format.replacements]`: Text replacements applied before formatting and timing rules.
+- `[format.extensions]`: Nested extension configuration for the formatting stage.
+- `[translate].prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
+- `[translate.glossary]`: Exact translation overrides appended to the translation prompt.
+- `[postprocess.extensions]`: Nested extension configuration for the postprocessing stage.
+
+Legacy flat profile keys such as top-level `prompt`, `vocab`, `[timing]`, `[extensions]`, `[glossary]`, and `[replacements]` are still accepted for compatibility, but new profiles should use the staged layout above.
 
 ### Prompt and Vocab Merge Rules
 
-- Prompt fragments are concatenated in inheritance order: base profile first, child profile after that, then CLI `--prompt` last.
-- Vocabulary entries are appended in the same order: base profile, child profile, then CLI `--vocab`.
+- Prompt fragments from `[translate].prompt` are concatenated in inheritance order: base profile first, child profile after that, then CLI `--prompt` last.
+- Vocabulary entries from `[transcribe].vocab` are appended in the same order: base profile, child profile, then CLI `--vocab`.
+- `[translate.glossary]`, `[format.replacements]`, and timing keys under `[format]` override base profiles by key.
+- `[format.extensions]` and `[postprocess.extensions]` are deep-merged by key.
 
 ### Timing Options Currently Wired Up
 

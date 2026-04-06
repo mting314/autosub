@@ -89,6 +89,30 @@ def _resolve_model_selection_or_exit(
     return selection.provider, selection.model or model
 
 
+def _extract_format_profile_config(profile_data: dict) -> tuple[dict, dict, dict]:
+    format_profile = profile_data.get("format", {})
+    timing_config = {
+        key: value
+        for key, value in format_profile.items()
+        if key not in {"extensions", "replacements"}
+    }
+    return (
+        timing_config,
+        format_profile.get("extensions", {}),
+        format_profile.get("replacements", {}),
+    )
+
+
+def _build_glossary_prompt(glossary: dict[str, str]) -> str | None:
+    if not glossary:
+        return None
+
+    glossary_text = "Glossary (Always translate these exact phrases):\n"
+    for source_text, translated_text in glossary.items():
+        glossary_text += f'- "{source_text}" -> "{translated_text}"\n'
+    return glossary_text
+
+
 def _coerce_time_values(
     value: str | Sequence[str] | None,
 ) -> list[str]:
@@ -266,7 +290,7 @@ def transcribe(
     final_vocab = []
     if profile:
         profile_data = load_unified_profile(profile)
-        final_vocab.extend(profile_data["vocab"])
+        final_vocab.extend(profile_data.get("transcribe", {}).get("vocab", []))
     if vocab:
         final_vocab.extend(vocab)
 
@@ -347,9 +371,9 @@ def format(
     replacements = {}
     if profile:
         profile_data = load_unified_profile(profile)
-        timing_config = profile_data.get("timing", {})
-        extensions_config = profile_data.get("extensions", {})
-        replacements = profile_data.get("replacements", {})
+        timing_config, extensions_config, replacements = _extract_format_profile_config(
+            profile_data
+        )
 
     kf_ms = None
     if keyframes and fps > 0:
@@ -493,12 +517,10 @@ def translate(
     final_prompt_parts = []
     if profile:
         profile_data = load_unified_profile(profile)
-        final_prompt_parts.extend(profile_data["prompt"])
-
-        if profile_data.get("glossary"):
-            glossary_text = "Glossary (Always translate these exact phrases):\n"
-            for ja, en in profile_data["glossary"].items():
-                glossary_text += f'- "{ja}" -> "{en}"\n'
+        translate_profile = profile_data.get("translate", {})
+        final_prompt_parts.extend(translate_profile.get("prompt", []))
+        glossary_text = _build_glossary_prompt(translate_profile.get("glossary", {}))
+        if glossary_text:
             final_prompt_parts.append(glossary_text)
 
     if prompt:
@@ -594,7 +616,7 @@ def postprocess(
     final_extensions = {}
     if profile:
         profile_data = load_unified_profile(profile)
-        final_extensions = profile_data.get("extensions", {})
+        final_extensions = profile_data.get("postprocess", {}).get("extensions", {})
 
     try:
         postprocess_module.postprocess_subtitles(
@@ -789,20 +811,22 @@ def run(
     final_vocab = []
     final_prompt_parts = []
     final_timing = {}
-    final_extensions = {}
+    final_format_extensions = {}
+    final_postprocess_extensions = {}
     replacements = {}
     if profile:
         profile_data = load_unified_profile(profile)
-        final_vocab.extend(profile_data["vocab"])
-        final_prompt_parts.extend(profile_data["prompt"])
-        final_timing = profile_data.get("timing", {})
-        final_extensions = profile_data.get("extensions", {})
-        replacements = profile_data.get("replacements", {})
-
-        if profile_data.get("glossary"):
-            glossary_text = "Glossary (Always translate these exact phrases):\n"
-            for ja, en in profile_data["glossary"].items():
-                glossary_text += f'- "{ja}" -> "{en}"\n'
+        transcribe_profile = profile_data.get("transcribe", {})
+        translate_profile = profile_data.get("translate", {})
+        postprocess_profile = profile_data.get("postprocess", {})
+        final_vocab.extend(transcribe_profile.get("vocab", []))
+        final_prompt_parts.extend(translate_profile.get("prompt", []))
+        final_timing, final_format_extensions, replacements = (
+            _extract_format_profile_config(profile_data)
+        )
+        final_postprocess_extensions = postprocess_profile.get("extensions", {})
+        glossary_text = _build_glossary_prompt(translate_profile.get("glossary", {}))
+        if glossary_text:
             final_prompt_parts.append(glossary_text)
 
     if vocab:
@@ -890,7 +914,7 @@ def run(
             keyframes=kf_ms,
             video_duration_ms=vid_duration_ms,
             timing_config=final_timing,
-            extensions_config=final_extensions,
+            extensions_config=final_format_extensions,
             replacements=replacements,
         )
     except Exception as e:
@@ -921,7 +945,7 @@ def run(
         logger.info("[Step 4/4] Postprocessing...")
         postprocess_module.postprocess_subtitles(
             translated_ass_out,
-            extensions_config=final_extensions,
+            extensions_config=final_postprocess_extensions,
             bilingual=bilingual,
         )
     except Exception as e:

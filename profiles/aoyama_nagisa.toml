@@ -1,7 +1,6 @@
 extends = ["solo_seiyuu_radio"]
 
-prompt = "prompts/aoyama_nagisa.md"
-
+[transcribe]
 vocab = [
   "青山なぎさ",
   "青山なぎさのさ！",
@@ -20,12 +19,15 @@ vocab = [
   "省エネ"
 ]
 
-[replacements]
+[format.replacements]
 "渚" = "なぎさ"
 "凪砂" = "なぎさ"
 "青山なぎさのさあ。" = "青山なぎさのさ！"
 
-[glossary]
+[translate]
+prompt = "prompts/aoyama_nagisa.md"
+
+[translate.glossary]
 "青山なぎさのさ！" = "Aoyama Nagisa no Sa!"
 "ナっこ" = "Na-kko" # Fan collective name
 "チャッピー" = "Chappy" # Her nickname for ChatGPT

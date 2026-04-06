@@ -7,10 +7,13 @@ def test_profile_extensions_are_inherited_and_overridden(tmp_path):
 
     (profile_dir / "base.toml").write_text(
         """
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 split_framing_phrases = true
 label_roles = false
+
+[postprocess.extensions.radio_discourse]
+enabled = true
 """.strip(),
         encoding="utf-8",
     )
@@ -18,9 +21,12 @@ label_roles = false
         """
 extends = ["base"]
 
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 label_roles = true
 window_size = 8
+
+[postprocess.extensions.radio_discourse]
+preserve_quotes = true
 """.strip(),
         encoding="utf-8",
     )
@@ -39,11 +45,15 @@ window_size = 8
 
     try:
         data = load_unified_profile("child")
-        assert data["extensions"]["radio_discourse"] == {
+        assert data["format"]["extensions"]["radio_discourse"] == {
             "enabled": True,
             "split_framing_phrases": True,
             "label_roles": True,
             "window_size": 8,
+        }
+        assert data["postprocess"]["extensions"]["radio_discourse"] == {
+            "enabled": True,
+            "preserve_quotes": True,
         }
     finally:
         autosub.core.profile.Path = original_path

@@ -1,6 +1,6 @@
 extends = ["solo_seiyuu_radio"]
 
-prompt = "prompts/date_sayuri.md"
+[transcribe]
 vocab = [
     # --- Program Titles & Identifiers ---
     "伊達さゆりの 伊達にラジオやってません！！！",
@@ -33,16 +33,16 @@ vocab = [
     "カメラ", # Camera (She enjoys photography)
     "ギター", # Guitar (Related to her role as Kanon, but she practices it actively)
     "歌うこと", # Singing (Often talks about singing in her closet or bathtub)
-    "しずくちゃん", # Shizuku-chan (A childhood anime she was obsessed with)
-    "みるみるちゃん", # Mirumiru-chan (Her favorite character from Shizuku-chan)
+    "しずくちゃん", # A childhood anime she was obsessed with
+    "みるみるちゃん", # Her favorite character from Shizuku-chan
 
     # --- Radio Corners ---
     "伊達にやってません！",
     "究極の2択",
     "さゆりのチョイス",
     "伊達さゆりの できないことなんてない！",
-    "伊達師範のポジティブ道場！", # Date Shihan's Positive Dojo (She turns listeners' unhappy stories into positive ones)
-    "今夜のこ・ん・だ・て！", # Tonight's Menu (Play on "Kondate" and her name "Date")
+    "伊達師範のポジティブ道場！", # Date Shihan's Positive Dojo
+    "今夜のこ・ん・だ・て！", # Tonight's Menu
     "5教科相談室", # 5 Subjects Consultation Room
     "お悩み相談",
     "ハッピーネーム", # What she calls listeners writing in
@@ -76,3 +76,6 @@ vocab = [
     "ちょっと待ってください",
     "えーっと",
 ]
+
+[translate]
+prompt = "prompts/date_sayuri.md"

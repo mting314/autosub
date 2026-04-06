@@ -1,8 +1,11 @@
+import copy
+import logging
 import tomllib
 from pathlib import Path
-import logging
 
 logger = logging.getLogger(__name__)
+
+PROFILE_STAGES = ("transcribe", "format", "translate", "postprocess")
 
 
 def _merge_nested_dict(base: dict, override: dict) -> dict:
@@ -15,126 +18,281 @@ def _merge_nested_dict(base: dict, override: dict) -> dict:
     return merged
 
 
-def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> dict:
-    """
-    Loads a TOML profile recursively, resolving 'extends' arrays.
-    Combines 'prompt' into a list of strings and 'vocab' into a single list.
-    If a 'prompt' ends with .md or .txt, it loads the file contents.
-    """
-    if visited is None:
-        visited = set()
+def _empty_stage_profile() -> dict[str, dict]:
+    return {
+        "transcribe": {"vocab": []},
+        "format": {"extensions": {}, "replacements": {}},
+        "translate": {"prompt": [], "glossary": {}},
+        "postprocess": {"extensions": {}},
+    }
 
-    if profile_name in visited:
-        return {
-            "prompt": [],
-            "vocab": [],
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
-    visited.add(profile_name)
 
-    profile_path = Path("profiles") / f"{profile_name}.toml"
-    if not profile_path.exists():
-        logger.warning(f"Profile {profile_name}.toml not found in profiles/ directory.")
-        return {
-            "prompt": [],
-            "vocab": [],
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
+def _merge_stage_section(
+    base: dict, override: dict, *, append_list_keys: tuple[str, ...] = ()
+) -> dict:
+    merged = _merge_nested_dict(base, override)
+    for key in append_list_keys:
+        merged[key] = [*base.get(key, []), *override.get(key, [])]
+    return merged
 
-    try:
-        with open(profile_path, "rb") as f:
-            data = tomllib.load(f)
-    except Exception as e:
-        logger.error(f"Failed to parse TOML profile {profile_path}: {e}")
-        return {
-            "prompt": [],
-            "vocab": [],
-            "timing": {},
-            "extensions": {},
-            "glossary": {},
-            "replacements": {},
-        }
 
-    combined_prompt = []
-    combined_vocab = []
-    final_timing = {}
-    final_extensions = {}
-    final_glossary = {}
-    final_replacements = {}
+def _merge_profiles(
+    base: dict[str, dict], override: dict[str, dict]
+) -> dict[str, dict]:
+    return {
+        "transcribe": _merge_stage_section(
+            base["transcribe"], override["transcribe"], append_list_keys=("vocab",)
+        ),
+        "format": _merge_stage_section(base["format"], override["format"]),
+        "translate": _merge_stage_section(
+            base["translate"], override["translate"], append_list_keys=("prompt",)
+        ),
+        "postprocess": _merge_stage_section(
+            base["postprocess"], override["postprocess"]
+        ),
+    }
 
-    # 1. Process base profiles recursively (so base instructions come first)
-    for base in data.get("extends", []):
-        base_data = load_unified_profile(base, visited)
-        combined_prompt.extend(base_data["prompt"])
-        combined_vocab.extend(base_data["vocab"])
-        # Update inherited timing. Top level overrides base.
-        for k, v in base_data.get("timing", {}).items():
-            if k not in final_timing:
-                final_timing[k] = v
-        final_extensions = _merge_nested_dict(
-            final_extensions, base_data.get("extensions", {})
+
+def _load_prompt_fragments(
+    profile_name: str, value: object, *, key_name: str
+) -> list[str]:
+    if isinstance(value, str):
+        raw_parts = [value]
+    elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+        raw_parts = value
+    else:
+        logger.warning(
+            f"'{key_name}' in {profile_name} must be a string or list of strings."
         )
-        final_glossary.update(base_data.get("glossary", {}))
-        final_replacements.update(base_data.get("replacements", {}))
+        return []
 
-    # 2. Append this profile's data
-    if "prompt" in data:
-        p_val = data["prompt"].strip()
-        if p_val.endswith(".md") or p_val.endswith(".txt"):
-            prompt_file_path = Path(p_val)
+    prompt_parts: list[str] = []
+    for raw_part in raw_parts:
+        prompt_value = raw_part.strip()
+        if prompt_value.endswith(".md") or prompt_value.endswith(".txt"):
+            prompt_file_path = Path(prompt_value)
             if prompt_file_path.exists():
-                with open(prompt_file_path, "r", encoding="utf-8") as pf:
-                    combined_prompt.append(pf.read().strip())
+                with open(prompt_file_path, "r", encoding="utf-8") as prompt_file:
+                    prompt_parts.append(prompt_file.read().strip())
             else:
                 logger.warning(
                     f"Prompt file {prompt_file_path} referenced by {profile_name} not found."
                 )
         else:
-            combined_prompt.append(p_val)
+            prompt_parts.append(prompt_value)
+    return prompt_parts
+
+
+def _copy_unstructured_stage_keys(
+    section_value: dict, *, excluded_keys: set[str]
+) -> dict[str, object]:
+    return {
+        key: copy.deepcopy(value)
+        for key, value in section_value.items()
+        if key not in excluded_keys
+    }
+
+
+def _normalize_stage_section(
+    profile_name: str, stage_name: str, section_value: object
+) -> dict[str, object]:
+    if not isinstance(section_value, dict):
+        logger.warning(f"'{stage_name}' in {profile_name} must be a TOML table/dict.")
+        return {}
+
+    if stage_name == "transcribe":
+        normalized = _copy_unstructured_stage_keys(
+            section_value, excluded_keys={"vocab"}
+        )
+        if "vocab" in section_value:
+            if isinstance(section_value["vocab"], list):
+                normalized["vocab"] = [str(item) for item in section_value["vocab"]]
+            else:
+                logger.warning(
+                    f"'transcribe.vocab' in {profile_name} must be a list of strings."
+                )
+        return normalized
+
+    if stage_name == "format":
+        normalized = _copy_unstructured_stage_keys(
+            section_value, excluded_keys={"extensions", "replacements"}
+        )
+        if "extensions" in section_value:
+            if isinstance(section_value["extensions"], dict):
+                normalized["extensions"] = copy.deepcopy(section_value["extensions"])
+            else:
+                logger.warning(
+                    f"'format.extensions' in {profile_name} must be a TOML table/dict."
+                )
+        if "replacements" in section_value:
+            if isinstance(section_value["replacements"], dict):
+                normalized["replacements"] = copy.deepcopy(
+                    section_value["replacements"]
+                )
+            else:
+                logger.warning(
+                    f"'format.replacements' in {profile_name} must be a TOML table/dict."
+                )
+        return normalized
+
+    if stage_name == "translate":
+        normalized = _copy_unstructured_stage_keys(
+            section_value, excluded_keys={"prompt", "glossary"}
+        )
+        if "prompt" in section_value:
+            normalized["prompt"] = _load_prompt_fragments(
+                profile_name, section_value["prompt"], key_name="translate.prompt"
+            )
+        if "glossary" in section_value:
+            if isinstance(section_value["glossary"], dict):
+                normalized["glossary"] = copy.deepcopy(section_value["glossary"])
+            else:
+                logger.warning(
+                    f"'translate.glossary' in {profile_name} must be a TOML table/dict."
+                )
+        return normalized
+
+    normalized = _copy_unstructured_stage_keys(
+        section_value, excluded_keys={"extensions"}
+    )
+    if "extensions" in section_value:
+        if isinstance(section_value["extensions"], dict):
+            normalized["extensions"] = copy.deepcopy(section_value["extensions"])
+        else:
+            logger.warning(
+                f"'postprocess.extensions' in {profile_name} must be a TOML table/dict."
+            )
+    return normalized
+
+
+def _normalize_profile_data(profile_name: str, data: dict) -> dict[str, dict]:
+    normalized = _empty_stage_profile()
+
+    for stage_name in PROFILE_STAGES:
+        if stage_name not in data:
+            continue
+        normalized[stage_name] = _merge_stage_section(
+            normalized[stage_name],
+            _normalize_stage_section(profile_name, stage_name, data[stage_name]),
+            append_list_keys=("vocab",)
+            if stage_name == "transcribe"
+            else ("prompt",)
+            if stage_name == "translate"
+            else (),
+        )
+
+    if "prompt" in data:
+        normalized["translate"]["prompt"] = [
+            *normalized["translate"].get("prompt", []),
+            *_load_prompt_fragments(profile_name, data["prompt"], key_name="prompt"),
+        ]
 
     if "vocab" in data:
         if isinstance(data["vocab"], list):
-            combined_vocab.extend(str(v) for v in data["vocab"])
+            normalized["transcribe"]["vocab"] = [
+                *normalized["transcribe"].get("vocab", []),
+                *(str(item) for item in data["vocab"]),
+            ]
         else:
             logger.warning(f"'vocab' in {profile_name} must be a list of strings.")
 
     if "timing" in data:
         if isinstance(data["timing"], dict):
-            final_timing.update(data["timing"])
+            normalized["format"] = _merge_nested_dict(
+                normalized["format"], copy.deepcopy(data["timing"])
+            )
         else:
             logger.warning(f"'timing' in {profile_name} must be a TOML table/dict.")
 
     if "extensions" in data:
         if isinstance(data["extensions"], dict):
-            final_extensions = _merge_nested_dict(final_extensions, data["extensions"])
+            legacy_extensions = copy.deepcopy(data["extensions"])
+            normalized["format"]["extensions"] = _merge_nested_dict(
+                normalized["format"].get("extensions", {}), legacy_extensions
+            )
+            normalized["postprocess"]["extensions"] = _merge_nested_dict(
+                normalized["postprocess"].get("extensions", {}), legacy_extensions
+            )
         else:
             logger.warning(f"'extensions' in {profile_name} must be a TOML table/dict.")
 
     if "glossary" in data:
         if isinstance(data["glossary"], dict):
-            final_glossary.update(data["glossary"])
+            normalized["translate"]["glossary"] = _merge_nested_dict(
+                normalized["translate"].get("glossary", {}),
+                copy.deepcopy(data["glossary"]),
+            )
         else:
             logger.warning(f"'glossary' in {profile_name} must be a TOML table/dict.")
 
     if "replacements" in data:
         if isinstance(data["replacements"], dict):
-            final_replacements.update(data["replacements"])
+            normalized["format"]["replacements"] = _merge_nested_dict(
+                normalized["format"].get("replacements", {}),
+                copy.deepcopy(data["replacements"]),
+            )
         else:
             logger.warning(
                 f"'replacements' in {profile_name} must be a TOML table/dict."
             )
 
+    return normalized
+
+
+def _load_profile_sections(
+    profile_name: str, visited: set[str] | None = None
+) -> dict[str, dict]:
+    if visited is None:
+        visited = set()
+
+    if profile_name in visited:
+        return _empty_stage_profile()
+    visited.add(profile_name)
+
+    profile_path = Path("profiles") / f"{profile_name}.toml"
+    if not profile_path.exists():
+        logger.warning(f"Profile {profile_name}.toml not found in profiles/ directory.")
+        return _empty_stage_profile()
+
+    try:
+        with open(profile_path, "rb") as handle:
+            data = tomllib.load(handle)
+    except Exception as exc:
+        logger.error(f"Failed to parse TOML profile {profile_path}: {exc}")
+        return _empty_stage_profile()
+
+    combined = _empty_stage_profile()
+    for base_profile in data.get("extends", []):
+        base_data = _load_profile_sections(base_profile, visited)
+        combined = _merge_profiles(combined, base_data)
+
+    return _merge_profiles(combined, _normalize_profile_data(profile_name, data))
+
+
+def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> dict:
+    """
+    Loads a TOML profile recursively, resolving `extends` arrays.
+    Normalizes both staged and legacy flat profile keys into stage-specific sections.
+    """
+    staged = _load_profile_sections(profile_name, visited)
+    format_stage = staged["format"]
+    translate_stage = staged["translate"]
+    postprocess_stage = staged["postprocess"]
+    legacy_timing = {
+        key: value
+        for key, value in format_stage.items()
+        if key not in {"extensions", "replacements"}
+    }
+    legacy_extensions = _merge_nested_dict(
+        format_stage.get("extensions", {}),
+        postprocess_stage.get("extensions", {}),
+    )
     return {
-        "prompt": combined_prompt,
-        "vocab": combined_vocab,
-        "timing": final_timing,
-        "extensions": final_extensions,
-        "glossary": final_glossary,
-        "replacements": final_replacements,
+        **staged,
+        "prompt": list(translate_stage.get("prompt", [])),
+        "vocab": list(staged["transcribe"].get("vocab", [])),
+        "timing": legacy_timing,
+        "extensions": legacy_extensions,
+        "glossary": copy.deepcopy(translate_stage.get("glossary", {})),
+        "replacements": copy.deepcopy(format_stage.get("replacements", {})),
     }
