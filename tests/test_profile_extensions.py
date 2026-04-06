@@ -57,3 +57,56 @@ preserve_quotes = true
         }
     finally:
         autosub.core.profile.Path = original_path
+
+
+def test_local_profiles_can_extend_example_profiles(tmp_path):
+    profiles_root = tmp_path / "profiles"
+    local_dir = profiles_root / "local"
+    examples_dir = profiles_root / "examples"
+    local_dir.mkdir(parents=True)
+    examples_dir.mkdir(parents=True)
+
+    (examples_dir / "base.toml").write_text(
+        """
+[format.extensions.radio_discourse]
+enabled = true
+label_roles = false
+
+[postprocess.extensions.radio_discourse]
+enabled = true
+""".strip(),
+        encoding="utf-8",
+    )
+    (local_dir / "child.toml").write_text(
+        """
+extends = ["base"]
+
+[format.extensions.radio_discourse]
+label_roles = true
+window_size = 6
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profiles_root
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("child")
+        assert data["format"]["extensions"]["radio_discourse"] == {
+            "enabled": True,
+            "label_roles": True,
+            "window_size": 6,
+        }
+        assert data["postprocess"]["extensions"]["radio_discourse"] == {"enabled": True}
+    finally:
+        autosub.core.profile.Path = original_path

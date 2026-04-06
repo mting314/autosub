@@ -112,6 +112,16 @@ Notes:
 - `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`, and `AUTOSUB_GCS_BUCKET` are only needed for Google-backed stages.
 - Long-audio transcription only requires Google Cloud Storage when using the default `chirp_2` backend.
 
+Create local working config files from the tracked samples:
+
+```powershell
+Copy-Item .\config.toml.sample .\config.toml
+New-Item -ItemType Directory -Force .\profiles\local | Out-Null
+Copy-Item .\profiles\examples\solo_seiyuu_radio.toml .\profiles\local\my_profile.toml
+```
+
+Edit `.\config.toml` and `.\profiles\local\*.toml` for real usage. Those files are intentionally gitignored so you do not need to recommit them whenever you add or tweak a profile.
+
 ## Quick Start
 
 Run the full pipeline:
@@ -261,7 +271,7 @@ uv run autosub postprocess .\translated.ass `
 
 ## Default CLI Config
 
-`autosub` now auto-loads `.\config.toml` when that file exists.
+`autosub` auto-loads `.\config.toml` when that file exists.
 
 Precedence is:
 
@@ -269,9 +279,15 @@ Precedence is:
 - `config.toml`
 - built-in command defaults
 
+The repo ships a sample at [`config.toml.sample`](./config.toml.sample). Copy it to `.\config.toml` before real use.
+
+```powershell
+Copy-Item .\config.toml.sample .\config.toml
+```
+
 You can override the path with `--config .\some-other.toml` or disable config loading for one run with `--no-config`.
 
-The repo root now includes a template [`config.toml`](./config.toml) with one section per pipeline stage command:
+`config.toml.sample` has one section per pipeline stage command:
 
 - `[transcribe]`
 - `[format]`
@@ -299,7 +315,7 @@ For `autosub run`, the effective defaults are combined from the stage sections:
 
 If you need a run-only override such as `out_dir` or `extract_keyframes`, an optional `[run]` section is still supported, but the default template leaves it out on purpose.
 
-Keep reusable content in `profiles/*.toml` instead:
+Keep reusable content in profile files instead:
 
 - prompt text
 - vocabulary lists
@@ -458,7 +474,17 @@ uv run autosub run .\video.mp4 `
 
 ## Unified Profile Format
 
-Profiles live in [`profiles`](./profiles) and are loaded by name with `--profile <name>`.
+Tracked example profiles live in [`profiles/examples`](./profiles/examples). Your real working profiles should live in `.\profiles\local`, which is gitignored. `--profile <name>` searches in this order:
+
+- `profiles\local\<name>.toml`
+- `profiles\examples\<name>.toml`
+- `profiles\<name>.toml` for backward compatibility
+
+To create a local profile from a tracked example:
+
+```powershell
+Copy-Item .\profiles\examples\solo_seiyuu_radio.toml .\profiles\local\my_profile.toml
+```
 
 Example:
 

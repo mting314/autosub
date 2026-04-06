@@ -8,6 +8,20 @@ logger = logging.getLogger(__name__)
 PROFILE_STAGES = ("transcribe", "format", "translate", "postprocess")
 
 
+def _profile_search_dirs() -> tuple[Path, ...]:
+    profiles_root = Path("profiles")
+    return (profiles_root / "local", profiles_root / "examples", profiles_root)
+
+
+def _resolve_profile_path(profile_name: str) -> Path | None:
+    profile_filename = f"{profile_name}.toml"
+    for directory in _profile_search_dirs():
+        candidate = directory / profile_filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def _merge_nested_dict(base: dict, override: dict) -> dict:
     merged = dict(base)
     for key, value in override.items():
@@ -249,9 +263,12 @@ def _load_profile_sections(
         return _empty_stage_profile()
     visited.add(profile_name)
 
-    profile_path = Path("profiles") / f"{profile_name}.toml"
-    if not profile_path.exists():
-        logger.warning(f"Profile {profile_name}.toml not found in profiles/ directory.")
+    profile_path = _resolve_profile_path(profile_name)
+    if profile_path is None:
+        logger.warning(
+            f"Profile {profile_name}.toml not found in profiles/local, "
+            "profiles/examples, or profiles/."
+        )
         return _empty_stage_profile()
 
     try:
