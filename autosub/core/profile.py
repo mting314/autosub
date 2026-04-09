@@ -307,17 +307,18 @@ def _load_profile_sections(
         return _empty_stage_profile()
 
     combined = _empty_stage_profile()
+    combined_corners: list = []
     for base_profile in data.get("extends", []):
         base_data = _load_profile_sections(base_profile, visited)
         combined = _merge_profiles(combined, base_data)
+        combined_corners.extend(base_data.get("corners", []))
 
     merged = _merge_profiles(combined, _normalize_profile_data(profile_name, data))
 
     # Corners are top-level, not stage-specific — accumulate from bases and own data
-    base_corners = combined.get("corners", [])
     own_corners = _normalize_profile_data(profile_name, data).get("corners", [])
-    if base_corners or own_corners:
-        merged["corners"] = [*base_corners, *own_corners]
+    if combined_corners or own_corners:
+        merged["corners"] = [*combined_corners, *own_corners]
 
     return merged
 
