@@ -42,10 +42,10 @@ def test_transcribe_uri_polls_and_logs_heartbeat_until_complete(monkeypatch, cap
 
     assert response == "response"
     assert any(
-        "Submitted Chirp 2 batch job operations/123" in m for m in caplog.messages
+        "Submitted chirp_2 batch job operations/123" in m for m in caplog.messages
     )
     assert any(
-        "Still waiting on Chirp 2 batch job operations/123" in m
+        "Still waiting on chirp_2 batch job operations/123" in m
         for m in caplog.messages
     )
     assert any("completed in 0m 15s" in m for m in caplog.messages)
@@ -75,7 +75,7 @@ def test_transcribe_uri_wraps_operation_failures_with_context(monkeypatch):
 
     try:
         transcribe_api.transcribe_uri(gcs_uri, "project-id")
-        assert False, "Expected Chirp 2 batch failures to be wrapped."
+        assert False, "Expected chirp_2 batch failures to be wrapped."
     except RuntimeError as exc:
         assert gcs_uri in str(exc)
         assert "backend boom" in str(exc)
