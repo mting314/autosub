@@ -257,9 +257,7 @@ def _write_error_report(error_path: Path, exc: Exception) -> None:
     )
 
 
-def _load_checkpoint(
-    checkpoint_path: Path, fingerprint: str
-) -> dict[int, list[str]]:
+def _load_checkpoint(checkpoint_path: Path, fingerprint: str) -> dict[int, list[str]]:
     """Load and validate completed chunk results from checkpoint file.
 
     Returns dict[int, list[str]] mapping chunk index to translated strings.
@@ -350,10 +348,12 @@ def _translate_chunked(
     # Set up structured log directory
     chunks_dir = None
     token_summary_path = None
+    system_prompt_path = None
     if log_dir:
         chunks_dir = log_dir / "chunks"
         chunks_dir.mkdir(parents=True, exist_ok=True)
         token_summary_path = log_dir / "token_summary.tsv"
+        system_prompt_path = log_dir / "system_prompt.txt"
         # Write header if new file
         if not token_summary_path.exists():
             token_summary_path.write_text(
@@ -389,9 +389,7 @@ def _translate_chunked(
         line_end = line_offset + len(chunk)
 
         if chunk_idx in completed:
-            logger.info(
-                f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)"
-            )
+            logger.info(f"  Chunk {chunk_idx + 1}/{len(chunks)} — skipped (checkpoint)")
             line_offset += len(chunk)
             continue
 
@@ -412,9 +410,11 @@ def _translate_chunked(
             chunk_num = f"{chunk_idx + 1:02d}"
 
             # Write system prompt once
-            if chunk_idx == 0 or not (log_dir / "system_prompt.txt").exists():
+            if system_prompt_path and (
+                chunk_idx == 0 or not system_prompt_path.exists()
+            ):
                 if hasattr(translator, "last_system_instruction"):
-                    (log_dir / "system_prompt.txt").write_text(
+                    system_prompt_path.write_text(
                         translator.last_system_instruction, encoding="utf-8"
                     )
 

@@ -1,0 +1,22 @@
+extends = ["proseka/aftertalk"]
+
+prompt = "prompts/proseka/n25.md"
+vocab = [
+    # --- Characters ---
+    "宵崎奏",
+    "朝比奈まふゆ",
+    "東雲絵名",
+    "暁山瑞希",
+
+    # --- Voice Actors ---
+    "楠木ともり",
+    "田辺留依",
+    "鈴木みのり",
+    "佐藤日向",
+]
+
+[glossary]
+"宵崎奏" = "Kanade Yoisaki"
+"朝比奈まふゆ" = "Mafuyu Asahina"
+"東雲絵名" = "Ena Shinonome"
+"暁山瑞希" = "Mizuki Akiyama"

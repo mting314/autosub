@@ -1,0 +1,26 @@
+extends = ["proseka/aftertalk"]
+
+prompt = "prompts/proseka/mmj.md"
+vocab = [
+    # --- Characters ---
+    "花里みのり",
+    "桐谷遥",
+    "桃井愛莉",
+    "日野森雫",
+
+    # --- Voice Actors ---
+    "小倉唯",
+    "吉岡真優",
+    "降幡愛",
+    "本泉莉奈",
+
+    # --- Greetings ---
+    "コンモア",
+]
+
+[glossary]
+"花里みのり" = "Minori Hanasato"
+"桐谷遥" = "Haruka Kiritani"
+"桃井愛莉" = "Airi Momoi"
+"日野森雫" = "Shizuku Hinomori"
+"コンモア" = "Kon-more"

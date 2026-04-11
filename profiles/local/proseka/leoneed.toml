@@ -1,0 +1,26 @@
+extends = ["proseka/aftertalk"]
+
+prompt = "prompts/proseka/leoneed.md"
+vocab = [
+    # --- Characters ---
+    "星乃一歌",
+    "天馬咲希",
+    "望月穂波",
+    "日野森志歩",
+
+    # --- Voice Actors ---
+    "野口瑠璃子",
+    "磯部花凛",
+    "上田麗奈",
+    "中島由貴",
+
+    # --- Greetings ---
+    "コンニード",
+]
+
+[glossary]
+"星乃一歌" = "Ichika Hoshino"
+"天馬咲希" = "Saki Tenma"
+"望月穂波" = "Honami Mochizuki"
+"日野森志歩" = "Shiho Hinomori"
+"コンニード" = "Kon-needo"
