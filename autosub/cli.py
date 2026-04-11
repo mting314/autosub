@@ -1343,7 +1343,6 @@ def run(
             whisper_hf_token=whisper_hf_token,
             replacements=replacements or None,
             num_speakers=speakers,
-            replacements=replacements or None,
         )
     except Exception as e:
         logger.exception("Failed during transcription (%s)", _exception_summary(e))
