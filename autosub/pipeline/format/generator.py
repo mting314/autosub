@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 from typing import List
 import pyass
 
 from autosub.core.schemas import SubtitleLine
+
+logger = logging.getLogger(__name__)
 
 
 def generate_ass_file(lines: List[SubtitleLine], output_path: Path):
@@ -83,3 +86,33 @@ def generate_ass_file(lines: List[SubtitleLine], output_path: Path):
     # 4. Dump to disk
     with open(output_path, "w", encoding="utf-8") as f:
         pyass.dump(script, f)
+
+
+def inject_aegisub_metadata(ass_path: Path, video_path: Path) -> None:
+    """Inject [Aegisub Project Garbage] section to auto-link video in Aegisub.
+
+    Inserts between [Script Info] and [V4+ Styles] so Aegisub auto-loads
+    the audio/video when opening the file. Uses relative path from the
+    ASS file's directory to the video file.
+    """
+    if not ass_path.exists():
+        return
+
+    import os
+
+    rel_video = Path(
+        os.path.relpath(video_path.resolve(), ass_path.resolve().parent)
+    )
+
+    garbage = (
+        "\n[Aegisub Project Garbage]\n"
+        f"Audio File: {rel_video}\n"
+        f"Video File: {rel_video}\n"
+    )
+
+    content = ass_path.read_text(encoding="utf-8")
+    marker = "[V4+ Styles]"
+    if marker in content:
+        content = content.replace(marker, garbage + "\n" + marker)
+        ass_path.write_text(content, encoding="utf-8")
+        logger.info(f"Linked video '{rel_video}' in {ass_path.name}")

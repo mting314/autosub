@@ -997,6 +997,10 @@ def run(
         logger.error(f"Failed during formatting: {e}")
         raise typer.Exit(code=1)
 
+    from autosub.pipeline.format.generator import inject_aegisub_metadata
+
+    inject_aegisub_metadata(original_ass_out, video_path)
+
     # Step 3: Translate
     try:
         logger.info("[Step 3/4] Translating...")
@@ -1018,6 +1022,8 @@ def run(
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
         raise typer.Exit(code=1)
+
+    inject_aegisub_metadata(translated_ass_out, video_path)
 
     # Step 4: Postprocess
     try:
