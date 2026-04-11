@@ -1,3 +1,4 @@
+import logging
 import autosub.cli as cli_module
 from types import SimpleNamespace
 from typing import cast
@@ -319,6 +320,27 @@ def test_transcribe_supports_whisperx_backend_options(tmp_path, monkeypatch):
     assert captured["whisper_batch_size"] == 8
     assert captured["whisper_diarize"] is True
     assert captured["whisper_hf_token"] == "hf-token"
+
+
+def test_transcribe_logs_exception_type_for_empty_timeout_error(
+    tmp_path, monkeypatch, caplog
+):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+
+    def fail_transcribe(*args, **kwargs):
+        raise TimeoutError()
+
+    monkeypatch.setattr(cli_module.transcribe_main, "transcribe", fail_transcribe)
+
+    with caplog.at_level(logging.ERROR):
+        result = runner.invoke(app, ["transcribe", str(video_path)])
+
+    assert result.exit_code == 1
+    assert any(
+        "Error during transcription (TimeoutError)" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_transcribe_rejects_mismatched_multiple_ranges(tmp_path):

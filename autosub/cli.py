@@ -40,6 +40,7 @@ def _add_file_logger(log_path: Path) -> None:
     root.addHandler(handler)
     logger.info(f"Saving log to {log_path}")
 
+
 @app.callback()
 def main(
     ctx: typer.Context,
@@ -100,6 +101,13 @@ def _resolve_model_selection_or_exit(
     except LLMResolutionError as exc:
         raise typer.BadParameter(str(exc), param_hint="--model") from exc
     return selection.provider, selection.model or model
+
+
+def _exception_summary(exc: BaseException) -> str:
+    message = str(exc).strip()
+    if not message:
+        return type(exc).__name__
+    return f"{type(exc).__name__}: {message}"
 
 
 def _extract_format_profile_config(profile_data: dict) -> tuple[dict, dict, dict]:
@@ -324,7 +332,7 @@ def transcribe(
         )
         logger.info(f"Success! Saved {len(result.words)} words to {output}")
     except Exception as e:
-        logger.error(f"Error during transcription: {e}")
+        logger.exception("Error during transcription (%s)", _exception_summary(e))
         raise typer.Exit(code=1)
 
 
@@ -924,7 +932,7 @@ def run(
             whisper_hf_token=whisper_hf_token,
         )
     except Exception as e:
-        logger.error(f"Failed during transcription: {e}")
+        logger.exception("Failed during transcription (%s)", _exception_summary(e))
         raise typer.Exit(code=1)
 
     # Step 1.5: Keyframes

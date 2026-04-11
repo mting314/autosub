@@ -1,9 +1,83 @@
 import logging
+import time
 from google.cloud import speech_v2
 from google.cloud.speech_v2.types import cloud_speech
 from google.api_core.client_options import ClientOptions
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_BATCH_POLL_INTERVAL_SECONDS = 15.0
+DEFAULT_BATCH_HEARTBEAT_SECONDS = 60.0
+
+
+def _operation_name(operation: object) -> str:
+    raw_operation = getattr(operation, "operation", None)
+    if raw_operation is None:
+        return "<unknown>"
+    name = getattr(raw_operation, "name", None)
+    if isinstance(name, str) and name.strip():
+        return name
+    return "<unknown>"
+
+
+def _format_elapsed_seconds(seconds: float) -> str:
+    total_seconds = max(0, int(seconds))
+    minutes, remaining_seconds = divmod(total_seconds, 60)
+    hours, remaining_minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {remaining_minutes:02d}m {remaining_seconds:02d}s"
+    return f"{remaining_minutes}m {remaining_seconds:02d}s"
+
+
+def _wait_for_batch_operation(
+    operation: object,
+    *,
+    gcs_uri: str,
+    poll_interval_seconds: float | None = None,
+    heartbeat_seconds: float | None = None,
+) -> speech_v2.BatchRecognizeResponse:
+    if poll_interval_seconds is None:
+        poll_interval_seconds = DEFAULT_BATCH_POLL_INTERVAL_SECONDS
+    if heartbeat_seconds is None:
+        heartbeat_seconds = DEFAULT_BATCH_HEARTBEAT_SECONDS
+
+    operation_name = _operation_name(operation)
+    started_at = time.monotonic()
+    last_heartbeat_at = started_at
+
+    logger.info(
+        "Submitted Chirp 2 batch job %s for %s. Polling every %.0f seconds.",
+        operation_name,
+        gcs_uri,
+        poll_interval_seconds,
+    )
+
+    while not bool(getattr(operation, "done")()):
+        time.sleep(poll_interval_seconds)
+        current_time = time.monotonic()
+        if current_time - last_heartbeat_at >= heartbeat_seconds:
+            logger.info(
+                "Still waiting on Chirp 2 batch job %s for %s after %s.",
+                operation_name,
+                gcs_uri,
+                _format_elapsed_seconds(current_time - started_at),
+            )
+            last_heartbeat_at = current_time
+
+    elapsed = time.monotonic() - started_at
+    logger.info(
+        "Chirp 2 batch job %s for %s completed in %s.",
+        operation_name,
+        gcs_uri,
+        _format_elapsed_seconds(elapsed),
+    )
+
+    try:
+        return operation.result()  # type: ignore[return-value]
+    except Exception as exc:
+        raise RuntimeError(
+            f"Chirp 2 batch transcription failed for {gcs_uri}: {exc}"
+        ) from exc
 
 
 def transcribe_uri(
@@ -50,9 +124,7 @@ def transcribe_uri(
 
     logger.info(f"Starting long-running transcription on {gcs_uri}...")
     operation = client.batch_recognize(request=request)
-
-    # Wait for the operation to complete
-    response = operation.result()
+    response = _wait_for_batch_operation(operation, gcs_uri=gcs_uri)
     logger.info("Transcription complete!")
     return response  # type: ignore
 
