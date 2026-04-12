@@ -33,6 +33,7 @@ def _wait_for_batch_operation(
     operation: object,
     *,
     gcs_uri: str,
+    model: str = "chirp_2",
     poll_interval_seconds: float | None = None,
     heartbeat_seconds: float | None = None,
 ) -> speech_v2.BatchRecognizeResponse:
@@ -44,9 +45,11 @@ def _wait_for_batch_operation(
     operation_name = _operation_name(operation)
     started_at = time.monotonic()
     last_heartbeat_at = started_at
+    label = model.replace("_", " ").title()
 
     logger.info(
-        "Submitted Chirp 2 batch job %s for %s. Polling every %.0f seconds.",
+        "Submitted %s batch job %s for %s. Polling every %.0f seconds.",
+        label,
         operation_name,
         gcs_uri,
         poll_interval_seconds,
@@ -57,7 +60,8 @@ def _wait_for_batch_operation(
         current_time = time.monotonic()
         if current_time - last_heartbeat_at >= heartbeat_seconds:
             logger.info(
-                "Still waiting on Chirp 2 batch job %s for %s after %s.",
+                "Still waiting on %s batch job %s for %s after %s.",
+                label,
                 operation_name,
                 gcs_uri,
                 _format_elapsed_seconds(current_time - started_at),
@@ -66,7 +70,8 @@ def _wait_for_batch_operation(
 
     elapsed = time.monotonic() - started_at
     logger.info(
-        "Chirp 2 batch job %s for %s completed in %s.",
+        "%s batch job %s for %s completed in %s.",
+        label,
         operation_name,
         gcs_uri,
         _format_elapsed_seconds(elapsed),
@@ -76,7 +81,7 @@ def _wait_for_batch_operation(
         return operation.result()  # type: ignore[return-value]
     except Exception as exc:
         raise RuntimeError(
-            f"Chirp 2 batch transcription failed for {gcs_uri}: {exc}"
+            f"{label} batch transcription failed for {gcs_uri}: {exc}"
         ) from exc
 
 
@@ -147,7 +152,7 @@ def transcribe_uri(
 
     logger.info(f"Starting long-running transcription on {gcs_uri}...")
     operation = client.batch_recognize(request=request)
-    response = _wait_for_batch_operation(operation, gcs_uri=gcs_uri)
+    response = _wait_for_batch_operation(operation, gcs_uri=gcs_uri, model=model)
     logger.info("Transcription complete!")
     return response  # type: ignore
 

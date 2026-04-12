@@ -53,6 +53,7 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
         input_video_path: Path,
         start_time: str | None = None,
         end_time: str | None = None,
+        opus: bool = False,
     ) -> Path:
         audio_path = tmp_path / f"audio_{start_time}_{end_time}.wav"
         audio_path.write_text(start_time or "full", encoding="utf-8")
@@ -110,6 +111,7 @@ def test_transcribe_fails_if_any_segment_fails(tmp_path, monkeypatch):
         input_video_path: Path,
         start_time: str | None = None,
         end_time: str | None = None,
+        opus: bool = False,
     ) -> Path:
         audio_path = tmp_path / f"audio_{start_time}_{end_time}.wav"
         audio_path.write_text(start_time or "full", encoding="utf-8")
@@ -168,6 +170,7 @@ def test_transcribe_whisperx_does_not_require_google_project_or_gcs(
         input_video_path: Path,
         start_time: str | None = None,
         end_time: str | None = None,
+        opus: bool = False,
     ) -> Path:
         audio_path = tmp_path / "audio.wav"
         audio_path.write_text("fake", encoding="utf-8")

@@ -225,7 +225,7 @@ def transcribe(
         "chirp_2",
         "--backend",
         "--transcription-backend",
-        help="Transcription backend to use ('chirp_2' or 'whisperx').",
+        help="Transcription backend to use ('chirp_2', 'chirp_3', or 'whisperx').",
     ),
     whisper_model: str = typer.Option(
         "large-v2",
@@ -705,7 +705,7 @@ def run(
         "chirp_2",
         "--backend",
         "--transcription-backend",
-        help="Transcription backend to use ('chirp_2' or 'whisperx').",
+        help="Transcription backend to use ('chirp_2', 'chirp_3', or 'whisperx').",
     ),
     whisper_model: str = typer.Option(
         "large-v2",
@@ -942,7 +942,6 @@ def run(
             whisper_batch_size=whisper_batch_size,
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
-            replacements=replacements or None,
         )
     except Exception as e:
         logger.exception("Failed during transcription (%s)", _exception_summary(e))

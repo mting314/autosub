@@ -253,7 +253,10 @@ def _transcribe_time_range(
         time_range.end_time,
     )
     audio_path = audio.extract_audio(
-        video_path, time_range.start_time, time_range.end_time
+        video_path,
+        time_range.start_time,
+        time_range.end_time,
+        opus=(transcription_backend == "chirp_3"),
     )
 
     try:
@@ -423,7 +426,6 @@ def transcribe(
     whisper_batch_size: int = 16,
     whisper_diarize: bool = False,
     whisper_hf_token: str | None = None,
-    replacements: dict[str, str] | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -560,22 +562,3 @@ def transcribe(
     return final_result
 
 
-def _parse_batch_response(
-    response, gcs_uri: str, time_offset: float = 0.0
-) -> list[TranscribedWord]:
-    """Parse a BatchRecognizeResponse into TranscribedWord objects."""
-    words = []
-    for result in response.results[gcs_uri].inline_result.transcript.results:
-        for alt in result.alternatives:
-            for w in alt.words:
-                words.append(
-                    TranscribedWord(
-                        word=w.word,
-                        start_time=_duration_seconds(w.start_offset) + time_offset,
-                        end_time=_duration_seconds(w.end_offset) + time_offset,
-                        speaker=w.speaker_label
-                        if hasattr(w, "speaker_label")
-                        else None,
-                    )
-                )
-    return words

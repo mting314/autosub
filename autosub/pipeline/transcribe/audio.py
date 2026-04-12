@@ -11,18 +11,24 @@ MAX_CHUNK_MINUTES = 18  # stay under Chirp 3's 20-min word-timestamp limit
 
 
 def extract_audio(
-    video_path: Path, start_time: str | None = None, end_time: str | None = None
+    video_path: Path,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    opus: bool = False,
 ) -> Path:
     """
-    Extracts the audio track from a video file as Opus audio,
-    which is required for Chirp 3 API transcription (WAV/AAC return empty results).
+    Extracts the audio track from a video file.
+
+    When *opus* is True, encodes as Opus (required for Chirp 3 — WAV/AAC
+    return empty results).  Otherwise encodes as 16-bit PCM WAV (Chirp 2).
     Returns the Path to the temporary audio file.
     """
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found: {video_path}")
 
     temp_dir = Path(tempfile.gettempdir())
-    output_audio_path = temp_dir / f"{video_path.stem}_audio_{uuid4().hex}.opus"
+    ext = ".opus" if opus else ".wav"
+    output_audio_path = temp_dir / f"{video_path.stem}_audio_{uuid4().hex}{ext}"
 
     try:
         input_args = {}
@@ -31,15 +37,22 @@ def extract_audio(
         if end_time:
             input_args["to"] = end_time
 
+        output_args: dict = {
+            "ac": 1,       # Mono channel
+            "ar": "16k",   # 16kHz sample rate
+            "loglevel": "error",
+        }
+        if opus:
+            output_args["acodec"] = "libopus"
+            output_args["b:a"] = "64k"
+        else:
+            output_args["acodec"] = "pcm_s16le"
+
         (
             ffmpeg.input(str(video_path), **input_args)
             .output(
                 str(output_audio_path),
-                acodec="libopus",
-                **{"b:a": "64k"},
-                ac=1,  # Mono channel
-                ar="16k",  # 16kHz sample rate
-                loglevel="error",  # Suppress verbose ffmpeg output
+                **output_args,
             )
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
