@@ -888,6 +888,77 @@ def postprocess(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def report(
+    ctx: typer.Context,
+    original_ass: Path = typer.Argument(
+        ...,
+        help="Path to the original Japanese .ass file.",
+        exists=True,
+        dir_okay=False,
+    ),
+    translated_ass: Path = typer.Argument(
+        ...,
+        help="Path to the translated English .ass file.",
+        exists=True,
+        dir_okay=False,
+    ),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Path to save the HTML report (defaults to report.html in the same directory).",
+    ),
+    video: Path = typer.Option(
+        None,
+        "--video",
+        "-v",
+        help="Path to the video file for the embedded player.",
+    ),
+    title: str = typer.Option(
+        None,
+        "--title",
+        "-t",
+        help="Report title (defaults to the original .ass filename stem).",
+    ),
+):
+    """
+    Generate a self-contained HTML review report comparing original and translated subtitles.
+
+    Shows Japanese and English side-by-side with an embedded video player,
+    click-to-seek, auto-highlighting of the current line, and issue detection filters.
+    """
+    from autosub.pipeline.report import main as report_module
+
+    resolved = apply_command_config(
+        ctx,
+        "report",
+        {
+            "out": out,
+            "video": video,
+            "title": title,
+        },
+    )
+    out = resolved["out"]
+    video = resolved["video"]
+    title = resolved["title"]
+
+    if not out:
+        out = original_ass.with_name("report.html")
+
+    try:
+        report_module.generate_report(
+            original_ass,
+            translated_ass,
+            out,
+            video_path=video,
+            title=title,
+        )
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command(name="assign-speakers")
 def assign_speakers(
     ass_file: Path = typer.Argument(

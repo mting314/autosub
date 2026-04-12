@@ -130,6 +130,11 @@ COMMAND_OPTION_SPECS: dict[str, dict[str, OptionSpec]] = {
         "profile": OptionSpec(("profile",), _as_str),
         "bilingual": OptionSpec(("bilingual",), _as_bool),
     },
+    "report": {
+        "out": OptionSpec(("out",), _as_path),
+        "video": OptionSpec(("video",), _as_path),
+        "title": OptionSpec(("title",), _as_str),
+    },
     "run": {
         "out_dir": OptionSpec(("out_dir", "output_dir"), _as_path),
         "language": OptionSpec(("language",), _as_str),
