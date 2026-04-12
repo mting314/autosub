@@ -129,7 +129,6 @@ if (video) {
       found.classList.add('active-line');
       activeRow = found;
       updateNowPlaying(found);
-      found.scrollIntoView({block: 'center', behavior: 'smooth'});
     }
   });
 }
