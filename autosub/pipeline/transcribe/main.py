@@ -311,7 +311,6 @@ def _transcribe_time_range(
 
             if needs_chunking:
                 # Split into chunks for Chirp 3's word-timestamp limit
-                # TODO: parallelize chunk uploads for single long segments
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     chunks = audio.split_audio(
                         audio_path, max_chunk_seconds, Path(tmp_dir)
@@ -322,9 +321,17 @@ def _transcribe_time_range(
                         audio.MAX_CHUNK_MINUTES,
                     )
 
-                    all_words: list[TranscribedWord] = []
-                    all_segments: list[TranscriptionSegment] = []
-                    for chunk_idx, (chunk_path, chunk_start) in enumerate(chunks):
+                    chunk_results: dict[int, tuple[list[TranscribedWord], list[TranscriptionSegment]]] = {}
+                    chunk_failures: list[tuple[int, Exception]] = []
+                    max_workers = min(
+                        MAX_CONCURRENT_TRANSCRIPTION_JOBS, len(chunks)
+                    )
+
+                    def _transcribe_chunk(
+                        chunk_idx: int,
+                        chunk_path: Path,
+                        chunk_start: float,
+                    ) -> tuple[int, list[TranscribedWord], list[TranscriptionSegment]]:
                         chunk_duration = audio.get_audio_duration(chunk_path)
                         gcs_dest = (
                             f"autosub_staging/{uuid4()}_{chunk_path.name}"
@@ -351,21 +358,52 @@ def _transcribe_time_range(
                             chirp_results = response.results[
                                 gcs_uri
                             ].inline_result.transcript.results
-                            all_words.extend(
+                            return (
+                                chunk_idx,
                                 _parse_words(
                                     chirp_results, chunk_offset, chunk_duration
-                                )
-                            )
-                            all_segments.extend(
+                                ),
                                 _parse_chirp_segments(
                                     chirp_results, chunk_offset, chunk_duration
-                                )
+                                ),
                             )
                         finally:
                             logger.info(
                                 "  Cleaning up %s...", gcs_dest
                             )
                             gcs.delete_from_gcs(gcs_bucket, gcs_uri)
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {
+                            executor.submit(
+                                _transcribe_chunk, idx, path, start
+                            ): idx
+                            for idx, (path, start) in enumerate(chunks)
+                        }
+                        for future in as_completed(futures):
+                            idx = futures[future]
+                            try:
+                                cidx, words, segs = future.result()
+                                chunk_results[cidx] = (words, segs)
+                            except Exception as exc:
+                                chunk_failures.append((idx, exc))
+
+                    if chunk_failures:
+                        chunk_failures.sort(key=lambda item: item[0])
+                        msgs = ", ".join(
+                            f"chunk {i + 1}: {exc}"
+                            for i, exc in chunk_failures
+                        )
+                        raise RuntimeError(
+                            f"One or more audio chunks failed: {msgs}"
+                        ) from chunk_failures[0][1]
+
+                    all_words: list[TranscribedWord] = []
+                    all_segments: list[TranscriptionSegment] = []
+                    for idx in sorted(chunk_results):
+                        words, segs = chunk_results[idx]
+                        all_words.extend(words)
+                        all_segments.extend(segs)
 
                 return TranscriptionResult(
                     words=all_words,
