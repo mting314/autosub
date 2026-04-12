@@ -85,6 +85,8 @@ def _wait_for_batch_operation(
         ) from exc
 
 
+# Chirp 3 is also GA in EU (eu-speech.googleapis.com / "eu"), but we only
+# target US for now.  Revisit if multi-region support is needed.
 _CHIRP_ENDPOINTS = {
     "chirp_2": "us-central1-speech.googleapis.com",
     "chirp_3": "us-speech.googleapis.com",
@@ -125,7 +127,10 @@ def transcribe_uri(
         features=features,
     )
 
-    # SpeechAdaptation is only supported on Chirp 2
+    # SpeechAdaptation PhraseSet is incompatible with enable_word_time_offsets
+    # on Chirp 3 (API returns an error when both are set).  Since word timing
+    # is required for subtitle generation, we skip adaptation on Chirp 3.
+    # Chirp 2 does not have this conflict.
     if vocabulary and model == "chirp_2":
         config.adaptation = cloud_speech.SpeechAdaptation(
             phrase_sets=[
@@ -137,8 +142,9 @@ def transcribe_uri(
             ]
         )
     elif vocabulary and model == "chirp_3":
-        logger.debug(
-            "Vocabulary hints ignored — Chirp 3 does not support SpeechAdaptation"
+        logger.warning(
+            "Vocabulary hints ignored — Chirp 3 SpeechAdaptation PhraseSet is "
+            "incompatible with enable_word_time_offsets (required for subtitle timing)."
         )
 
     request = speech_v2.BatchRecognizeRequest(
@@ -198,8 +204,9 @@ def transcribe_local_file(
             ]
         )
     elif vocabulary and model == "chirp_3":
-        logger.debug(
-            "Vocabulary hints ignored — Chirp 3 does not support SpeechAdaptation"
+        logger.warning(
+            "Vocabulary hints ignored — Chirp 3 SpeechAdaptation PhraseSet is "
+            "incompatible with enable_word_time_offsets (required for subtitle timing)."
         )
 
     request = speech_v2.RecognizeRequest(

@@ -145,6 +145,7 @@ def _parse_chirp_segments(
     results: Any, offset_seconds: float, chunk_duration: float = 0.0
 ) -> list[TranscriptionSegment]:
     segments: list[TranscriptionSegment] = []
+    clamped_count = 0
     for result in results:
         alternatives = getattr(result, "alternatives", [])
         if not alternatives:
@@ -157,6 +158,8 @@ def _parse_chirp_segments(
             start, end = _clamp_word_timestamps(
                 raw_start, raw_end, chunk_duration
             )
+            if (start, end) != (raw_start, raw_end):
+                clamped_count += 1
             segment_words.append(
                 TranscribedWord(
                     word=word_info.word,
@@ -184,6 +187,11 @@ def _parse_chirp_segments(
                 confidence=_segment_confidence(alternative),
                 kind="result",
             )
+        )
+    if clamped_count:
+        logger.warning(
+            "Clamped %d bogus segment word timestamp(s) from Chirp API response.",
+            clamped_count,
         )
     return segments
 
@@ -303,6 +311,7 @@ def _transcribe_time_range(
 
             if needs_chunking:
                 # Split into chunks for Chirp 3's word-timestamp limit
+                # TODO: parallelize chunk uploads for single long segments
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     chunks = audio.split_audio(
                         audio_path, max_chunk_seconds, Path(tmp_dir)

@@ -1,4 +1,3 @@
-import subprocess
 import tempfile
 import logging
 import ffmpeg
@@ -19,8 +18,10 @@ def extract_audio(
     """
     Extracts the audio track from a video file.
 
-    When *opus* is True, encodes as Opus (required for Chirp 3 — WAV/AAC
-    return empty results).  Otherwise encodes as 16-bit PCM WAV (Chirp 2).
+    When *opus* is True, encodes as Opus for Chirp 3.  In practice, Chirp 3
+    returns empty results for WAV and AAC input despite the docs advertising
+    AutoDetectDecodingConfig — this is observed API behavior as of 2026-03,
+    not an official constraint.  Otherwise encodes as 16-bit PCM WAV (Chirp 2).
     Returns the Path to the temporary audio file.
     """
     if not video_path.exists():
@@ -84,18 +85,19 @@ def split_audio(
         chunk_path = output_dir / f"chunk_{chunk_idx:03d}{audio_path.suffix}"
         chunk_duration = min(chunk_seconds, duration - start)
 
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-i", str(audio_path),
-                "-ss", str(start),
-                "-t", str(chunk_duration),
-                "-acodec", "copy",
-                str(chunk_path),
-            ],
-            capture_output=True,
-            check=True,
-        )
+        try:
+            (
+                ffmpeg.input(str(audio_path), ss=str(start), t=str(chunk_duration))
+                .output(str(chunk_path), acodec="copy", loglevel="error")
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+        except ffmpeg.Error as e:
+            error_message = e.stderr.decode() if e.stderr else "Unknown ffmpeg error"
+            raise RuntimeError(
+                f"Failed to split audio chunk {chunk_idx}: {error_message}"
+            ) from e
+
         logger.info(
             f"  Chunk {chunk_idx}: {start:.0f}s - {start + chunk_duration:.0f}s "
             f"({chunk_duration:.0f}s)"
