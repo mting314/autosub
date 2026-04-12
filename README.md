@@ -116,8 +116,6 @@ Set up local-only working files like this:
 
 ```powershell
 Copy-Item .\config.toml.sample .\config.toml
-New-Item -ItemType Directory -Force .\profiles\local | Out-Null
-New-Item -ItemType Directory -Force .\prompts\local | Out-Null
 ```
 
 Then choose one of these workflows:
