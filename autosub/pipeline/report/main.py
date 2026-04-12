@@ -17,11 +17,11 @@ from autosub.pipeline.report.template import HTML_BODY_TEMPLATE, HTML_HEAD, HTML
 
 logger = logging.getLogger(__name__)
 
-ISSUE_META: dict[str, tuple[str, str]] = {
-    "short": ("Short translations", "btn-orange"),
-    "long": ("Long translations", "btn-yellow"),
-    "zero_duration": ("Zero duration", "btn-red"),
-    "large_gap": ("Large gaps", "btn-purple"),
+ISSUE_META: dict[str, tuple[str, str, str]] = {
+    "short": ("Short translations", "btn-orange", "EN/JP ratio < 0.5 and EN < 10 chars"),
+    "long": ("Long translations", "btn-yellow", "EN/JP ratio > 2.5 and JP ≥ 4 chars"),
+    "zero_duration": ("Zero duration", "btn-red", "Duration < 0.1 seconds"),
+    "large_gap": ("Large gaps", "btn-purple", "Gap to next line > 30 seconds"),
 }
 
 SEVERITY_CLASS: dict[str, str] = {
@@ -64,13 +64,15 @@ def _build_stats_html(stats: ReportStats) -> str:
 
 def _build_filter_buttons(stats: ReportStats) -> str:
     buttons: list[str] = []
-    for issue_type, (label, btn_class) in ISSUE_META.items():
+    for issue_type, (label, btn_class, tooltip) in ISSUE_META.items():
         count = stats.issue_counts.get(issue_type, 0)
         if count > 0:
             buttons.append(
                 f'<button class="filter-btn {btn_class}" '
                 f'data-filter="{issue_type}" onclick="toggleFilter(this)">'
-                f"{label} ({count})</button>"
+                f"{label} ({count})"
+                f'<span class="info-tip" data-tip="{_escape(tooltip)}">ⓘ</span>'
+                f"</button>"
             )
     return "\n  ".join(buttons)
 

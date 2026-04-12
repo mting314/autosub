@@ -25,6 +25,14 @@ HTML_HEAD = """\
   .btn-yellow {{ background: #e6c300; color: #1a1a2e; }}
   .btn-red {{ background: #ff4444; color: #fff; }}
   .btn-purple {{ background: #b366ff; color: #fff; }}
+  .info-tip {{ margin-left: 6px; cursor: help; opacity: 0.7; font-size: 0.85em;
+               position: relative; }}
+  .info-tip::after {{ content: attr(data-tip); position: absolute; bottom: 125%; left: 50%;
+                      transform: translateX(-50%); background: #16213e; color: #e0e0e0;
+                      padding: 6px 10px; border-radius: 6px; font-size: 0.8em;
+                      white-space: nowrap; border: 1px solid #2a3a5c;
+                      opacity: 0; pointer-events: none; transition: opacity 0.1s; z-index: 20; }}
+  .info-tip:hover::after {{ opacity: 1; }}
   table {{ width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 0.85em; }}
   th {{ background: #0f3460; color: #fff; padding: 10px 8px; text-align: left;
        position: sticky; top: 0; z-index: 2; }}
@@ -165,6 +173,14 @@ function applyFilters() {
   });
   document.querySelector('.btn-issues').classList.toggle('inactive',
     activeFilters.size > 0 && !activeFilters.has('__issues__'));
+
+  // If there's a selected/active row that's still visible, scroll to it
+  const anchor = (selectedRow && !selectedRow.classList.contains('hidden-row')) ? selectedRow
+               : (activeRow && !activeRow.classList.contains('hidden-row')) ? activeRow
+               : null;
+  if (anchor) {
+    anchor.scrollIntoView({block: 'center', behavior: 'instant'});
+  }
 }
 
 function toggleFilter(btn) {
