@@ -22,7 +22,7 @@ class TranscriptionSegment(BaseModel):
 
 
 class TranscriptionMetadata(BaseModel):
-    backend: Literal["chirp_2", "whisperx"] | None = None
+    backend: Literal["chirp_2", "chirp_3", "whisperx"] | None = None
     language: str | None = None
     model: str | None = None
 
