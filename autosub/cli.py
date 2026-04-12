@@ -743,6 +743,70 @@ def postprocess(
 
 
 @app.command()
+def report(
+    ctx: typer.Context,
+    input_json: Path = typer.Argument(
+        ...,
+        help="Path to a translated.json or postprocessed.json document.",
+        exists=True,
+        dir_okay=False,
+    ),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Path to save the HTML report (defaults to report.html in the same directory).",
+    ),
+    video: Path = typer.Option(
+        None,
+        "--video",
+        "-v",
+        help="Path to the video file for the embedded player.",
+    ),
+    title: str = typer.Option(
+        None,
+        "--title",
+        "-t",
+        help="Report title (defaults to the input JSON filename stem).",
+    ),
+):
+    """
+    Generate a self-contained HTML review report from a subtitle document.
+
+    Shows source and translated text side-by-side with an embedded video player,
+    click-to-seek, auto-highlighting of the current line, and issue detection filters.
+    """
+    from autosub.pipeline.report import main as report_module
+
+    resolved = apply_command_config(
+        ctx,
+        "report",
+        {
+            "out": out,
+            "video": video,
+            "title": title,
+        },
+    )
+    out = resolved["out"]
+    video = resolved["video"]
+    title = resolved["title"]
+
+    if not out:
+        out = input_json.with_name("report.html")
+
+    try:
+        report_module.generate_report(
+            input_json,
+            out,
+            video_path=video,
+            title=title,
+        )
+    except Exception as e:
+        logger.error(f"Error generating report: {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def run(
     ctx: typer.Context,
     video_path: Path = typer.Argument(
