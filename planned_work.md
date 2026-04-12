@@ -19,4 +19,5 @@ Remaining work in this area:
 *   **Integration**: Seamlessly interleave OCR-generated `.ass` lines (e.g., lower thirds, on-screen signs) with the speech-generated `.ass` lines, ensuring visual styles do not clash and timestamps overlap cleanly.
 
 ## 5. Review UX
-*   Add a lightweight review flow around `original.ass` so users can edit timings and line breaks in Aegisub before running translation.
+*   `autosub report` generates a self-contained HTML review page with side-by-side JP/EN, embedded video player, click-to-seek, auto-highlight, and issue detection filters.
+*   **Next milestone**: Add editable text boxes that manipulate the original/translated `.ass` files directly from the report page.
