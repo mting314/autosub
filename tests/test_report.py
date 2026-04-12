@@ -4,9 +4,8 @@ from datetime import timedelta
 from pathlib import Path
 
 import pyass
-import pytest
 
-from autosub.pipeline.report.analysis import LineReport, analyze_lines
+from autosub.pipeline.report.analysis import analyze_lines
 from autosub.pipeline.report.main import _escape, _format_timestamp, generate_report
 
 
