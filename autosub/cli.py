@@ -493,6 +493,11 @@ def translate(
         min=0,
         help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
+    mark_chunks: bool = typer.Option(
+        False,
+        "--mark-chunks/--no-mark-chunks",
+        help="Insert comment events at artificial chunk boundaries for review.",
+    ),
     save_log: bool = typer.Option(
         False,
         "--save-log/--no-save-log",
@@ -607,6 +612,7 @@ def translate(
             reasoning_budget_tokens=vertex_reasoning_budget,
             reasoning_dynamic=vertex_reasoning_dynamic,
             chunk_size=chunk_size,
+            debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
         )
@@ -782,6 +788,11 @@ def run(
         min=0,
         help="Number of subtitle lines per chunk. Use 0 to disable chunking.",
     ),
+    mark_chunks: bool = typer.Option(
+        False,
+        "--mark-chunks/--no-mark-chunks",
+        help="Insert comment events at artificial chunk boundaries for review.",
+    ),
     save_log: bool = typer.Option(
         False,
         "--save-log/--no-save-log",
@@ -878,6 +889,7 @@ def run(
     final_format_extensions = {}
     final_postprocess_extensions = {}
     replacements = {}
+    profile_speakers_requested = False
     if profile:
         profile_data = load_unified_profile(profile)
         transcribe_profile = profile_data.get("transcribe", {})
@@ -999,6 +1011,7 @@ def run(
             provider=resolved_provider,
             reasoning_effort=vertex_reasoning_effort,
             chunk_size=chunk_size,
+            debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
         )

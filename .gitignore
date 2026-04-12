@@ -148,10 +148,9 @@ venv.bak/
 
 # Local autosub working config
 /config.toml
-/profiles/local/*.toml
+/profiles/local/
 !/profiles/local/.gitkeep
-/prompts/local/*.md
-/prompts/local/*.txt
+/prompts/local/
 !/prompts/local/.gitkeep
 
 # Spyder project settings

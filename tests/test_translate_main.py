@@ -59,9 +59,7 @@ def test_chunked_splits_and_merges(tmp_path):
     texts = [f"line{i}" for i in range(5)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(
-        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
-    )
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     assert result == [f"translated:line{i}" for i in range(5)]
     # Checkpoint should still exist (caller is responsible for cleanup)
@@ -87,9 +85,7 @@ def test_chunked_preserves_order(tmp_path):
     texts = [f"line{i}" for i in range(10)]
     checkpoint_path = tmp_path / "test.checkpoint.json"
 
-    result = _translate_chunked(
-        translator, texts, chunk_size=3, checkpoint_path=checkpoint_path
-    )
+    result, splits = _translate_chunked(translator, texts, chunk_size=3, checkpoint_path=checkpoint_path)
 
     assert len(result) == 10
     for i in range(10):
@@ -176,7 +172,7 @@ def test_chunked_resumes_from_checkpoint(tmp_path):
     """Simulate a previous run that completed chunks 0 and 1, then resume."""
     checkpoint_path = tmp_path / "test.checkpoint.json"
     texts = ["a", "b", "c", "d", "e", "f"]
-    fp = _compute_fingerprint(texts, chunk_size=2, corner_cues=None)
+    fp = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
 
     # Pre-populate checkpoint with chunks 0 and 1 already done
     existing = {
@@ -196,9 +192,7 @@ def test_chunked_resumes_from_checkpoint(tmp_path):
     translator = FakeTranslator()
     translator.translate = lambda texts: tracking_translate(translator, texts)
 
-    result = _translate_chunked(
-        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
-    )
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     # Should only translate chunk 2 (lines e, f)
     assert translated_inputs == ["e", "f"]
@@ -459,7 +453,7 @@ def test_chunked_all_checkpointed_skips_translation(tmp_path):
     """If all chunks are in the checkpoint, no translation calls should be made."""
     checkpoint_path = tmp_path / "test.checkpoint.json"
     texts = ["a", "b", "c", "d"]
-    fp = _compute_fingerprint(texts, chunk_size=2, corner_cues=None)
+    fp = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
 
     existing = {
         0: ["translated:a", "translated:b"],
@@ -469,9 +463,7 @@ def test_chunked_all_checkpointed_skips_translation(tmp_path):
 
     translator = MagicMock()
 
-    result = _translate_chunked(
-        translator, texts, chunk_size=2, checkpoint_path=checkpoint_path
-    )
+    result, splits = _translate_chunked(translator, texts, chunk_size=2, checkpoint_path=checkpoint_path)
 
     translator.translate.assert_not_called()
     assert result == ["translated:a", "translated:b", "translated:c", "translated:d"]
@@ -498,13 +490,13 @@ def test_load_checkpoint_legacy_format_discarded(tmp_path):
 
 
 def test_fingerprint_changes_with_texts():
-    fp1 = _compute_fingerprint(["a", "b", "c"], chunk_size=2, corner_cues=None)
-    fp2 = _compute_fingerprint(["b", "c"], chunk_size=2, corner_cues=None)
+    fp1 = _compute_fingerprint(["a", "b", "c"], chunk_size=2, corner_boundaries=None)
+    fp2 = _compute_fingerprint(["b", "c"], chunk_size=2, corner_boundaries=None)
     assert fp1 != fp2
 
 
 def test_fingerprint_changes_with_chunk_size():
     texts = ["a", "b", "c", "d"]
-    fp1 = _compute_fingerprint(texts, chunk_size=2, corner_cues=None)
-    fp2 = _compute_fingerprint(texts, chunk_size=3, corner_cues=None)
+    fp1 = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
+    fp2 = _compute_fingerprint(texts, chunk_size=3, corner_boundaries=None)
     assert fp1 != fp2

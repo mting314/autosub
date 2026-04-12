@@ -150,15 +150,16 @@ For bilingual output:
 uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
 ```
 
-By default, `run` writes these files next to the input media:
+By default, `run` writes these files next to the input media, named after the video stem:
 
-- `transcript.json`
-- `original.ass`
-- `original.llm_trace.jsonl` when radio-discourse classification uses an LLM-backed engine
-- `translated.ass`
-- `translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
+- `<stem>_transcript.json`
+- `<stem>_original.ass`
+- `<stem>_original.llm_trace.jsonl` when radio-discourse classification uses an LLM-backed engine
+- `<stem>_translated.ass`
+- `<stem>_translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
 
-If keyframe extraction is enabled and succeeds, it also writes `<input-stem>_keyframes.log`.
+If keyframe extraction is enabled and succeeds, it also writes `<stem>_keyframes.log`.
+If `--save-log` is enabled, it writes `<stem>_autosub.log`.
 
 Use WhisperX instead of Chirp 2:
 
@@ -397,6 +398,8 @@ Behavior notes:
 - `--llm-reasoning-dynamic` / `--no-llm-reasoning-dynamic`: Request dynamic reasoning budget on supported providers and model families
 - `--bilingual` / `--replace`: Stack Japanese above the translation, or replace text entirely
 - `--chunk-size`: Number of subtitle lines per translation chunk. Use `0` to disable chunking. Default: `0`
+- `--mark-chunks` / `--no-mark-chunks`: Insert ASS Comment events at artificial chunk boundaries so reviewers can spot lines where the LLM lost context. Only flags fixed-size and sub-split boundaries; corner-detected boundaries are excluded.
+- `--save-log` / `--no-save-log`: Write full log output (at DEBUG level) to a `.log` file next to the output file.
 
 Behavior notes:
 
@@ -409,6 +412,8 @@ Behavior notes:
 - `--llm-provider` always overrides automatic provider selection.
 - OpenRouter-native `vendor/model` IDs such as `qwen/qwen3.6-plus:free` are accepted directly. If `OPENROUTER_API_KEY` is available, bare vendor-prefixed model IDs also auto-resolve to OpenRouter.
 - `--model` cannot be combined with `--engine cloud-v3`.
+- When the profile defines corners with cue phrases, chunking is corner-aware: chunks split at detected segment boundaries instead of fixed-size intervals.
+- Vertex API errors include elapsed request time for diagnosing timeouts vs immediate connection failures.
 
 Anthropic notes:
 
@@ -470,6 +475,8 @@ Behavior notes:
 - `--start`
 - `--end`
 - `--chunk-size`
+- `--mark-chunks` / `--no-mark-chunks`
+- `--save-log` / `--no-save-log`
 
 Behavior notes:
 
@@ -557,6 +564,34 @@ enabled = true
 - `[postprocess.extensions]`: Nested extension configuration for the postprocessing stage.
 
 Legacy flat profile keys such as top-level `prompt`, `vocab`, `[timing]`, `[extensions]`, `[glossary]`, and `[replacements]` are still accepted for compatibility, but new profiles should use the staged layout above.
+
+### Corners
+
+Profiles can define recurring program segments (corners) that the LLM detects during translation:
+
+```toml
+[[corners]]
+name = "Card Illustrations"
+description = "Segment where hosts discuss character card art"
+cues = ["カードイラスト", "イラストのコーナー"]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Segment where hosts watch and react to a 3DMV"
+cues = ["3DMV", "MV見よう"]
+```
+
+Each corner has:
+
+- `name`: Display name used in the output ASS comment marker.
+- `description`: Context for the LLM to understand what the segment is about.
+- `cues`: Japanese phrases that typically signal the start of this segment.
+
+**Corner detection**: During translation, the LLM prepends `[CORNER: Name]` tags to the first line of each detected segment. These are parsed post-translation and inserted as ASS Comment events (green rows in Aegisub) with `effect="corner"`. Duplicate consecutive corners are automatically deduplicated.
+
+**Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
+
+Corner names and cues are inherited and merged through profile `extends` chains.
 
 ### Prompt and Vocab Merge Rules
 
