@@ -81,6 +81,9 @@ vocab = [
 "明日は何しちゃっと" = "明日はなんしちょっと"
 "のんのネーム" = "のんのんネーム"
 
+[format.extensions.radio_discourse]
+greetings = "のんばんは"
+
 [translate]
 prompt = "prompts/suzuhara_nozomi.md"
 
