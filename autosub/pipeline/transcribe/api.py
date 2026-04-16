@@ -33,6 +33,7 @@ def _wait_for_batch_operation(
     operation: object,
     *,
     gcs_uri: str,
+    model: str = "chirp_2",
     poll_interval_seconds: float | None = None,
     heartbeat_seconds: float | None = None,
 ) -> speech_v2.BatchRecognizeResponse:
@@ -44,9 +45,11 @@ def _wait_for_batch_operation(
     operation_name = _operation_name(operation)
     started_at = time.monotonic()
     last_heartbeat_at = started_at
+    label = model.replace("_", " ").title()
 
     logger.info(
-        "Submitted Chirp 2 batch job %s for %s. Polling every %.0f seconds.",
+        "Submitted %s batch job %s for %s. Polling every %.0f seconds.",
+        label,
         operation_name,
         gcs_uri,
         poll_interval_seconds,
@@ -57,7 +60,8 @@ def _wait_for_batch_operation(
         current_time = time.monotonic()
         if current_time - last_heartbeat_at >= heartbeat_seconds:
             logger.info(
-                "Still waiting on Chirp 2 batch job %s for %s after %s.",
+                "Still waiting on %s batch job %s for %s after %s.",
+                label,
                 operation_name,
                 gcs_uri,
                 _format_elapsed_seconds(current_time - started_at),
@@ -66,7 +70,8 @@ def _wait_for_batch_operation(
 
     elapsed = time.monotonic() - started_at
     logger.info(
-        "Chirp 2 batch job %s for %s completed in %s.",
+        "%s batch job %s for %s completed in %s.",
+        label,
         operation_name,
         gcs_uri,
         _format_elapsed_seconds(elapsed),
@@ -76,8 +81,20 @@ def _wait_for_batch_operation(
         return operation.result()  # type: ignore[return-value]
     except Exception as exc:
         raise RuntimeError(
-            f"Chirp 2 batch transcription failed for {gcs_uri}: {exc}"
+            f"{label} batch transcription failed for {gcs_uri}: {exc}"
         ) from exc
+
+
+# Chirp 3 is also GA in EU (eu-speech.googleapis.com / "eu"), but we only
+# target US for now.  Revisit if multi-region support is needed.
+_CHIRP_ENDPOINTS = {
+    "chirp_2": "us-central1-speech.googleapis.com",
+    "chirp_3": "us-speech.googleapis.com",
+}
+_CHIRP_LOCATIONS = {
+    "chirp_2": "us-central1",
+    "chirp_3": "us",
+}
 
 
 def transcribe_uri(
@@ -86,23 +103,35 @@ def transcribe_uri(
     language_code: str = "ja-JP",
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
+    model: str = "chirp_2",
 ) -> speech_v2.BatchRecognizeResponse:
     """
-    Sends a long-running batch transcription request to Chirp 2 using a GCS URI.
+    Sends a long-running batch transcription request using a GCS URI.
     Required for audio files longer than 1 minute.
     """
+    endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
+    location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
     client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint="us-central1-speech.googleapis.com")
+        client_options=ClientOptions(api_endpoint=endpoint)
+    )
+
+    features = speech_v2.RecognitionFeatures(
+        enable_word_time_offsets=True,
+        enable_automatic_punctuation=True,
     )
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
         language_codes=[language_code],
-        model="chirp_2",
-        features=speech_v2.RecognitionFeatures(enable_word_time_offsets=True),
+        model=model,
+        features=features,
     )
 
-    if vocabulary:
+    # SpeechAdaptation PhraseSet is incompatible with enable_word_time_offsets
+    # on Chirp 3 (API returns an error when both are set).  Since word timing
+    # is required for subtitle generation, we skip adaptation on Chirp 3.
+    # Chirp 2 does not have this conflict.
+    if vocabulary and model == "chirp_2":
         config.adaptation = cloud_speech.SpeechAdaptation(
             phrase_sets=[
                 cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
@@ -112,9 +141,14 @@ def transcribe_uri(
                 )
             ]
         )
+    elif vocabulary and model == "chirp_3":
+        logger.warning(
+            "Vocabulary hints ignored — Chirp 3 SpeechAdaptation PhraseSet is "
+            "incompatible with enable_word_time_offsets (required for subtitle timing)."
+        )
 
     request = speech_v2.BatchRecognizeRequest(
-        recognizer=f"projects/{project_id}/locations/us-central1/recognizers/_",
+        recognizer=f"projects/{project_id}/locations/{location}/recognizers/_",
         config=config,
         files=[speech_v2.BatchRecognizeFileMetadata(uri=gcs_uri)],
         recognition_output_config=speech_v2.RecognitionOutputConfig(
@@ -124,7 +158,7 @@ def transcribe_uri(
 
     logger.info(f"Starting long-running transcription on {gcs_uri}...")
     operation = client.batch_recognize(request=request)
-    response = _wait_for_batch_operation(operation, gcs_uri=gcs_uri)
+    response = _wait_for_batch_operation(operation, gcs_uri=gcs_uri, model=model)
     logger.info("Transcription complete!")
     return response  # type: ignore
 
@@ -135,25 +169,31 @@ def transcribe_local_file(
     language_code: str = "ja-JP",
     vocabulary: list[str] | None = None,
     num_speakers: int | None = None,
+    model: str = "chirp_2",
 ) -> speech_v2.RecognizeResponse:
     """
     Sends a standard synchronous transcription request using local audio bytes.
     Can only be used if audio is strictly < 1 minute.
     """
+    endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
+    location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
     client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint="us-central1-speech.googleapis.com")
+        client_options=ClientOptions(api_endpoint=endpoint)
     )
 
-    features = speech_v2.RecognitionFeatures(enable_word_time_offsets=True)
+    features = speech_v2.RecognitionFeatures(
+        enable_word_time_offsets=True,
+        enable_automatic_punctuation=True,
+    )
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
         language_codes=[language_code],
-        model="chirp_2",
+        model=model,
         features=features,
     )
 
-    if vocabulary:
+    if vocabulary and model == "chirp_2":
         config.adaptation = cloud_speech.SpeechAdaptation(
             phrase_sets=[
                 cloud_speech.SpeechAdaptation.AdaptationPhraseSet(
@@ -163,9 +203,14 @@ def transcribe_local_file(
                 )
             ]
         )
+    elif vocabulary and model == "chirp_3":
+        logger.warning(
+            "Vocabulary hints ignored — Chirp 3 SpeechAdaptation PhraseSet is "
+            "incompatible with enable_word_time_offsets (required for subtitle timing)."
+        )
 
     request = speech_v2.RecognizeRequest(
-        recognizer=f"projects/{project_id}/locations/us-central1/recognizers/_",
+        recognizer=f"projects/{project_id}/locations/{location}/recognizers/_",
         config=config,
         content=audio_content,
     )

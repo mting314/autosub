@@ -1,10 +1,10 @@
+import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import Any, Sequence, cast
 from uuid import uuid4
-
 from autosub.core.config import GCS_BUCKET, PROJECT_ID
 from autosub.core.schemas import (
     TranscribedWord,
@@ -18,7 +18,8 @@ from autosub.pipeline.transcribe import api, audio, gcs, whisperx_backend
 logger = logging.getLogger(__name__)
 
 DEFAULT_TRANSCRIPTION_BACKEND = "chirp_2"
-SUPPORTED_TRANSCRIPTION_BACKENDS = {DEFAULT_TRANSCRIPTION_BACKEND, "whisperx"}
+SUPPORTED_TRANSCRIPTION_BACKENDS = {DEFAULT_TRANSCRIPTION_BACKEND, "chirp_3", "whisperx"}
+CHIRP_BACKENDS = {"chirp_2", "chirp_3"}
 MAX_CONCURRENT_TRANSCRIPTION_JOBS = 4
 MAX_CONCURRENT_WHISPERX_JOBS = 1
 
@@ -41,6 +42,38 @@ def _duration_seconds(value: Any) -> float:
     return seconds + (nanos / 1_000_000_000)
 
 
+def _clamp_word_timestamps(
+    raw_start: float, raw_end: float, chunk_duration: float = 0.0
+) -> tuple[float, float]:
+    """Clamp bogus Chirp 3 word timestamps before applying any time offset.
+
+    Chirp 3 internally chunks audio at 18-minute intervals and sometimes
+    returns a previous chunk boundary as the endOffset for words in later
+    chunks (e.g. end_time=1080 for a word at start_time=1853).  This
+    produces end < start, which corrupts subtitle timing.
+
+    When we do our own chunking and know the chunk_duration, we can also
+    catch values that exceed it.  But even without chunk_duration, the
+    end < start check catches the Chirp pattern.
+
+    Must be called *before* adding any time offset — otherwise a bogus 0 s
+    end becomes a plausible-looking timestamp after the offset is added.
+    """
+    start = raw_start
+    end = raw_end
+
+    if chunk_duration > 0:
+        if start > chunk_duration:
+            start = end if end <= chunk_duration else 0.0
+        if end > chunk_duration:
+            end = start
+
+    if end <= 0 or end < start:
+        end = start
+
+    return start, end
+
+
 def _normalize_time_ranges(
     start_time: str | None,
     end_time: str | None,
@@ -61,23 +94,36 @@ def _normalize_time_ranges(
     ]
 
 
-def _parse_words(results: Any, offset_seconds: float) -> list[TranscribedWord]:
+def _parse_words(
+    results: Any, offset_seconds: float, chunk_duration: float = 0.0
+) -> list[TranscribedWord]:
     words_data: list[TranscribedWord] = []
+    clamped_count = 0
     for result in results:
         for alt in result.alternatives:
             for word_info in alt.words:
+                raw_start = _duration_seconds(word_info.start_offset)
+                raw_end = _duration_seconds(word_info.end_offset)
+                start, end = _clamp_word_timestamps(
+                    raw_start, raw_end, chunk_duration
+                )
+                if (start, end) != (raw_start, raw_end):
+                    clamped_count += 1
                 words_data.append(
                     TranscribedWord(
                         word=word_info.word,
-                        start_time=_duration_seconds(word_info.start_offset)
-                        + offset_seconds,
-                        end_time=_duration_seconds(word_info.end_offset)
-                        + offset_seconds,
+                        start_time=start + offset_seconds,
+                        end_time=end + offset_seconds,
                         speaker=word_info.speaker_label
                         if hasattr(word_info, "speaker_label")
                         else None,
                     )
                 )
+    if clamped_count:
+        logger.warning(
+            "Clamped %d bogus word timestamp(s) from Chirp API response.",
+            clamped_count,
+        )
     return words_data
 
 
@@ -96,9 +142,10 @@ def _segment_confidence(alternative: Any) -> float | None:
 
 
 def _parse_chirp_segments(
-    results: Any, offset_seconds: float
+    results: Any, offset_seconds: float, chunk_duration: float = 0.0
 ) -> list[TranscriptionSegment]:
     segments: list[TranscriptionSegment] = []
+    clamped_count = 0
     for result in results:
         alternatives = getattr(result, "alternatives", [])
         if not alternatives:
@@ -106,12 +153,18 @@ def _parse_chirp_segments(
         alternative = alternatives[0]
         segment_words: list[TranscribedWord] = []
         for word_info in getattr(alternative, "words", []):
+            raw_start = _duration_seconds(word_info.start_offset)
+            raw_end = _duration_seconds(word_info.end_offset)
+            start, end = _clamp_word_timestamps(
+                raw_start, raw_end, chunk_duration
+            )
+            if (start, end) != (raw_start, raw_end):
+                clamped_count += 1
             segment_words.append(
                 TranscribedWord(
                     word=word_info.word,
-                    start_time=_duration_seconds(word_info.start_offset)
-                    + offset_seconds,
-                    end_time=_duration_seconds(word_info.end_offset) + offset_seconds,
+                    start_time=start + offset_seconds,
+                    end_time=end + offset_seconds,
                     speaker=(
                         word_info.speaker_label
                         if hasattr(word_info, "speaker_label")
@@ -134,6 +187,11 @@ def _parse_chirp_segments(
                 confidence=_segment_confidence(alternative),
                 kind="result",
             )
+        )
+    if clamped_count:
+        logger.warning(
+            "Clamped %d bogus segment word timestamp(s) from Chirp API response.",
+            clamped_count,
         )
     return segments
 
@@ -203,7 +261,10 @@ def _transcribe_time_range(
         time_range.end_time,
     )
     audio_path = audio.extract_audio(
-        video_path, time_range.start_time, time_range.end_time
+        video_path,
+        time_range.start_time,
+        time_range.end_time,
+        opus=(transcription_backend == "chirp_3"),
     )
 
     try:
@@ -243,7 +304,113 @@ def _transcribe_time_range(
                     "AUTOSUB_GCS_BUCKET environment variable must be set for videos longer than 1 minute."
                 )
             gcs_bucket = GCS_BUCKET
+            max_chunk_seconds = audio.MAX_CHUNK_MINUTES * 60
+            needs_chunking = (
+                transcription_backend == "chirp_3" and duration > max_chunk_seconds
+            )
 
+            if needs_chunking:
+                # Split into chunks for Chirp 3's word-timestamp limit
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    chunks = audio.split_audio(
+                        audio_path, max_chunk_seconds, Path(tmp_dir)
+                    )
+                    logger.info(
+                        "Split audio into %d chunks (%d min each)",
+                        len(chunks),
+                        audio.MAX_CHUNK_MINUTES,
+                    )
+
+                    chunk_results: dict[int, tuple[list[TranscribedWord], list[TranscriptionSegment]]] = {}
+                    chunk_failures: list[tuple[int, Exception]] = []
+                    max_workers = min(
+                        MAX_CONCURRENT_TRANSCRIPTION_JOBS, len(chunks)
+                    )
+
+                    def _transcribe_chunk(
+                        chunk_idx: int,
+                        chunk_path: Path,
+                        chunk_start: float,
+                    ) -> tuple[int, list[TranscribedWord], list[TranscriptionSegment]]:
+                        chunk_duration = audio.get_audio_duration(chunk_path)
+                        gcs_dest = (
+                            f"autosub_staging/{uuid4()}_{chunk_path.name}"
+                        )
+                        logger.info(
+                            "  Chunk %d/%d: uploading to %s...",
+                            chunk_idx + 1,
+                            len(chunks),
+                            gcs_dest,
+                        )
+                        gcs_uri = gcs.upload_to_gcs(
+                            gcs_bucket, chunk_path, gcs_dest
+                        )
+                        chunk_offset = chunk_start + time_range.offset_seconds
+                        try:
+                            response = api.transcribe_uri(
+                                gcs_uri,
+                                project_id,
+                                language_code,
+                                vocabulary,
+                                num_speakers,
+                                model=transcription_backend,
+                            )
+                            chirp_results = response.results[
+                                gcs_uri
+                            ].inline_result.transcript.results
+                            return (
+                                chunk_idx,
+                                _parse_words(
+                                    chirp_results, chunk_offset, chunk_duration
+                                ),
+                                _parse_chirp_segments(
+                                    chirp_results, chunk_offset, chunk_duration
+                                ),
+                            )
+                        finally:
+                            logger.info(
+                                "  Cleaning up %s...", gcs_dest
+                            )
+                            gcs.delete_from_gcs(gcs_bucket, gcs_uri)
+
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        futures = {
+                            executor.submit(
+                                _transcribe_chunk, idx, path, start
+                            ): idx
+                            for idx, (path, start) in enumerate(chunks)
+                        }
+                        for future in as_completed(futures):
+                            idx = futures[future]
+                            try:
+                                cidx, words, segs = future.result()
+                                chunk_results[cidx] = (words, segs)
+                            except Exception as exc:
+                                chunk_failures.append((idx, exc))
+
+                    if chunk_failures:
+                        chunk_failures.sort(key=lambda item: item[0])
+                        msgs = ", ".join(
+                            f"chunk {i + 1}: {exc}"
+                            for i, exc in chunk_failures
+                        )
+                        raise RuntimeError(
+                            f"One or more audio chunks failed: {msgs}"
+                        ) from chunk_failures[0][1]
+
+                    all_words: list[TranscribedWord] = []
+                    all_segments: list[TranscriptionSegment] = []
+                    for idx in sorted(chunk_results):
+                        words, segs = chunk_results[idx]
+                        all_words.extend(words)
+                        all_segments.extend(segs)
+
+                return TranscriptionResult(
+                    words=all_words,
+                    segments=all_segments,
+                )
+
+            # Single file — no chunking needed
             gcs_dest = f"autosub_staging/{uuid4()}_{audio_path.name}"
             logger.info(
                 "Uploading segment %s audio to %s...",
@@ -254,15 +421,18 @@ def _transcribe_time_range(
 
             try:
                 response = api.transcribe_uri(
-                    gcs_uri, project_id, language_code, vocabulary, num_speakers
+                    gcs_uri, project_id, language_code, vocabulary, num_speakers,
+                    model=transcription_backend,
                 )
                 chirp_results = response.results[
                     gcs_uri
                 ].inline_result.transcript.results
                 return TranscriptionResult(
-                    words=_parse_words(chirp_results, time_range.offset_seconds),
+                    words=_parse_words(
+                        chirp_results, time_range.offset_seconds, duration
+                    ),
                     segments=_parse_chirp_segments(
-                        chirp_results, time_range.offset_seconds
+                        chirp_results, time_range.offset_seconds, duration
                     ),
                 )
             finally:
@@ -273,11 +443,14 @@ def _transcribe_time_range(
             audio_content = handle.read()
 
         response = api.transcribe_local_file(
-            audio_content, project_id, language_code, vocabulary, num_speakers
+            audio_content, project_id, language_code, vocabulary, num_speakers,
+            model=transcription_backend,
         )
         return TranscriptionResult(
-            words=_parse_words(response.results, time_range.offset_seconds),
-            segments=_parse_chirp_segments(response.results, time_range.offset_seconds),
+            words=_parse_words(response.results, time_range.offset_seconds, duration),
+            segments=_parse_chirp_segments(
+                response.results, time_range.offset_seconds, duration
+            ),
         )
     finally:
         if audio_path.exists():
@@ -305,13 +478,12 @@ def transcribe(
     End-to-end transcription of a video file:
     1. Extracts audio for one or more segments
     2. Decides whether to use GCS (for files > 1min) or direct API (<= 1min)
-    3. Calls the Chirp 2 API for each segment
-    4. Merges results and saves to disk
+    3. Calls the selected Chirp model (chirp_2 or chirp_3) for each segment
+    4. For chirp_3, splits audio into 18-min chunks to avoid empty results
+    5. Merges results and saves to disk
     """
     resolved_backend = _validate_transcription_backend(transcription_backend)
-    project_id = (
-        PROJECT_ID if resolved_backend == DEFAULT_TRANSCRIPTION_BACKEND else None
-    )
+    project_id = PROJECT_ID if resolved_backend in CHIRP_BACKENDS else None
     if resolved_backend == "whisperx" and vocabulary:
         logger.warning(
             "Ignoring vocabulary hints for WhisperX transcription; this backend "
@@ -420,7 +592,7 @@ def transcribe(
             model=(
                 whisper_model
                 if resolved_backend == "whisperx"
-                else DEFAULT_TRANSCRIPTION_BACKEND
+                else resolved_backend
             ),
         ),
     )
@@ -435,3 +607,5 @@ def transcribe(
         handle.write(final_result.model_dump_json(indent=2))
 
     return final_result
+
+
