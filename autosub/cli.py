@@ -225,6 +225,55 @@ def _transcript_hash(transcript_path: Path) -> str:
         return hashlib.sha256(f.read()).hexdigest()[:16]
 
 
+def _deduplicate_speakers(speaker_map: dict[str, dict]) -> list[dict]:
+    """Extract unique speakers from a speaker map, preserving insertion order."""
+    real_speakers: list[dict] = []
+    seen_names: set[str] = set()
+    for entry in speaker_map.values():
+        if entry["name"] not in seen_names:
+            real_speakers.append(entry)
+            seen_names.add(entry["name"])
+    return real_speakers
+
+
+def _prompt_speaker_assignments(
+    sorted_labels: list[str],
+    real_speakers: list[dict],
+    label_descriptor: str = "label",
+) -> dict[str, dict]:
+    """Display numbered speaker list and interactively assign labels.
+
+    Returns a dict mapping labels to speaker entries. Empty if nothing assigned.
+    """
+    typer.echo("=== Known Speakers ===\n")
+    for i, sp in enumerate(real_speakers, 1):
+        char = f" ({sp['character']})" if sp.get("character") else ""
+        typer.echo(f"  {i}. {sp['name']}{char}")
+    typer.echo()
+
+    assignments: dict[str, dict] = {}
+    for label in sorted_labels:
+        while True:
+            choice = typer.prompt(
+                f"Assign {label_descriptor} \"{label}\" → [1-{len(real_speakers)}/skip]",
+                default="skip",
+            )
+            if choice.lower() == "skip":
+                break
+            try:
+                idx = int(choice)
+                if 1 <= idx <= len(real_speakers):
+                    assignments[label] = real_speakers[idx - 1]
+                    typer.echo(f"  → {real_speakers[idx - 1]['name']}")
+                    break
+                else:
+                    typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+            except ValueError:
+                typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+
+    return assignments
+
+
 def _interactive_speaker_review(
     result, speaker_map: dict[str, dict], output_path: Path,
     sample_count: int = 3,
@@ -244,14 +293,7 @@ def _interactive_speaker_review(
             speaker_words[label] = []
         speaker_words[label].append(w)
 
-    # Deduplicate real speakers from the map
-    real_speakers: list[dict] = []
-    seen_names: set[str] = set()
-    for entry in speaker_map.values():
-        if entry["name"] not in seen_names:
-            real_speakers.append(entry)
-            seen_names.add(entry["name"])
-
+    real_speakers = _deduplicate_speakers(speaker_map)
     if not real_speakers:
         logger.error("Speaker map has no speaker entries.")
         return None
@@ -280,32 +322,7 @@ def _interactive_speaker_review(
             typer.echo(f"  [{mins:02d}:{secs:04.1f}] {text}")
         typer.echo()
 
-    # Interactive mapping
-    typer.echo("=== Known Speakers ===\n")
-    for i, sp in enumerate(real_speakers, 1):
-        char = f" ({sp['character']})" if sp.get("character") else ""
-        typer.echo(f"  {i}. {sp['name']}{char}")
-    typer.echo()
-
-    assignments: dict[str, dict] = {}
-    for label in sorted_labels:
-        while True:
-            choice = typer.prompt(
-                f"Assign label \"{label}\" → [1-{len(real_speakers)}/skip]",
-                default="skip",
-            )
-            if choice.lower() == "skip":
-                break
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(real_speakers):
-                    assignments[label] = real_speakers[idx - 1]
-                    typer.echo(f"  → {real_speakers[idx - 1]['name']}")
-                    break
-                else:
-                    typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
-            except ValueError:
-                typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+    assignments = _prompt_speaker_assignments(sorted_labels, real_speakers, "label")
 
     if not assignments:
         logger.info("No assignments made.")
@@ -925,14 +942,7 @@ def assign_speakers(
         logger.error("No events found in .ass file.")
         raise typer.Exit(code=1)
 
-    # Deduplicate real speakers from the map
-    real_speakers: list[dict] = []
-    seen_names: set[str] = set()
-    for entry in speaker_map.values():
-        if entry["name"] not in seen_names:
-            real_speakers.append(entry)
-            seen_names.add(entry["name"])
-
+    real_speakers = _deduplicate_speakers(speaker_map)
     if not real_speakers:
         logger.error("Speaker map has no speaker entries.")
         raise typer.Exit(code=1)
@@ -975,32 +985,7 @@ def assign_speakers(
             typer.echo(f"  [{mins:02d}:{secs:04.1f}] {text}")
         typer.echo()
 
-    # Interactive mapping
-    typer.echo("=== Known Speakers ===\n")
-    for i, sp in enumerate(real_speakers, 1):
-        char = f" ({sp['character']})" if sp.get("character") else ""
-        typer.echo(f"  {i}. {sp['name']}{char}")
-    typer.echo()
-
-    assignments: dict[str, dict] = {}
-    for label in sorted_labels:
-        while True:
-            choice = typer.prompt(
-                f"Assign style \"{label}\" → [1-{len(real_speakers)}/skip]",
-                default="skip",
-            )
-            if choice.lower() == "skip":
-                break
-            try:
-                idx = int(choice)
-                if 1 <= idx <= len(real_speakers):
-                    assignments[label] = real_speakers[idx - 1]
-                    typer.echo(f"  → {real_speakers[idx - 1]['name']}")
-                    break
-                else:
-                    typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
-            except ValueError:
-                typer.echo(f"  Enter 1-{len(real_speakers)} or 'skip'")
+    assignments = _prompt_speaker_assignments(sorted_labels, real_speakers, "style")
 
     if not assignments:
         logger.info("No assignments made.")
