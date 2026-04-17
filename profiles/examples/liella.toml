@@ -70,14 +70,41 @@ vocab = [
 [translate]
 prompt = "prompts/liella.md"
 
-# Chirp 3 TranscriptNormalization — fix common mistranscriptions
-[replacements]
-# VA name corrections (Chirp frequently mishears these)
-"歌田" = "伊達"       # Date Sayuri
-"策倉" = "坂倉"       # Sakakura Sakura
-"咲倉" = "坂倉"       # Sakakura Sakura (alt)
-"藪縞" = "籔島"       # Yabushima Akane
-"鈴奈" = "さゆり"     # Date Sayuri's given name
-# Franchise name normalization
-"LoveLiveSuperstar" = "Love Live! Superstar!!"
-"チュッチュッLiella!" = "ChuChu Liella!"
+[format.normalizer]
+engine = "llm"
+provider = "google-vertex"
+model = "gemini-3.1-flash-lite-preview"
+reasoning_effort = "minimal"
+allow_llm_correction = true
+
+# --- VA Names ---
+
+[[format.normalizer.terms]]
+value = "伊達さゆり"
+explanation = "VA name (Date Sayuri). Extremely error-prone. ASR variants: 立石りか, 依佑璃さゆり, 歌田鈴奈, 依達さゆり, 楯さゆり, 達さゆり."
+
+[[format.normalizer.terms]]
+value = "坂倉花"
+explanation = "VA name (Sakakura Sakura). ASR variants: 策倉さくら, 咲倉咲, 策倉桜."
+
+[[format.normalizer.terms]]
+value = "薮島朱音"
+explanation = "VA name (Yabushima Akane). ASR variants: 藪縞あかね, 藪2茜, 藪島かの, 藪島あかり."
+
+[[format.normalizer.terms]]
+value = "大熊和奏"
+explanation = "VA name (Ookuma Wakana). ASR variants: 大熊のちゃん (name truncated), 大熊若菜."
+
+[[format.normalizer.terms]]
+value = "さゆりん"
+explanation = "Nickname for Date Sayuri. ASR variants: せいりん, さえりん."
+
+# --- Character Names ---
+
+[[format.normalizer.terms]]
+value = "米女メイ"
+explanation = "Character name (Yoneme Mei). ASR uses wrong kanji for メイ: 米女芽衣, 米女命, 米めい, 米芽めい."
+
+[[format.normalizer.terms]]
+value = "渋谷かのん"
+explanation = "Character name. ASR sometimes drops the ん, producing 渋谷かの."
