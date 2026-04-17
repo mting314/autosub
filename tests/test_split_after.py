@@ -1,5 +1,5 @@
 """
-Tests for the split_after feature: _apply_replacements_with_spans and apply_split_after.
+Tests for the split_after feature: apply_replacements_with_spans and apply_split_after.
 
 Real word fixtures are extracted from nonshichotto/144/output.json.
 """
@@ -11,7 +11,7 @@ import pytest
 
 from autosub.core.schemas import ReplacementSpan, SubtitleLine, TranscribedWord
 from autosub.pipeline.format.main import (
-    _apply_replacements_with_spans,
+    apply_replacements_with_spans,
     apply_split_after,
     format_subtitles,
 )
@@ -30,6 +30,14 @@ NONBANWA_REPLACEMENT_WORDS = [
     TranscribedWord(word="番", start_time=568.82, end_time=569.1),
     TranscribedWord(word="は?", start_time=569.1, end_time=569.46),
 ]
+NONBANWA_NORMALIZED_WORDS = [
+    TranscribedWord(word="の", start_time=567.54, end_time=567.62),
+    TranscribedWord(word="ちゃん、", start_time=567.62, end_time=567.94),
+    TranscribedWord(word="のんばんは", start_time=567.94, end_time=568.54),
+    TranscribedWord(word="何", start_time=568.54, end_time=568.82),
+    TranscribedWord(word="番", start_time=568.82, end_time=569.1),
+    TranscribedWord(word="は?", start_time=569.1, end_time=569.46),
+]
 
 NONBANWA_VERBATIM_WORDS = [
     TranscribedWord(word="のん", start_time=709.16, end_time=709.36),
@@ -41,18 +49,18 @@ NONBANWA_VERBATIM_WORDS = [
 
 
 # ---------------------------------------------------------------------------
-# _apply_replacements_with_spans tests
+# apply_replacements_with_spans tests
 # ---------------------------------------------------------------------------
 
 
 def test_apply_replacements_no_match():
-    text, spans = _apply_replacements_with_spans("こんにちは", {"の番は": "のんばんは"})
+    text, spans = apply_replacements_with_spans("こんにちは", {"の番は": "のんばんは"})
     assert text == "こんにちは"
     assert spans == []
 
 
 def test_apply_replacements_single_match():
-    text, spans = _apply_replacements_with_spans("の番は", {"の番は": "のんばんは"})
+    text, spans = apply_replacements_with_spans("の番は", {"の番は": "のんばんは"})
     assert text == "のんばんは"
     assert len(spans) == 1
     assert spans[0] == ReplacementSpan(
@@ -61,7 +69,7 @@ def test_apply_replacements_single_match():
 
 
 def test_apply_replacements_match_in_middle():
-    text, spans = _apply_replacements_with_spans(
+    text, spans = apply_replacements_with_spans(
         "のちゃん、の番は何番は?", {"の番は": "のんばんは"}
     )
     assert text == "のちゃん、のんばんは何番は?"
@@ -72,7 +80,7 @@ def test_apply_replacements_match_in_middle():
 
 
 def test_apply_replacements_multiple_sources_same_target():
-    text, spans = _apply_replacements_with_spans(
+    text, spans = apply_replacements_with_spans(
         "のん番は",
         {"の番は": "のんばんは", "のん番は": "のんばんは"},
     )
@@ -84,7 +92,7 @@ def test_apply_replacements_multiple_sources_same_target():
 
 def test_apply_replacements_no_overlap():
     # Two replacements at non-overlapping positions
-    text, spans = _apply_replacements_with_spans(
+    text, spans = apply_replacements_with_spans(
         "ABfooCD bar EF",
         {"foo": "FOO", "bar": "BAR"},
     )
@@ -100,7 +108,7 @@ def test_apply_replacements_no_overlap():
 
 def test_apply_replacements_length_change_updates_replaced_coords():
     # "ab" (2) → "xyz" (3): replaced coords shift by +1 for subsequent text
-    text, spans = _apply_replacements_with_spans("ab cd", {"ab": "xyz"})
+    text, spans = apply_replacements_with_spans("ab cd", {"ab": "xyz"})
     assert text == "xyz cd"
     assert spans[0].replaced_start == 0
     assert spans[0].replaced_end == 3
@@ -158,6 +166,26 @@ def test_apply_split_after_replacement_phrase_uses_word_timestamp():
     assert result[1].text == "何番は?"
     assert result[0].end_time == pytest.approx(568.54)
     assert result[1].start_time == pytest.approx(568.54)
+
+
+def test_apply_split_after_prefers_normalized_merged_words_when_available():
+    line = SubtitleLine(
+        text="のちゃん、のんばんは何番は?",
+        start_time=567.54,
+        end_time=569.46,
+        words=NONBANWA_NORMALIZED_WORDS,
+        replacement_spans=[
+            ReplacementSpan(orig_start=5, orig_end=8, replaced_start=5, replaced_end=10)
+        ],
+    )
+    result = apply_split_after([line], ["のんばんは"])
+    assert len(result) == 2
+    assert result[0].text == "のちゃん、のんばんは"
+    assert result[1].text == "何番は?"
+    assert result[0].end_time == pytest.approx(568.54)
+    assert result[1].start_time == pytest.approx(568.54)
+    assert [word.word for word in result[0].words] == ["の", "ちゃん、", "のんばんは"]
+    assert [word.word for word in result[1].words] == ["何", "番", "は?"]
 
 
 def test_apply_split_after_multiple_occurrences_in_one_line():

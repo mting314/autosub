@@ -6,15 +6,15 @@ from autosub.core.schemas import SubtitleLine, TranscriptionResult
 from autosub.pipeline.format import chunker
 from autosub.pipeline.format import generator
 from autosub.pipeline.format.normalizer import (
-    _apply_replacements_with_spans,
     apply_normalization,
+    apply_replacements_with_spans,
 )
 from autosub.pipeline.format.split_utils import find_split_time, partition_spans
 from autosub.pipeline.format.timing import apply_timing_rules
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["_apply_replacements_with_spans", "apply_split_after", "format_subtitles"]
+__all__ = ["apply_replacements_with_spans", "apply_split_after", "format_subtitles"]
 
 VALID_ENGINES: dict[str, set[str]] = {
     "radio_discourse": {"rules", "llm", "hybrid"},
@@ -25,6 +25,10 @@ TRAILING_SPLIT_PUNCTUATION = "。！？!?、,"
 
 def _stage_trace_path(output_ass_path: Path, stage_name: str) -> Path:
     return output_ass_path.with_suffix(f".{stage_name}.llm_trace.jsonl")
+
+
+def _stage_edit_audit_path(output_ass_path: Path, stage_name: str) -> Path:
+    return output_ass_path.with_suffix(f".{stage_name}.edit_audit.tsv")
 
 
 def _validate_engine(engine: str, extension: str, valid: set[str]) -> None:
@@ -309,10 +313,13 @@ def format_subtitles(
             from autosub.core.config import PROJECT_ID
 
             llm_trace_path = _stage_trace_path(output_ass_path, "normalizer")
+            edit_audit_path = _stage_edit_audit_path(output_ass_path, "normalizer")
             llm_trace_path.unlink(missing_ok=True)
+            edit_audit_path.unlink(missing_ok=True)
             normalizer_config = dict(normalizer_config)
             normalizer_config.setdefault("project_id", PROJECT_ID)
             normalizer_config.setdefault("llm_trace_path", llm_trace_path)
+            normalizer_config.setdefault("edit_audit_path", edit_audit_path)
         lines = apply_normalization(lines, normalizer_config)
 
     if not extensions_config:

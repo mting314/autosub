@@ -1,6 +1,7 @@
 import copy
 import typer
 import logging
+import tomllib
 from pathlib import Path
 from typing import Sequence
 
@@ -24,6 +25,8 @@ LOG_FORMAT = "%(asctime)s:%(levelname)s:%(name)s: %(message)s"
 
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
+
+PROFILE_LOAD_ERRORS = (ValueError, FileNotFoundError, tomllib.TOMLDecodeError)
 
 app = typer.Typer(help="AutoSub CLI for Japanese subtitle generation and translation")
 
@@ -419,7 +422,7 @@ def format(
             timing_config, extensions_config, normalizer_config = (
                 _extract_format_profile_config(profile_data)
             )
-        except Exception as e:
+        except PROFILE_LOAD_ERRORS as e:
             logger.error(f"Error while loading format profile: {e}")
             raise typer.Exit(code=1)
 
@@ -933,7 +936,7 @@ def run(
             )
             if glossary_text:
                 final_prompt_parts.append(glossary_text)
-        except Exception as e:
+        except PROFILE_LOAD_ERRORS as e:
             logger.error(f"Failed while loading profile settings: {e}")
             raise typer.Exit(code=1)
 

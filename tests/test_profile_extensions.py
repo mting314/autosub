@@ -279,6 +279,41 @@ explanation = "Show greeting."
         autosub.core.profile.Path = original_path
 
 
+def test_normalizer_keywords_shorthand_is_normalized_to_terms(tmp_path):
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+
+    (profile_dir / "keywords.toml").write_text(
+        """
+[format.normalizer]
+engine = "llm"
+keywords = ["鈴原希実", "のんばんは"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profile_dir
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("keywords")
+        assert data["format"]["normalizer"] == {
+            "engine": "llm",
+            "terms": [{"value": "鈴原希実"}, {"value": "のんばんは"}],
+        }
+    finally:
+        autosub.core.profile.Path = original_path
+
+
 def test_no_corners_returns_empty_list(tmp_path):
     profile_dir = tmp_path / "profiles"
     profile_dir.mkdir()

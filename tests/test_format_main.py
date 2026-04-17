@@ -128,6 +128,7 @@ def test_format_subtitles_sets_llm_normalizer_trace_path(tmp_path, monkeypatch):
     def fake_apply(lines, config):
         captured["engine"] = config.get("engine")
         captured["llm_trace_path"] = config.get("llm_trace_path")
+        captured["edit_audit_path"] = config.get("edit_audit_path")
         return lines
 
     monkeypatch.setattr("autosub.pipeline.format.main.apply_normalization", fake_apply)
@@ -144,6 +145,9 @@ def test_format_subtitles_sets_llm_normalizer_trace_path(tmp_path, monkeypatch):
     assert captured["engine"] == "llm"
     assert captured["llm_trace_path"] == output_path.with_suffix(
         ".normalizer.llm_trace.jsonl"
+    )
+    assert captured["edit_audit_path"] == output_path.with_suffix(
+        ".normalizer.edit_audit.tsv"
     )
 
 

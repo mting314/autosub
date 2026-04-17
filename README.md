@@ -155,7 +155,11 @@ By default, `run` writes these files next to the input media, named after the vi
 
 - `<stem>_transcript.json`
 - `<stem>_original.ass`
-- `<stem>_original.llm_trace.jsonl` when radio-discourse classification uses an LLM-backed engine
+- `<stem>_original.normalizer.llm_trace.jsonl` when the format normalizer uses `engine = "llm"`
+- `<stem>_original.normalizer.edit_audit.tsv` when the format normalizer uses `engine = "llm"`
+- `<stem>_original.radio_discourse.llm_trace.jsonl` when the `radio_discourse` extension uses an LLM-backed engine
+- `<stem>_original.corners.llm_trace.jsonl` when the `corners` extension uses an LLM-backed engine
+- `<stem>_original.combined.llm_trace.jsonl` when `radio_discourse` and `corners` run through the combined LLM path
 - `<stem>_translated.ass`
 - `<stem>_translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
 
@@ -380,6 +384,9 @@ Behavior notes:
 
 - Chunking is punctuation- and pause-aware.
 - If speaker labels are already present in the transcript JSON, chunking is done per speaker and the generated `.ass` file gets one style per speaker.
+- Exact and LLM normalization run before timing cleanup and before `radio_discourse` greeting splitting.
+- When normalization changes tokenization, autosub also rewrites the per-line `words` list so downstream split timing can use merged word timestamps directly.
+- LLM normalizer runs can emit both a JSONL trace and a TSV edit audit alongside the formatted `.ass`.
 - The `radio_discourse` extension runs here when enabled.
 
 ### `autosub translate`
@@ -629,8 +636,11 @@ Behavior notes:
 
 - The LLM normalizer does not rewrite whole lines. It only proposes exact substring replacements.
 - Each proposed edit is validated locally before autosub applies it.
+- Validation checks both forward and reverse application order for multiple edits on the same line, then keeps the ordering with fewer failures.
 - `allow_llm_correction = true` enables one extra correction pass when the first LLM response fails local validation. The correction prompt includes the rejected edits and the validation errors.
-- Replacement spans are still recorded, so downstream timing-sensitive features such as `greetings` splitting keep working.
+- LLM runs write a structured TSV edit audit with `line_id`, `source_text`, `replacement_text`, `start_char`, `end_char`, and `status`. Status values are `accepted`, `rejected`, `corrected`, or `repaired`.
+- Exact and LLM normalization both preserve replacement spans for downstream offset-aware logic.
+- Exact and LLM normalization both update `line.words` when the replacement changes tokenization, so downstream timing-sensitive features can use merged normalized words directly.
 - `[[format.normalizer.terms]]` entries can include an optional `explanation` field for added context.
 - `keywords = ["鈴原希実", "のんばんは"]` is also accepted as a shorthand when explanations are not needed.
 
@@ -698,9 +708,9 @@ During **postprocessing**, it can:
 Supported options:
 
 - `enabled`: Turn the extension on
-- `engine`: `rules`, `vertex`, or `hybrid`
+- `engine`: `rules`, `llm`, or `hybrid`
 - `provider`: `google-vertex`, `anthropic-vertex`, `anthropic`, or `openai` for the LLM-backed modes
-- `model`: LLM model name for `vertex` or `hybrid`
+- `model`: LLM model name for `llm` or `hybrid`
 - `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
 - `reasoning_budget_tokens`: Optional token-budget override for provider-specific reasoning controls
 - `reasoning_dynamic`: Request dynamic reasoning budget when the selected provider supports it
@@ -727,12 +737,13 @@ Behavior notes:
 - If the phrase is immediately followed by punctuation (`。！？!?、,`), that punctuation stays on the greeting line before the split.
 - If the split-created greeting line does not already end with sentence punctuation, `。` is appended to that line.
 - If the phrase ends exactly at the end of the line, no split is performed.
-- Greetings are matched against post-normalization text, so an exact replacement like `"の番は" = "のんばんは"` or an LLM normalizer edit to `のんばんは` will correctly find and split lines where the original transcript used a mistranscribed variant. Timestamps are resolved back through the replacement span to the correct word boundary.
+- Greetings are matched against post-normalization text, so an exact replacement like `"の番は" = "のんばんは"` or an LLM normalizer edit to `のんばんは` will correctly find and split lines where the original transcript used a mistranscribed variant.
+- When normalization has already merged the affected words, greeting splitting uses that merged word timing directly. Otherwise it falls back to replacement-span remapping to recover the original word boundary.
 
 Anthropic-backed `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "anthropic"
@@ -746,7 +757,7 @@ label_roles = true
 Vertex-routed Anthropic `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "anthropic-vertex"
@@ -761,7 +772,7 @@ label_roles = true
 OpenAI-backed `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "openai"

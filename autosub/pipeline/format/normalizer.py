@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 from pathlib import Path
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 
 from autosub.core.errors import VertexResponseShapeError
 from autosub.core.llm import BaseStructuredLLM, ReasoningEffort
-from autosub.core.schemas import ReplacementSpan, SubtitleLine
+from autosub.core.schemas import ReplacementSpan, SubtitleLine, TranscribedWord
 
 logger = logging.getLogger(__name__)
 IGNORABLE_CONTEXT_PUNCTUATION = frozenset("、。！？!? \t　")
@@ -53,6 +54,21 @@ class _RangeOverrideResult(NamedTuple):
     errors: list[str]
 
 
+class _NormalizationAuditEntry(NamedTuple):
+    line_id: int
+    source_text: str
+    replacement_text: str
+    start_char: int
+    end_char: int
+    status: str
+
+
+class _WordRange(NamedTuple):
+    word: TranscribedWord
+    start_char: int
+    end_char: int
+
+
 class NormalizerValidationError(ValueError):
     def __init__(self, errors: list[str]):
         self.errors = errors
@@ -69,6 +85,170 @@ def _log_validation_errors(level: int, stage: str, errors: list[str]) -> None:
     if not errors:
         return
     logger.log(level, _format_validation_errors(stage, errors))
+
+
+def _audit_entries_for_edits(
+    edits: list[NormalizationEdit],
+    *,
+    status: str,
+) -> list[_NormalizationAuditEntry]:
+    return [
+        _NormalizationAuditEntry(
+            line_id=edit.line_id,
+            source_text=edit.source_text,
+            replacement_text=edit.replacement_text,
+            start_char=edit.start_char,
+            end_char=edit.end_char,
+            status=status,
+        )
+        for edit in edits
+    ]
+
+
+def _write_llm_edit_audit(
+    audit_path: Path | str,
+    entries: list[_NormalizationAuditEntry],
+) -> None:
+    path = Path(audit_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle, delimiter="\t", lineterminator="\n")
+        writer.writerow(
+            [
+                "line_id",
+                "source_text",
+                "replacement_text",
+                "start_char",
+                "end_char",
+                "status",
+            ]
+        )
+        for entry in entries:
+            writer.writerow(entry)
+
+
+def _build_word_ranges(words: list[TranscribedWord]) -> list[_WordRange]:
+    ranges: list[_WordRange] = []
+    pos = 0
+    for word in words:
+        end_pos = pos + len(word.word)
+        ranges.append(_WordRange(word=word, start_char=pos, end_char=end_pos))
+        pos = end_pos
+    return ranges
+
+
+def _interpolate_word_time(word: TranscribedWord, char_offset: int) -> float:
+    text_length = len(word.word)
+    if text_length <= 0:
+        return word.start_time
+    if char_offset <= 0:
+        return word.start_time
+    if char_offset >= text_length:
+        return word.end_time
+    return word.start_time + (word.end_time - word.start_time) * (
+        char_offset / text_length
+    )
+
+
+def _time_at_original_char_pos(
+    word_ranges: list[_WordRange],
+    char_pos: int,
+) -> float:
+    if not word_ranges:
+        return 0.0
+    if char_pos <= 0:
+        return word_ranges[0].word.start_time
+    for item in word_ranges:
+        if item.start_char <= char_pos <= item.end_char:
+            return _interpolate_word_time(item.word, char_pos - item.start_char)
+    return word_ranges[-1].word.end_time
+
+
+def _slice_words_for_char_range(
+    word_ranges: list[_WordRange],
+    start_char: int,
+    end_char: int,
+) -> list[TranscribedWord]:
+    if start_char >= end_char:
+        return []
+
+    result: list[TranscribedWord] = []
+    for item in word_ranges:
+        if item.end_char <= start_char:
+            continue
+        if item.start_char >= end_char:
+            break
+
+        overlap_start = max(start_char, item.start_char)
+        overlap_end = min(end_char, item.end_char)
+        if overlap_start >= overlap_end:
+            continue
+
+        if overlap_start == item.start_char and overlap_end == item.end_char:
+            result.append(item.word.model_copy(deep=True))
+            continue
+
+        relative_start = overlap_start - item.start_char
+        relative_end = overlap_end - item.start_char
+        fragment_text = item.word.word[relative_start:relative_end]
+        if not fragment_text:
+            continue
+        result.append(
+            TranscribedWord(
+                word=fragment_text,
+                start_time=_interpolate_word_time(item.word, relative_start),
+                end_time=_interpolate_word_time(item.word, relative_end),
+                speaker=item.word.speaker,
+                confidence=None,
+            )
+        )
+    return result
+
+
+def _apply_line_edits_to_words(
+    text: str,
+    words: list[TranscribedWord],
+    edits: list[_ValidatedEdit],
+    *,
+    default_speaker: str | None,
+) -> list[TranscribedWord]:
+    if not words or not edits:
+        return [word.model_copy(deep=True) for word in words]
+
+    word_text = "".join(word.word for word in words)
+    if word_text != text:
+        logger.warning(
+            "Skipping normalized word merge because concatenated word text does not match the original line text. "
+            "line=%r word_text=%r",
+            text,
+            word_text,
+        )
+        return [word.model_copy(deep=True) for word in words]
+
+    word_ranges = _build_word_ranges(words)
+    merged_words: list[TranscribedWord] = []
+    original_pos = 0
+
+    for edit in sorted(edits, key=lambda item: (item.start_char, item.end_char)):
+        merged_words.extend(
+            _slice_words_for_char_range(word_ranges, original_pos, edit.start_char)
+        )
+        if edit.replacement_text:
+            merged_words.append(
+                TranscribedWord(
+                    word=edit.replacement_text,
+                    start_time=_time_at_original_char_pos(word_ranges, edit.start_char),
+                    end_time=_time_at_original_char_pos(word_ranges, edit.end_char),
+                    speaker=default_speaker,
+                    confidence=None,
+                )
+            )
+        original_pos = edit.end_char
+
+    merged_words.extend(
+        _slice_words_for_char_range(word_ranges, original_pos, len(text))
+    )
+    return merged_words
 
 
 class LLMKeywordNormalizer(BaseStructuredLLM):
@@ -276,20 +456,12 @@ def _apply_line_edits_with_spans(
     return "".join(result_parts), spans
 
 
-def _apply_replacements_with_spans(
+def _collect_exact_replacement_edits(
     text: str,
     replacements: dict[str, str],
-) -> tuple[str, list[ReplacementSpan]]:
-    """
-    Apply all replacements to text in a single pass, returning the replaced text
-    and a list of ReplacementSpan objects tracking each substitution.
-
-    Replacements are applied longest-source-first to resolve ambiguity when
-    multiple patterns could match at the same position. Overlapping matches are
-    skipped (first match wins).
-    """
+) -> list[_ValidatedEdit]:
     if not replacements:
-        return text, []
+        return []
 
     all_matches: list[tuple[int, int, str]] = []
     for old_str in replacements:
@@ -302,7 +474,7 @@ def _apply_replacements_with_spans(
             pos = idx + 1
 
     if not all_matches:
-        return text, []
+        return []
 
     all_matches.sort(key=lambda match: (match[0], -(match[1] - match[0])))
 
@@ -313,7 +485,7 @@ def _apply_replacements_with_spans(
             accepted.append((start, end, old_str))
             last_end = end
 
-    validated_edits = [
+    return [
         _ValidatedEdit(
             source_text=old_str,
             replacement_text=replacements[old_str],
@@ -323,7 +495,27 @@ def _apply_replacements_with_spans(
         for orig_start, orig_end, old_str in accepted
         if replacements[old_str] != old_str
     ]
+
+
+def apply_replacements_with_spans(
+    text: str,
+    replacements: dict[str, str],
+) -> tuple[str, list[ReplacementSpan]]:
+    """
+    Apply all replacements to text in a single pass, returning the replaced text
+    and a list of ReplacementSpan objects tracking each substitution.
+
+    Replacements are applied longest-source-first to resolve ambiguity when
+    multiple patterns could match at the same position. Overlapping matches are
+    skipped (first match wins).
+    """
+    validated_edits = _collect_exact_replacement_edits(text, replacements)
+    if not validated_edits:
+        return text, []
     return _apply_line_edits_with_spans(text, validated_edits)
+
+
+_apply_replacements_with_spans = apply_replacements_with_spans
 
 
 def apply_exact_normalization(
@@ -335,7 +527,16 @@ def apply_exact_normalization(
 
     logger.info("Applying %s exact text replacements...", len(replacements))
     for line in lines:
-        new_text, spans = _apply_replacements_with_spans(line.text, replacements)
+        validated_edits = _collect_exact_replacement_edits(line.text, replacements)
+        if not validated_edits:
+            continue
+        new_text, spans = _apply_line_edits_with_spans(line.text, validated_edits)
+        line.words = _apply_line_edits_to_words(
+            line.text,
+            line.words,
+            validated_edits,
+            default_speaker=line.speaker,
+        )
         line.text = new_text
         line.replacement_spans = spans
     return lines
@@ -455,6 +656,9 @@ def _collect_llm_edit_validation(
         )
         chosen_result = reverse_result
         if len(non_overlapping_edits) > 1:
+            # Validate both directions because one accepted edit can change the
+            # surrounding context needed to recognize another approved term.
+            # Keep whichever ordering produces fewer validation failures.
             forward_result = _validate_line_edit_contexts(
                 line=lines[line_id],
                 line_id=line_id,
@@ -879,6 +1083,14 @@ def apply_llm_normalization(
     lines: list[SubtitleLine],
     config: dict,
 ) -> list[SubtitleLine]:
+    audit_entries: list[_NormalizationAuditEntry] = []
+    audit_path = config.get("edit_audit_path")
+
+    def flush_audit_log() -> None:
+        if audit_path is None:
+            return
+        _write_llm_edit_audit(audit_path, audit_entries)
+
     raw_terms = config.get("terms", [])
     terms = [NormalizerTerm.model_validate(item) for item in raw_terms]
     if not terms:
@@ -903,6 +1115,15 @@ def apply_llm_normalization(
         allowed_terms=allowed_terms,
     )
     grouped_edits = validation.grouped_edits
+    audit_entries.extend(
+        _audit_entries_for_edits(
+            _validated_to_normalization_edits(validation.grouped_edits),
+            status="accepted",
+        )
+    )
+    audit_entries.extend(
+        _audit_entries_for_edits(validation.rejected_edits, status="rejected")
+    )
     if validation.errors:
         if not config.get("allow_llm_correction"):
             _log_validation_errors(
@@ -910,6 +1131,7 @@ def apply_llm_normalization(
                 "LLM normalizer first attempt",
                 validation.errors,
             )
+            flush_audit_log()
             raise NormalizerValidationError(validation.errors)
         locally_repaired = _override_edit_ranges_best_effort(
             lines, validation.rejected_edits
@@ -929,6 +1151,14 @@ def apply_llm_normalization(
                     grouped_edits,
                     repaired_validation.grouped_edits,
                 )
+                audit_entries.extend(
+                    _audit_entries_for_edits(
+                        _validated_to_normalization_edits(
+                            repaired_validation.grouped_edits
+                        ),
+                        status="repaired",
+                    )
+                )
                 logger.info(
                     "Locally repaired %s rejected first-pass edits before retrying the normalizer.",
                     sum(
@@ -936,6 +1166,12 @@ def apply_llm_normalization(
                         for line_edits in repaired_validation.grouped_edits.values()
                     ),
                 )
+            audit_entries.extend(
+                _audit_entries_for_edits(
+                    repaired_validation.rejected_edits,
+                    status="rejected",
+                )
+            )
             remaining_errors.extend(repaired_validation.errors)
             remaining_rejected_edits.extend(repaired_validation.rejected_edits)
 
@@ -970,6 +1206,7 @@ def apply_llm_normalization(
                     "LLM normalizer correction attempt",
                     exc.errors,
                 )
+                flush_audit_log()
                 raise
             corrected_validation = _collect_llm_edit_validation(
                 lines,
@@ -977,13 +1214,28 @@ def apply_llm_normalization(
                 allowed_terms=allowed_terms,
                 existing_grouped_edits=grouped_edits,
             )
+            audit_entries.extend(
+                _audit_entries_for_edits(
+                    corrected_validation.rejected_edits,
+                    status="rejected",
+                )
+            )
             if corrected_validation.errors:
                 _log_validation_errors(
                     logging.ERROR,
                     "LLM normalizer correction attempt",
                     corrected_validation.errors,
                 )
+                flush_audit_log()
                 raise NormalizerValidationError(corrected_validation.errors)
+            audit_entries.extend(
+                _audit_entries_for_edits(
+                    _validated_to_normalization_edits(
+                        corrected_validation.grouped_edits
+                    ),
+                    status="corrected",
+                )
+            )
             grouped_edits = _merge_grouped_validated_edits(
                 grouped_edits,
                 corrected_validation.grouped_edits,
@@ -991,6 +1243,7 @@ def apply_llm_normalization(
 
     if not grouped_edits:
         logger.info("LLM normalizer proposed no edits.")
+        flush_audit_log()
         return lines
 
     for line_id, line_edits in list(grouped_edits.items()):
@@ -1012,8 +1265,15 @@ def apply_llm_normalization(
     )
     for line_id, line_edits in grouped_edits.items():
         new_text, spans = _apply_line_edits_with_spans(lines[line_id].text, line_edits)
+        lines[line_id].words = _apply_line_edits_to_words(
+            lines[line_id].text,
+            lines[line_id].words,
+            line_edits,
+            default_speaker=lines[line_id].speaker,
+        )
         lines[line_id].text = new_text
         lines[line_id].replacement_spans = spans
+    flush_audit_log()
     return lines
 
 

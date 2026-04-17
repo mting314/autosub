@@ -9,19 +9,29 @@ def find_split_time(line: SubtitleLine, split_char_pos: int) -> float:
     audio timestamp at which to split.
 
     Resolution order:
-    1. If split_char_pos falls inside a replacement span, snap to the end of the
+    1. If line.words already concatenate to line.text, walk those normalized
+       words directly and return the boundary word's end_time.
+    2. If split_char_pos falls inside a replacement span, snap to the end of the
        original source text (span.orig_end) — avoids character-count mismatch
        caused by replacements that change string length.
-    2. Otherwise, adjust split_char_pos for the cumulative length delta of all
+    3. Otherwise, adjust split_char_pos for the cumulative length delta of all
        replacement spans that ended before the split point, converting from
        replaced-text coordinates to original word-text coordinates.
-    3. Walk line.words accumulating character lengths until the running total
+    4. Walk line.words accumulating character lengths until the running total
        meets or exceeds orig_pos; return that word's end_time.
-    4. Falls back to proportional estimation when line.words is empty.
+    5. Falls back to proportional estimation when line.words is empty.
     """
     if not line.words:
         ratio = split_char_pos / max(len(line.text), 1)
         return line.start_time + (line.end_time - line.start_time) * ratio
+
+    if "".join(word.word for word in line.words) == line.text:
+        accumulated = 0
+        for word in line.words:
+            accumulated += len(word.word)
+            if accumulated >= split_char_pos:
+                return word.end_time
+        return line.words[-1].end_time
 
     # Case 1: split lands inside a replacement span → snap to orig_end
     for span in line.replacement_spans:
