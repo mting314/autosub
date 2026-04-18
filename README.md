@@ -153,7 +153,11 @@ By default, `run` writes these files next to the input media, named after the vi
 
 - `<stem>_transcript.json`
 - `<stem>_original.ass`
-- `<stem>_original.llm_trace.jsonl` when radio-discourse classification uses an LLM-backed engine
+- `<stem>_original.normalizer.llm_trace.jsonl` when the format normalizer uses `engine = "llm"`
+- `<stem>_original.normalizer.edit_audit.tsv` when the format normalizer uses `engine = "llm"`
+- `<stem>_original.radio_discourse.llm_trace.jsonl` when the `radio_discourse` extension uses an LLM-backed engine
+- `<stem>_original.corners.llm_trace.jsonl` when the `corners` extension uses an LLM-backed engine
+- `<stem>_original.combined.llm_trace.jsonl` when `radio_discourse` and `corners` run through the combined LLM path
 - `<stem>_translated.ass`
 - `<stem>_translated.llm_trace.jsonl` when translation uses the Vertex LLM engine
 
@@ -386,6 +390,9 @@ Behavior notes:
 
 - Chunking is punctuation- and pause-aware.
 - If speaker labels are already present in the transcript JSON, chunking is done per speaker and the generated `.ass` file gets one style per speaker.
+- Exact and LLM normalization run before timing cleanup and before `radio_discourse` greeting splitting.
+- When normalization changes tokenization, autosub also rewrites the per-line `words` list so downstream split timing can use merged word timestamps directly.
+- LLM normalizer runs can emit both a JSONL trace and a TSV edit audit alongside the formatted `.ass`.
 - The `radio_discourse` extension runs here when enabled.
 
 ### `autosub translate`
@@ -544,6 +551,21 @@ min_duration_ms = 700
 snap_threshold_ms = 250
 conditional_snap_threshold_ms = 500
 
+[format.normalizer]
+engine = "llm"
+provider = "google-vertex"
+model = "gemini-2.5-flash-lite"
+reasoning_effort = "minimal"
+allow_llm_correction = true
+
+[[format.normalizer.terms]]
+value = "鈴原希実"
+explanation = "Host name. Common ASR confusions include のぞみ, のすみ, and のソミ."
+
+[[format.normalizer.terms]]
+value = "のんばんは"
+explanation = "Show greeting catchphrase. Often confused with こんばんは or の番は."
+
 [format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
@@ -571,13 +593,62 @@ enabled = true
 - `extends`: List of base profile names. Base profiles are loaded first.
 - `[transcribe].vocab`: List of speech adaptation hints. Inherited lists are appended.
 - `[format]`: Formatter-specific settings. Timing keys such as `min_duration_ms` live directly under this table.
-- `[format.replacements]`: Text replacements applied before formatting and timing rules.
+- `[format.replacements]`: Exact deterministic replacements applied before formatting and timing rules. If `[format.normalizer]` is omitted, autosub treats this as the default exact normalizer.
+- `[format.normalizer]`: Optional normalizer config. Set `engine = "exact"` to use a replacement map or `engine = "llm"` to let an LLM propose substring replacements from an approved term list.
 - `[format.extensions]`: Nested extension configuration for the formatting stage.
 - `[translate].prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
 - `[translate.glossary]`: Exact translation overrides appended to the translation prompt.
 - `[postprocess.extensions]`: Nested extension configuration for the postprocessing stage.
 
 Legacy flat profile keys such as top-level `prompt`, `vocab`, `[timing]`, `[extensions]`, `[glossary]`, and `[replacements]` are still accepted for compatibility, but new profiles should use the staged layout above.
+
+### Format Normalizer
+
+Use one of these modes:
+
+- Exact mode via `[format.replacements]`, or `[format.normalizer]` with `engine = "exact"`
+- LLM mode via `[format.normalizer]` with `engine = "llm"`
+
+LLM mode is mutually exclusive with `[format.replacements]`.
+
+Exact mode example:
+
+```toml
+[format.replacements]
+"鈴原のぞみ" = "鈴原希実"
+"の番は" = "のんばんは"
+```
+
+LLM mode example:
+
+```toml
+[format.normalizer]
+engine = "llm"
+provider = "google-vertex"
+model = "gemini-2.5-flash-lite"
+reasoning_effort = "minimal"
+allow_llm_correction = true
+
+[[format.normalizer.terms]]
+value = "鈴原希実"
+explanation = "Host name. Common ASR confusions include のぞみ, のすみ, and のソミ."
+
+[[format.normalizer.terms]]
+value = "のんばんは"
+explanation = "Show greeting catchphrase. Often confused with こんばんは or の番は."
+```
+
+Behavior notes:
+
+- The LLM normalizer does not rewrite whole lines. It only proposes exact substring replacements.
+- Each proposed edit is validated locally before autosub applies it.
+- Validation checks both forward and reverse application order for multiple edits on the same line, then keeps the ordering with fewer failures.
+- `allow_llm_correction = true` enables one extra correction pass when the first LLM response fails local validation. The correction prompt includes the rejected edits and the validation errors.
+- LLM runs write a structured TSV edit audit with `line_id`, `source_text`, `replacement_text`, `start_char`, `end_char`, and `status`. Status values are `accepted`, `rejected`, `corrected`, or `repaired`.
+- Exact and LLM normalization both preserve replacement spans for downstream offset-aware logic.
+- Exact and LLM normalization both update `line.words` when the replacement changes tokenization, so downstream timing-sensitive features can use merged normalized words directly.
+- `[[format.normalizer.terms]]` entries can include an optional `explanation` field for added context.
+- `keywords = ["鈴原希実", "のんばんは"]` is also accepted as a shorthand when explanations are not needed.
 
 ### Corners
 
@@ -612,6 +683,7 @@ Corner names and cues are inherited and merged through profile `extends` chains.
 - Prompt fragments from `[translate].prompt` are concatenated in inheritance order: base profile first, child profile after that, then CLI `--prompt` last.
 - Vocabulary entries from `[transcribe].vocab` are appended in the same order: base profile, child profile, then CLI `--vocab`.
 - `[translate.glossary]`, `[format.replacements]`, and timing keys under `[format]` override base profiles by key.
+- `[format.normalizer].terms` are appended in inheritance order. Other `[format.normalizer]` keys override by key.
 - `[format.extensions]` and `[postprocess.extensions]` are deep-merged by key.
 
 ### Timing Options Currently Wired Up
@@ -642,9 +714,9 @@ During **postprocessing**, it can:
 Supported options:
 
 - `enabled`: Turn the extension on
-- `engine`: `rules`, `vertex`, or `hybrid`
+- `engine`: `rules`, `llm`, or `hybrid`
 - `provider`: `google-vertex`, `anthropic-vertex`, `anthropic`, or `openai` for the LLM-backed modes
-- `model`: LLM model name for `vertex` or `hybrid`
+- `model`: LLM model name for `llm` or `hybrid`
 - `reasoning_effort`: Provider-agnostic reasoning effort for LLM-backed classification. Current support varies by provider and model family and can include `off`, `minimal`, `low`, `medium`, `high`
 - `reasoning_budget_tokens`: Optional token-budget override for provider-specific reasoning controls
 - `reasoning_dynamic`: Request dynamic reasoning budget when the selected provider supports it
@@ -671,12 +743,13 @@ Behavior notes:
 - If the phrase is immediately followed by punctuation (`。！？!?、,`), that punctuation stays on the greeting line before the split.
 - If the split-created greeting line does not already end with sentence punctuation, `。` is appended to that line.
 - If the phrase ends exactly at the end of the line, no split is performed.
-- Greetings are matched against post-replacement text, so a replacement like `"の番は" = "のんばんは"` and `greetings = ["のんばんは"]` will correctly find and split lines where the original transcript had `の番は`. Timestamps are resolved back through the replacement span to the correct word boundary.
+- Greetings are matched against post-normalization text, so an exact replacement like `"の番は" = "のんばんは"` or an LLM normalizer edit to `のんばんは` will correctly find and split lines where the original transcript used a mistranscribed variant.
+- When normalization has already merged the affected words, greeting splitting uses that merged word timing directly. Otherwise it falls back to replacement-span remapping to recover the original word boundary.
 
 Anthropic-backed `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "anthropic"
@@ -690,7 +763,7 @@ label_roles = true
 Vertex-routed Anthropic `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "anthropic-vertex"
@@ -705,7 +778,7 @@ label_roles = true
 OpenAI-backed `radio_discourse` example:
 
 ```toml
-[extensions.radio_discourse]
+[format.extensions.radio_discourse]
 enabled = true
 engine = "hybrid"
 provider = "openai"

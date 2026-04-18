@@ -57,6 +57,14 @@ NONBANWA_REPLACEMENT_WORDS = [
 NONBANWA_REPLACEMENT_SPAN = ReplacementSpan(
     orig_start=5, orig_end=8, replaced_start=5, replaced_end=10
 )
+NONBANWA_NORMALIZED_WORDS = [
+    TranscribedWord(word="の", start_time=567.54, end_time=567.62),
+    TranscribedWord(word="ちゃん、", start_time=567.62, end_time=567.94),
+    TranscribedWord(word="のんばんは", start_time=567.94, end_time=568.54),
+    TranscribedWord(word="何", start_time=568.54, end_time=568.82),
+    TranscribedWord(word="番", start_time=568.82, end_time=569.1),
+    TranscribedWord(word="は?", start_time=569.1, end_time=569.46),
+]
 
 # Words where のんばんは appears verbatim (は。 is fused as one word).
 # Original word text: のんばんは。先日農市
@@ -123,6 +131,18 @@ def test_find_split_time_inside_replacement_span_snaps_to_orig_end():
     )
     # span covers replaced [5,10); split at 7 is inside → orig_pos = span.orig_end = 8
     result = find_split_time(line, 7)
+    assert result == pytest.approx(568.54)
+
+
+def test_find_split_time_prefers_normalized_words_when_they_match_text():
+    line = SubtitleLine(
+        text="のちゃん、のんばんは何番は?",
+        start_time=567.54,
+        end_time=569.46,
+        words=NONBANWA_NORMALIZED_WORDS,
+        replacement_spans=[NONBANWA_REPLACEMENT_SPAN],
+    )
+    result = find_split_time(line, 10)
     assert result == pytest.approx(568.54)
 
 
