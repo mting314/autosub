@@ -1259,7 +1259,6 @@ def run(
     final_format_extensions = {}
     final_postprocess_extensions = {}
     normalizer_config = {}
-    replacements = {}
     if profile:
         try:
             profile_data = load_unified_profile(profile)
@@ -1272,7 +1271,6 @@ def run(
                 _extract_format_profile_config(profile_data)
             )
             final_postprocess_extensions = postprocess_profile.get("extensions", {})
-            replacements = profile_data.get("format", {}).get("replacements", {})
             if not speakers and profile_data.get("speakers"):
                 speakers = profile_data["speakers"]
             glossary_text = _build_glossary_prompt(
@@ -1328,7 +1326,6 @@ def run(
             whisper_batch_size=whisper_batch_size,
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
-            replacements=replacements or None,
             num_speakers=speakers,
         )
     except Exception as e:
