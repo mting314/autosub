@@ -42,10 +42,10 @@ def test_transcribe_uri_polls_and_logs_heartbeat_until_complete(monkeypatch, cap
 
     assert response == "response"
     assert any(
-        "Submitted chirp_2 batch job operations/123" in m for m in caplog.messages
+        "Submitted Chirp 2 batch job operations/123" in m for m in caplog.messages
     )
     assert any(
-        "Still waiting on chirp_2 batch job operations/123" in m
+        "Still waiting on Chirp 2 batch job operations/123" in m
         for m in caplog.messages
     )
     assert any("completed in 0m 15s" in m for m in caplog.messages)
