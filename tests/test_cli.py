@@ -1,4 +1,5 @@
 import logging
+import os
 import autosub.cli as cli_module
 from types import SimpleNamespace
 from typing import cast
@@ -8,7 +9,8 @@ from autosub.cli import app
 from autosub.core.llm import ReasoningEffort
 
 
-runner = CliRunner()
+_cli_env = {"NO_COLOR": "1", "TERM": "dumb"} if os.environ.get("CI") else {}
+runner = CliRunner(env=_cli_env)
 
 
 def _write_minimal_ass(path):
