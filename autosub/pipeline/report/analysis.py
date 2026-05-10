@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import pyass
+from autosub.core.schemas import SubtitleCue
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LineReport:
     index: int  # 1-based
+    cue_id: str
     start_seconds: float
     end_seconds: float
     style: str
@@ -28,13 +29,20 @@ class ReportStats:
     issue_counts: dict[str, int]
 
 
-def _dialogue_events(script: pyass.Script) -> list[pyass.Event]:
-    return [e for e in script.events if e.format != pyass.EventFormat.COMMENT]
+def _cue_style(cue: SubtitleCue) -> str:
+    return cue.role or cue.speaker or "Default"
 
 
-def analyze_lines(
-    jp_events: list[pyass.Event],
-    en_events: list[pyass.Event],
+def _cue_source_text(cue: SubtitleCue) -> str:
+    return cue.normalized_source_text or cue.source_text
+
+
+def _cue_translated_text(cue: SubtitleCue) -> str:
+    return cue.final_text or cue.translated_text or ""
+
+
+def analyze_cues(
+    cues: list[SubtitleCue],
     *,
     short_ratio: float = 0.5,
     long_ratio: float = 2.5,
@@ -43,30 +51,18 @@ def analyze_lines(
     zero_duration_threshold: float = 0.1,
     large_gap_threshold: float = 30.0,
 ) -> tuple[list[LineReport], ReportStats]:
-    if len(jp_events) != len(en_events):
-        logger.warning(
-            "Line count mismatch: %d JP events vs %d EN events. "
-            "Pairing by index up to the shorter list.",
-            len(jp_events),
-            len(en_events),
-        )
-
-    pair_count = min(len(jp_events), len(en_events))
     lines: list[LineReport] = []
     total_jp_chars = 0
     total_en_chars = 0
     issue_counts: dict[str, int] = {}
 
-    for i in range(pair_count):
-        jp_ev = jp_events[i]
-        en_ev = en_events[i]
-
-        start = jp_ev.start.total_seconds()
-        end = jp_ev.end.total_seconds()
+    for i, cue in enumerate(cues):
+        start = cue.start_time
+        end = cue.end_time
         duration = end - start
-        jp_text = jp_ev.text
-        en_text = en_ev.text
-        style = jp_ev.style
+        jp_text = _cue_source_text(cue)
+        en_text = _cue_translated_text(cue)
+        style = _cue_style(cue)
 
         jp_len = len(jp_text)
         en_len = len(en_text)
@@ -75,22 +71,18 @@ def analyze_lines(
 
         issues: set[str] = set()
 
-        # Zero/near-zero duration
         if duration < zero_duration_threshold:
             issues.add("zero_duration")
 
-        # Short translation
         ratio = en_len / max(jp_len, 1)
         if ratio < short_ratio and en_len < max_short_en_chars:
             issues.add("short")
 
-        # Long translation
         if ratio > long_ratio and jp_len >= min_jp_chars_for_long:
             issues.add("long")
 
-        # Large gap to next line
-        if i + 1 < pair_count:
-            next_start = jp_events[i + 1].start.total_seconds()
+        if i + 1 < len(cues):
+            next_start = cues[i + 1].start_time
             gap = next_start - end
             if gap > large_gap_threshold:
                 issues.add("large_gap")
@@ -101,6 +93,7 @@ def analyze_lines(
         lines.append(
             LineReport(
                 index=i + 1,
+                cue_id=cue.id,
                 start_seconds=start,
                 end_seconds=end,
                 style=style,
@@ -113,7 +106,7 @@ def analyze_lines(
     en_jp_ratio = total_en_chars / max(total_jp_chars, 1)
 
     stats = ReportStats(
-        line_count=pair_count,
+        line_count=len(cues),
         jp_char_count=total_jp_chars,
         en_char_count=total_en_chars,
         en_jp_ratio=round(en_jp_ratio, 2),

@@ -5,13 +5,11 @@ import logging
 import os
 from pathlib import Path
 
-import pyass
-
+from autosub.core.schemas import SubtitleDocument
 from autosub.pipeline.report.analysis import (
     LineReport,
     ReportStats,
-    _dialogue_events,
-    analyze_lines,
+    analyze_cues,
 )
 from autosub.pipeline.report.template import HTML_BODY_TEMPLATE, HTML_HEAD, HTML_SCRIPT
 
@@ -143,25 +141,24 @@ def _build_table_rows(lines: list[LineReport]) -> str:
 
 
 def generate_report(
-    original_ass_path: Path,
-    translated_ass_path: Path,
+    input_json_path: Path,
     output_html_path: Path,
     *,
     video_path: Path | None = None,
     title: str | None = None,
 ) -> None:
-    with open(original_ass_path, encoding="utf-8-sig") as f:
-        jp_script = pyass.load(f)
-    with open(translated_ass_path, encoding="utf-8-sig") as f:
-        en_script = pyass.load(f)
+    document = SubtitleDocument.model_validate_json(
+        input_json_path.read_text(encoding="utf-8")
+    )
+    if document.stage not in {"translated", "postprocessed"}:
+        raise ValueError(
+            f"report expects stage='translated' or 'postprocessed', got {document.stage!r}"
+        )
 
-    jp_events = _dialogue_events(jp_script)
-    en_events = _dialogue_events(en_script)
-
-    lines, stats = analyze_lines(jp_events, en_events)
+    lines, stats = analyze_cues(document.cues)
 
     if title is None:
-        title = original_ass_path.stem
+        title = input_json_path.stem
 
     head = HTML_HEAD.format(title=_escape(title))
     stats_html = _build_stats_html(stats)
