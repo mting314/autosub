@@ -339,3 +339,119 @@ def test_no_corners_returns_empty_list(tmp_path):
         assert data["corners"] == []
     finally:
         autosub.core.profile.Path = original_path
+
+
+def test_speakers_cast_inherited_from_base_profile(tmp_path):
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+
+    (profile_dir / "base.toml").write_text(
+        """
+[[speakers.cast]]
+name = "Yuki Nakashima"
+character = "Shiho Hinomori"
+color = "#22DDBB"
+
+[[speakers.cast]]
+name = "Karin Isobe"
+character = "Saki Tenma"
+color = "#FF8800"
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_dir / "child.toml").write_text(
+        """
+extends = ["base"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profile_dir
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("child")
+        assert data["cast"] == [
+            {
+                "name": "Yuki Nakashima",
+                "character": "Shiho Hinomori",
+                "color": "#22DDBB",
+            },
+            {
+                "name": "Karin Isobe",
+                "character": "Saki Tenma",
+                "color": "#FF8800",
+            },
+        ]
+    finally:
+        autosub.core.profile.Path = original_path
+
+
+def test_speakers_cast_child_can_override_base_entry(tmp_path):
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+
+    (profile_dir / "base.toml").write_text(
+        """
+[[speakers.cast]]
+name = "Yuki Nakashima"
+character = "Shiho Hinomori"
+color = "#22DDBB"
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_dir / "child.toml").write_text(
+        """
+extends = ["base"]
+
+[[speakers.cast]]
+name = "Yuki Nakashima"
+character = "Shiho Hinomori"
+color = "#FF0000"
+
+[[speakers.cast]]
+name = "Karin Isobe"
+character = "Saki Tenma"
+color = "#FF8800"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profile_dir
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("child")
+        # Child overrides Yuki's color, adds Karin
+        assert data["cast"] == [
+            {
+                "name": "Yuki Nakashima",
+                "character": "Shiho Hinomori",
+                "color": "#FF0000",
+            },
+            {
+                "name": "Karin Isobe",
+                "character": "Saki Tenma",
+                "color": "#FF8800",
+            },
+        ]
+    finally:
+        autosub.core.profile.Path = original_path

@@ -59,6 +59,7 @@ def _empty_stage_profile() -> dict[str, dict]:
         "format": {"extensions": {}, "replacements": {}, "normalizer": {}},
         "translate": {"prompt": [], "glossary": {}},
         "postprocess": {"extensions": {}},
+        "speakers": {"cast": []},
     }
 
 
@@ -187,7 +188,28 @@ def _merge_profiles(
         "postprocess": _merge_stage_section(
             base["postprocess"], override["postprocess"]
         ),
+        "speakers": _merge_speakers(
+            base.get("speakers", {}), override.get("speakers", {})
+        ),
     }
+
+
+def _merge_speakers(base: dict, override: dict) -> dict:
+    """Merge profile [speakers] sections. Cast entries from override replace
+    base entries with the same name; other entries are preserved.
+    """
+    base_cast = list(base.get("cast", []))
+    override_cast = list(override.get("cast", []))
+    by_name: dict[str, dict] = {}
+    order: list[str] = []
+    for entry in base_cast + override_cast:
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("name") or entry.get("character") or repr(entry)
+        if key not in by_name:
+            order.append(key)
+        by_name[key] = entry
+    return {"cast": [by_name[k] for k in order]}
 
 
 def _load_prompt_fragments(
@@ -392,6 +414,21 @@ def _normalize_profile_data(profile_name: str, data: dict) -> dict[str, dict]:
         else:
             logger.warning(f"'corners' in {profile_name} must be an array of tables.")
 
+    if "speakers" in data:
+        if isinstance(data["speakers"], dict):
+            cast_value = data["speakers"].get("cast", [])
+            if isinstance(cast_value, list):
+                normalized["speakers"]["cast"] = [
+                    *normalized["speakers"].get("cast", []),
+                    *copy.deepcopy(cast_value),
+                ]
+            else:
+                logger.warning(
+                    f"'speakers.cast' in {profile_name} must be an array of tables."
+                )
+        else:
+            logger.warning(f"'speakers' in {profile_name} must be a TOML table.")
+
     return normalized
 
 
@@ -460,4 +497,7 @@ def load_unified_profile(profile_name: str, visited: set[str] | None = None) -> 
         "corners": format_stage.get("extensions", {})
         .get("corners", {})
         .get("segments", []),
+        # Exposed for cast-aware downstream tools (e.g., speaker assignment
+        # workflows). Not consumed by the pipeline stages directly.
+        "cast": copy.deepcopy(staged.get("speakers", {}).get("cast", [])),
     }

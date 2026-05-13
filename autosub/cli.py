@@ -590,14 +590,33 @@ def translate(
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
+    from autosub.core.project_config import (
+        build_title_prompt as _build_title_prompt,
+        load_project_config as _load_project_config,
+        merge_glossary as _merge_project_glossary,
+    )
+
+    project_config = _load_project_config(input_ass)
+
     final_prompt_parts = []
     if profile:
         profile_data = load_unified_profile(profile)
         translate_profile = profile_data.get("translate", {})
         final_prompt_parts.extend(translate_profile.get("prompt", []))
-        glossary_text = _build_glossary_prompt(translate_profile.get("glossary", {}))
+        merged_glossary = _merge_project_glossary(
+            translate_profile.get("glossary", {}), project_config
+        )
+        glossary_text = _build_glossary_prompt(merged_glossary)
         if glossary_text:
             final_prompt_parts.append(glossary_text)
+    elif project_config:
+        glossary_text = _build_glossary_prompt(_merge_project_glossary({}, project_config))
+        if glossary_text:
+            final_prompt_parts.append(glossary_text)
+
+    title_prompt = _build_title_prompt(project_config)
+    if title_prompt:
+        final_prompt_parts.append(title_prompt)
 
     if prompt:
         final_prompt_parts.append(prompt)
@@ -913,6 +932,15 @@ def run(
     translated_ass_out = out_dir / f"{stem}_translated.ass"
 
     # Resolve Profile
+    from autosub.core.project_config import (
+        build_title_prompt as _build_title_prompt,
+        load_project_config as _load_project_config,
+        merge_glossary as _merge_project_glossary,
+        merge_vocab as _merge_project_vocab,
+    )
+
+    project_config = _load_project_config(video_path)
+
     final_vocab = []
     final_prompt_parts = []
     final_timing = {}
@@ -931,14 +959,24 @@ def run(
                 _extract_format_profile_config(profile_data)
             )
             final_postprocess_extensions = postprocess_profile.get("extensions", {})
-            glossary_text = _build_glossary_prompt(
-                translate_profile.get("glossary", {})
+            merged_glossary = _merge_project_glossary(
+                translate_profile.get("glossary", {}), project_config
             )
+            glossary_text = _build_glossary_prompt(merged_glossary)
             if glossary_text:
                 final_prompt_parts.append(glossary_text)
         except PROFILE_LOAD_ERRORS as e:
             logger.error(f"Failed while loading profile settings: {e}")
             raise typer.Exit(code=1)
+    elif project_config:
+        glossary_text = _build_glossary_prompt(_merge_project_glossary({}, project_config))
+        if glossary_text:
+            final_prompt_parts.append(glossary_text)
+
+    final_vocab = _merge_project_vocab(final_vocab, project_config)
+    title_prompt = _build_title_prompt(project_config)
+    if title_prompt:
+        final_prompt_parts.append(title_prompt)
 
     if vocab:
         final_vocab.extend(vocab)

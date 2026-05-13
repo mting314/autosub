@@ -45,9 +45,10 @@ tests/                         # pytest test suite
 
 ## Key Concepts
 
-- **Profiles**: TOML files with `extends` inheritance. Searched: `profiles/local/` > `profiles/examples/` > `profiles/`
+- **Profiles**: TOML files with `extends` inheritance. Searched: `profiles/local/` > `profiles/examples/` > `profiles/`. Profiles can declare default `[[speakers.cast]]` for stable casts.
 - **Prompts**: Markdown/text files loaded by profiles. Searched: `prompts/local/` > `prompts/examples/` > `prompts/`
 - **Extensions**: `radio_discourse` (listener mail classification) and `corners` (program segment detection) run at format/postprocess time
+- **Per-event `project.toml`**: Auto-discovered next to the input audio file. Holds title, vocab additions, glossary additions, and optional `[[speakers.cast]]` overrides. Title is injected into the translate prompt as a canonical-form hint; vocab augments `--vocab`; glossary augments the profile glossary.
 - **Speaker maps**: Per-project TOML files mapping diarization labels to character names/colors
 - **Config**: `config.toml` (gitignored) provides default CLI flags per stage
 
