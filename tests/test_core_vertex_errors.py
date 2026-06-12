@@ -1,9 +1,11 @@
 import json
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
-from pydantic_ai.messages import TextPart, ThinkingPart
+from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart
+from pydantic_ai.usage import RequestUsage
 
 from autosub.core.errors import (
     VertexBlockedResponseError,
@@ -191,6 +193,111 @@ def test_run_structured_output_writes_trace_file(tmp_path, monkeypatch):
     ]
     assert entry["response_parts"][0]["part_kind"] == "thinking"
     assert entry["output"] == [{"id": 0, "translated": "hi"}]
+
+
+def test_extract_thinking_text_and_thoughts_token_count():
+    llm = _make_llm()
+
+    response = SimpleNamespace(
+        parts=[ThinkingPart("step one"), TextPart("answer"), ThinkingPart("step two")]
+    )
+    assert llm._extract_thinking_text(response) == "step one\n\nstep two"
+    assert llm._extract_thinking_text(SimpleNamespace(parts=[TextPart("only")])) is None
+
+    assert (
+        llm._extract_thoughts_token_count(
+            SimpleNamespace(details={"thoughts_tokens": 4096})
+        )
+        == 4096
+    )
+    assert (
+        llm._extract_thoughts_token_count(SimpleNamespace(thoughts_token_count=7)) == 7
+    )
+    assert llm._extract_thoughts_token_count(None) is None
+
+
+def test_success_diagnostics_include_thinking_and_thoughts(monkeypatch):
+    llm = _make_llm()
+    usage = SimpleNamespace(
+        input_tokens=5, output_tokens=12, details={"thoughts_tokens": 8}
+    )
+    response = SimpleNamespace(
+        provider_response_id="resp-1",
+        model_name="gemini-test-version",
+        finish_reason="STOP",
+        parts=[ThinkingPart("because reasons")],
+        timestamp=None,
+        run_id="run-1",
+    )
+    result = SimpleNamespace(
+        output=[{"id": 0, "translated": "hi"}],
+        response=response,
+        usage=lambda: usage,
+    )
+    monkeypatch.setattr(llm, "_build_agent", lambda **kwargs: FakeAgent(result=result))
+
+    _, diagnostics = llm._run_structured_output(
+        user_prompt="[]",
+        system_prompt="test",
+        output_type=list[dict],
+        operation_name="Vertex test operation",
+        output_name="test_output",
+    )
+
+    assert diagnostics.thoughts_token_count == 8
+    assert diagnostics.thinking_text == "because reasons"
+
+
+def test_failure_salvages_partial_response_diagnostics(tmp_path, monkeypatch):
+    trace_path = tmp_path / "trace.jsonl"
+    llm = _make_llm(trace_path=trace_path)
+
+    partial = ModelResponse(
+        parts=[ThinkingPart(content="runaway thinking")],
+        usage=RequestUsage(
+            input_tokens=10,
+            output_tokens=65536,
+            details={"thoughts_tokens": 65000},
+        ),
+        model_name="gemini-3-flash-preview",
+        provider_response_id="resp-x",
+        finish_reason="length",
+    )
+
+    @contextmanager
+    def fake_capture():
+        yield [partial]
+
+    monkeypatch.setattr(
+        "autosub.core.llm.pydantic_ai.capture_run_messages", fake_capture
+    )
+    monkeypatch.setattr(
+        llm,
+        "_build_agent",
+        lambda **kwargs: FakeAgent(
+            error=UnexpectedModelBehavior("Exceeded maximum retries")
+        ),
+    )
+
+    with pytest.raises(VertexResponseParseError) as exc_info:
+        llm._run_structured_output(
+            user_prompt="[]",
+            system_prompt="test",
+            output_type=list[dict],
+            operation_name="Vertex test operation",
+            output_name="test_output",
+        )
+
+    diagnostics = exc_info.value.diagnostics
+    assert diagnostics.candidate_finish_reasons == ("length",)
+    assert diagnostics.thoughts_token_count == 65000
+    assert diagnostics.thinking_text == "runaway thinking"
+
+    # The failing call's diagnostics are also persisted to the trace file.
+    entry = json.loads(trace_path.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["status"] == "error"
+    assert entry["finish_reason"] == "length"
+    assert entry["diagnostics"]["thoughts_token_count"] == 65000
 
 
 def test_vertex_translator_wraps_unexpected_json_shape(monkeypatch):

@@ -8,9 +8,15 @@ from pathlib import Path
 from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from pydantic import BaseModel
-from pydantic_ai import Agent, NativeOutput, PromptedOutput, ToolOutput
+from pydantic_ai import (
+    Agent,
+    NativeOutput,
+    PromptedOutput,
+    ToolOutput,
+    capture_run_messages,
+)
 from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior
-from pydantic_ai.messages import ThinkingPart
+from pydantic_ai.messages import ModelResponse, ThinkingPart
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIResponsesModel
@@ -516,17 +522,44 @@ class BaseStructuredLLM:
             output_name=output_name,
         )
 
+        messages: Any = []
         try:
-            result = agent.run_sync(user_prompt)
+            with capture_run_messages() as messages:
+                result = agent.run_sync(user_prompt)
         except Exception as exc:
+            # Salvage whatever the model emitted before failing. On runaway
+            # generation (MAX_TOKENS before any output) the exception carries no
+            # token counts, but the partial ModelResponse captured here does --
+            # finish_reason, prompt/candidate/thoughts tokens, and any thinking
+            # content. Without this the failing call is a black box.
+            partial = self._last_model_response(messages)
+            if partial is not None:
+                diagnostics = self._diagnostics_from_response(
+                    response=partial,
+                    usage=getattr(partial, "usage", None),
+                    text_preview=str(exc),
+                )
+            else:
+                diagnostics = self._build_error_diagnostics(text_preview=str(exc))
+            summary = diagnostics.summary_parts()
+            if summary:
+                logger.warning(
+                    "%s failed; salvaged diagnostics: %s",
+                    operation_name,
+                    "; ".join(summary),
+                )
             self._write_trace_entry(
                 status="error",
                 operation_name=operation_name,
                 user_prompt=user_prompt,
                 system_prompt=system_prompt,
+                response=partial,
+                diagnostics=diagnostics,
                 error=exc,
             )
-            raise self._map_run_error(exc, operation_name) from exc
+            raise self._map_run_error(
+                exc, operation_name, diagnostics=diagnostics
+            ) from exc
 
         diagnostics = self._build_response_diagnostics(result)
         logger.debug("%s response diagnostics: %s", operation_name, diagnostics)
@@ -543,21 +576,74 @@ class BaseStructuredLLM:
     def _build_response_diagnostics(
         self, result: AgentRunResult[Any]
     ) -> VertexResponseDiagnostics:
-        usage = result.usage()
-        response = result.response
+        return self._diagnostics_from_response(
+            response=result.response,
+            usage=result.usage(),
+            text_preview=self._serialize_output(result.output),
+        )
+
+    def _diagnostics_from_response(
+        self,
+        *,
+        response: Any,
+        usage: Any = None,
+        text_preview: str | None = None,
+    ) -> VertexResponseDiagnostics:
         prompt_tokens = getattr(usage, "input_tokens", None) or 0
         candidate_tokens = getattr(usage, "output_tokens", None) or 0
-        finish_reason = self._enum_value(response.finish_reason)
+        finish_reason = self._enum_value(getattr(response, "finish_reason", None))
 
         return VertexResponseDiagnostics(
-            response_id=response.provider_response_id,
-            model_version=response.model_name,
+            response_id=getattr(response, "provider_response_id", None),
+            model_version=getattr(response, "model_name", None) or self.model,
             candidate_finish_reasons=(finish_reason,) if finish_reason else (),
             prompt_token_count=prompt_tokens or None,
             candidates_token_count=candidate_tokens or None,
             total_token_count=(prompt_tokens + candidate_tokens) or None,
-            text_preview=self._truncate_preview(self._serialize_output(result.output)),
+            thoughts_token_count=self._extract_thoughts_token_count(usage),
+            thinking_text=self._extract_thinking_text(response),
+            text_preview=self._truncate_preview(text_preview),
         )
+
+    @staticmethod
+    def _last_model_response(messages: Any) -> ModelResponse | None:
+        for message in reversed(list(messages or ())):
+            if isinstance(message, ModelResponse):
+                return message
+        return None
+
+    @classmethod
+    def _extract_thinking_text(cls, response: Any) -> str | None:
+        chunks = [
+            part.content
+            for part in getattr(response, "parts", ()) or ()
+            if isinstance(part, ThinkingPart) and getattr(part, "content", None)
+        ]
+        if not chunks:
+            return None
+        return "\n\n".join(chunks)
+
+    _THOUGHTS_USAGE_KEYS = (
+        "thoughts_tokens",
+        "thoughts_token_count",
+        "reasoning_tokens",
+    )
+
+    @classmethod
+    def _extract_thoughts_token_count(cls, usage: Any) -> int | None:
+        if usage is None:
+            return None
+        details = getattr(usage, "details", None)
+        if isinstance(details, dict):
+            for key in cls._THOUGHTS_USAGE_KEYS:
+                value = details.get(key)
+                if isinstance(value, int):
+                    return value
+        for key in cls._THOUGHTS_USAGE_KEYS:
+            value = getattr(usage, key, None)
+            if isinstance(value, int):
+                return value
+        return None
 
     def _build_error_diagnostics(
         self,
@@ -575,11 +661,15 @@ class BaseStructuredLLM:
         self,
         exc: Exception,
         operation_name: str,
+        diagnostics: VertexResponseDiagnostics | None = None,
     ) -> VertexBlockedResponseError | VertexResponseParseError | VertexRequestError:
+        diagnostics = diagnostics or self._build_error_diagnostics(
+            text_preview=str(exc)
+        )
         if isinstance(exc, ContentFilterError):
             return VertexBlockedResponseError(
                 f"{operation_name} returned blocked output: {exc}",
-                diagnostics=self._build_error_diagnostics(text_preview=str(exc)),
+                diagnostics=diagnostics,
                 project_id=self.project_id,
                 model=self.model,
                 location=self.location,
@@ -588,7 +678,7 @@ class BaseStructuredLLM:
         if isinstance(exc, UnexpectedModelBehavior):
             return VertexResponseParseError(
                 f"{operation_name} returned invalid structured output: {exc}",
-                diagnostics=self._build_error_diagnostics(text_preview=str(exc)),
+                diagnostics=diagnostics,
                 project_id=self.project_id,
                 model=self.model,
                 location=self.location,
@@ -633,14 +723,18 @@ class BaseStructuredLLM:
         user_prompt: str,
         system_prompt: str,
         result: AgentRunResult[Any] | None = None,
+        response: Any = None,
         diagnostics: VertexResponseDiagnostics | None = None,
         error: Exception | None = None,
     ) -> None:
         if self.trace_path is None:
             return
 
-        usage = result.usage() if result is not None else None
-        response = result.response if result is not None else None
+        if result is not None:
+            usage = result.usage()
+            response = result.response
+        else:
+            usage = getattr(response, "usage", None)
         entry = {
             "status": status,
             "operation_name": operation_name,
