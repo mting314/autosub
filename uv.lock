@@ -239,6 +239,7 @@ whisperx = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pillow" },
     { name = "pre-commit" },
     { name = "pyrefly" },
     { name = "pytest" },
@@ -266,6 +267,7 @@ provides-extras = ["whisperx"]
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.19.1" },
+    { name = "pillow", specifier = ">=12.2.0" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pyrefly", specifier = ">=0.54.0" },
     { name = "pytest", specifier = ">=9.0.2" },
