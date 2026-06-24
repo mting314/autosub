@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -96,6 +97,12 @@ class BaseStructuredLLM:
     }
     _ANTHROPIC_MIN_BUDGET = 1024
     _ANTHROPIC_DEFAULT_MAX_TOKENS = 65536
+    # On gemini-3 the thinking tokens and the answer tokens share this single
+    # output budget, and thinking can't be capped numerically (level only). When
+    # reasoning saturates (~63k thoughts), the answer no longer fits in 65536 and
+    # the request fails with MAX_TOKENS. Allow raising the ceiling via env so we
+    # can test whether the model accepts a larger output window.
+    _GOOGLE_DEFAULT_MAX_TOKENS = 65536
     _ANTHROPIC_REASONING_MAX_TOKENS: ClassVar[dict[ReasoningEffort, int]] = {
         ReasoningEffort.MINIMAL: 65536,
         ReasoningEffort.LOW: 65536,
@@ -249,12 +256,36 @@ class BaseStructuredLLM:
 
         raise ValueError(f"Unsupported LLM provider: {config.provider}")
 
+    @classmethod
+    def _google_max_output_tokens(cls) -> int:
+        """Resolve gemini's max output token budget.
+
+        Defaults to 65536 but can be overridden via AUTOSUB_GOOGLE_MAX_TOKENS so
+        we can test whether a larger window lets thinking + answer coexist
+        (mitigating the gemini-3 thinking-explosion MAX_TOKENS failure).
+        """
+        raw = os.environ.get("AUTOSUB_GOOGLE_MAX_TOKENS")
+        if raw:
+            try:
+                value = int(raw)
+            except ValueError:
+                logger.warning(
+                    "Ignoring non-integer AUTOSUB_GOOGLE_MAX_TOKENS=%r", raw
+                )
+            else:
+                if value > 0:
+                    return value
+                logger.warning(
+                    "Ignoring non-positive AUTOSUB_GOOGLE_MAX_TOKENS=%r", raw
+                )
+        return cls._GOOGLE_DEFAULT_MAX_TOKENS
+
     def _build_google_model_settings(
         self, config: LLMModelConfig
     ) -> GoogleModelSettings:
         settings: dict[str, Any] = {
             "temperature": config.temperature,
-            "max_tokens": self._ANTHROPIC_DEFAULT_MAX_TOKENS,
+            "max_tokens": self._google_max_output_tokens(),
         }
         thinking_config = self._build_google_thinking_config(config)
         if self.trace_path is not None:
