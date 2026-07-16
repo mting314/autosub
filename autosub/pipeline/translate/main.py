@@ -85,6 +85,7 @@ def translate_subtitles(
     debug: bool = False,
     retry_chunks: list[int] | None = None,
     log_dir: Path | None = None,
+    reflow: bool = True,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -204,6 +205,11 @@ def translate_subtitles(
             f"Translation API expected {len(events_to_translate)} translations, but got {len(translated_texts)}"
         )
 
+    if reflow:
+        translated_texts = _reflow_translations(
+            translated_texts, events_to_translate, corner_boundaries
+        )
+
     logger.info("Applying translations to subtitle events...")
 
     new_events: list[pyass.Event] = []
@@ -254,6 +260,38 @@ def translate_subtitles(
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")
 
     logger.info("Translation complete!")
+
+
+def _reflow_translations(
+    translated_texts: list[str],
+    events_to_translate: list[pyass.Event],
+    corner_boundaries: list[int] | None,
+) -> list[str]:
+    """Re-split translated lines at natural English boundaries.
+
+    Derives per-line display durations and hard group-break indices (speaker
+    change, corner boundary, long time gap) from the events, then delegates to
+    the deterministic reflow. Any failure is non-fatal: the original
+    translations are returned unchanged.
+    """
+    from autosub.pipeline.translate.reflow import LONG_GAP_S, reflow_line_breaks
+
+    try:
+        durations_s: list[float] = []
+        boundaries: set[int] = set(corner_boundaries or [])
+        for i, event in enumerate(events_to_translate):
+            durations_s.append(max(0.0, (event.end - event.start).total_seconds()))
+            if i == 0:
+                continue
+            prev = events_to_translate[i - 1]
+            if event.style != prev.style:
+                boundaries.add(i)
+            elif (event.start - prev.end).total_seconds() > LONG_GAP_S:
+                boundaries.add(i)
+        return reflow_line_breaks(translated_texts, durations_s, boundaries)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(f"Line-break reflow skipped due to error: {exc}")
+        return translated_texts
 
 
 def _write_error_report(error_path: Path, exc: Exception) -> None:

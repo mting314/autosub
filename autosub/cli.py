@@ -538,6 +538,11 @@ def translate(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
+    reflow: bool = typer.Option(
+        True,
+        "--reflow/--no-reflow",
+        help="Re-split translated lines at natural English boundaries (moves dangling connectives to the next line).",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -560,6 +565,7 @@ def translate(
             "vertex_reasoning_dynamic": vertex_reasoning_dynamic,
             "bilingual": bilingual,
             "chunk_size": chunk_size,
+            "reflow": reflow,
         },
     )
     out = resolved["out"]
@@ -576,6 +582,7 @@ def translate(
     vertex_reasoning_dynamic = resolved["vertex_reasoning_dynamic"]
     bilingual = resolved["bilingual"]
     chunk_size = resolved["chunk_size"]
+    reflow = resolved["reflow"]
 
     if not out:
         out = input_ass.with_name("translated.ass")
@@ -645,6 +652,7 @@ def translate(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            reflow=reflow,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -833,6 +841,11 @@ def run(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
+    reflow: bool = typer.Option(
+        True,
+        "--reflow/--no-reflow",
+        help="Re-split translated lines at natural English boundaries (moves dangling connectives to the next line).",
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -863,6 +876,7 @@ def run(
             "start": start,
             "end": end,
             "chunk_size": chunk_size,
+            "reflow": reflow,
         },
     )
     out_dir = resolved["out_dir"]
@@ -888,6 +902,7 @@ def run(
     start = resolved["start"]
     end = resolved["end"]
     chunk_size = resolved["chunk_size"]
+    reflow = resolved["reflow"]
     time_ranges = _normalize_time_ranges(start, end)
 
     logger.info(f"Starting full autosub pipeline for: {video_path}")
@@ -1050,6 +1065,7 @@ def run(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            reflow=reflow,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
