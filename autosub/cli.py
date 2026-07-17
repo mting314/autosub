@@ -1072,5 +1072,88 @@ def run(
     )
 
 
+@app.command()
+def hardsub(
+    video: Path = typer.Argument(
+        ...,
+        help="Source video to burn subtitles into.",
+        exists=True,
+        dir_okay=False,
+    ),
+    ass: Path = typer.Option(
+        ...,
+        "--ass",
+        help="Subtitle .ass file to burn in (typically the QC'd translated subs).",
+        exists=True,
+        dir_okay=False,
+    ),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        help="Output .mp4 (defaults to <video-stem>_hardsubbed.mp4).",
+    ),
+    start: list[str] = typer.Option(
+        None,
+        "--start",
+        help="Segment start (e.g. 00:09:45 or 585). Repeatable; pairs by order with --end. Omit --start/--end to hardsub the whole video.",
+    ),
+    end: list[str] = typer.Option(
+        None,
+        "--end",
+        help="Segment end. Repeatable; pairs by order with --start. Gaps between segments are dropped.",
+    ),
+    crf: int = typer.Option(
+        18, "--crf", min=0, max=51, help="libx264 CRF (lower = higher quality, larger file)."
+    ),
+    preset: str = typer.Option(
+        "medium",
+        "--preset",
+        help="libx264 preset (ultrafast..veryslow). Faster preset = quicker encode, larger file.",
+    ),
+    detect_black: bool = typer.Option(
+        True,
+        "--detect-black/--no-detect-black",
+        help="Warn if the output contains black intervals (fade/concat-join flashes).",
+    ),
+):
+    """
+    Burn subtitles into a video and trim to segment(s).
+
+    Re-encodes video (CPU-bound); a faster --preset trades quality for speed.
+    """
+    from autosub.pipeline.hardsub import main as hardsub_module
+
+    if out is None:
+        out = video.with_name(f"{video.stem}_hardsubbed.mp4")
+
+    # Reuse run's paired-range parsing/validation. It yields [(None, None)] when
+    # no --start/--end are given → hardsub the whole video.
+    time_ranges = _normalize_time_ranges(start, end)
+    # A lone --start or --end (exactly one side None) is ambiguous for hardsub —
+    # reject it rather than silently hardsubbing the whole video.
+    if any((s is None) != (e is None) for (s, e) in time_ranges):
+        raise typer.BadParameter(
+            "--start and --end must be provided together for each segment.",
+            param_hint="--start/--end",
+        )
+    segments = [(s, e) for (s, e) in time_ranges if s is not None and e is not None]
+
+    try:
+        hardsub_module.hardsub_video(
+            video,
+            ass,
+            out,
+            segments=segments,
+            crf=crf,
+            preset=preset,
+            detect_black=detect_black,
+        )
+    except Exception as e:
+        logger.error(f"Error during hardsub: {e}")
+        raise typer.Exit(code=1)
+
+    logger.info(f"Hardsub complete! Output saved to {out}")
+
+
 if __name__ == "__main__":
     app()

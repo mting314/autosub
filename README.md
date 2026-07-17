@@ -11,6 +11,14 @@ Automatic Japanese subtitle generation and translation pipeline for speech-heavy
 3. **Translate**: Translate subtitle events with either Vertex AI (`gemini-3-flash-preview`) or Cloud Translation v3, then write `translated.ass`.
 4. **Postprocess**: Apply profile-driven editorial cleanup to the translated `.ass` file. The built-in `run` command includes this step automatically.
 
+A standalone finishing step (not part of `run`) can burn the reviewed subtitles into the video:
+
+- **Hardsub** (optional): `autosub hardsub` burns the finished `.ass` into a video and trims to the subbed segment(s). Requires an FFmpeg build with libass.
+
+  ```
+  uv run autosub hardsub video.mkv --ass translated.ass --start 00:09:45 --end 00:55:30
+  ```
+
 ```mermaid
 graph TD
     A[Video or Audio Input] --> B[Transcribe<br/>chirp_2, chirp_3, or WhisperX]
@@ -18,6 +26,7 @@ graph TD
     C --> D[Translate<br/>Vertex Gemini 3 Flash or Cloud Translation v3]
     D --> E[Postprocess<br/>Profile Extensions]
     E --> F[Final translated.ass]
+    F -.->|optional: hardsub + video| G[Burned-in video.mp4]
 ```
 
 ## Current Capabilities
@@ -41,7 +50,7 @@ graph TD
 
 1. Python 3.12+
 2. `uv`
-3. FFmpeg available on `PATH`
+3. FFmpeg available on `PATH` (built with libass — required for the `hardsub` command)
 4. Credentials for the services you plan to use:
    - Google Cloud for transcription, Cloud Translation v3, or `google-vertex`
    - `ANTHROPIC_API_KEY` for direct Anthropic translation or classification
