@@ -34,10 +34,15 @@ class ReflowSplit(BaseModel):
 
 class ReflowSplitter(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-3.1-flash-lite-preview",
+        "google-vertex": "gemini-2.5-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
     }
+    _DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash-lite"
+
+    # Reflow output is small (just the split pieces) and lite models reject the
+    # 65536 default, so cap the output window well below any lite model's limit.
+    _MAX_OUTPUT_TOKENS = 8192
 
     def __init__(
         self,
@@ -47,17 +52,24 @@ class ReflowSplitter(BaseStructuredLLM):
         location: str = "global",
         provider: str = "google-vertex",
         reasoning_effort: ReasoningEffort | None = ReasoningEffort.LOW,
+        provider_options: dict[str, object] | None = None,
         **kwargs,
     ):
         resolved_model = model or self.DEFAULT_MODELS.get(
-            provider, "gemini-3.1-flash-lite-preview"
+            provider, self._DEFAULT_GOOGLE_MODEL
         )
+        # Scope a small max_tokens to this splitter (overrides the global default)
+        # so lite models accept the request; caller options still win.
+        options = {"max_tokens": self._MAX_OUTPUT_TOKENS}
+        if provider_options:
+            options.update(provider_options)
         super().__init__(
             project_id=project_id,
             model=resolved_model,
             location=location,
             provider=provider,
             reasoning_effort=reasoning_effort,
+            provider_options=options,
             **kwargs,
         )
 
