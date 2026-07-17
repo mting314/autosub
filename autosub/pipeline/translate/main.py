@@ -86,6 +86,8 @@ def translate_subtitles(
     retry_chunks: list[int] | None = None,
     log_dir: Path | None = None,
     reflow: bool = True,
+    reflow_engine: str = "deterministic",
+    reflow_model: str | None = None,
 ) -> None:
     """
     Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
@@ -207,7 +209,13 @@ def translate_subtitles(
 
     if reflow:
         translated_texts = _reflow_translations(
-            translated_texts, events_to_translate, corner_boundaries
+            translated_texts,
+            events_to_translate,
+            corner_boundaries,
+            engine=reflow_engine,
+            provider=provider,
+            location=location,
+            model=reflow_model,
         )
 
     logger.info("Applying translations to subtitle events...")
@@ -266,12 +274,18 @@ def _reflow_translations(
     translated_texts: list[str],
     events_to_translate: list[pyass.Event],
     corner_boundaries: list[int] | None,
+    engine: str = "deterministic",
+    provider: str = "google-vertex",
+    location: str = "global",
+    model: str | None = None,
 ) -> list[str]:
     """Re-split translated lines at natural English boundaries.
 
     Derives per-line display durations and hard group-break indices (speaker
     change, corner boundary, long time gap) from the events, then delegates to
-    the deterministic reflow. Any failure is non-fatal: the original
+    the reflow. The ``llm`` engine uses a cheap model to choose break points
+    (falling back to the deterministic engine per group); ``deterministic`` (the
+    default) needs no API calls. Any failure is non-fatal: the original
     translations are returned unchanged.
     """
     from autosub.pipeline.translate.reflow import LONG_GAP_S, reflow_line_breaks
@@ -288,7 +302,21 @@ def _reflow_translations(
                 boundaries.add(i)
             elif (event.start - prev.end).total_seconds() > LONG_GAP_S:
                 boundaries.add(i)
-        return reflow_line_breaks(translated_texts, durations_s, boundaries)
+
+        resplitter = None
+        if engine == "llm":
+            from autosub.pipeline.translate.reflow_llm import build_llm_resplitter
+
+            logger.info("Using LLM line-break reflow engine.")
+            resplitter = build_llm_resplitter(
+                project_id=PROJECT_ID,
+                model=model,  # None -> splitter's cheap flash-lite default
+                location=location,
+                provider=provider,
+            )
+        return reflow_line_breaks(
+            translated_texts, durations_s, boundaries, resplitter=resplitter
+        )
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(f"Line-break reflow skipped due to error: {exc}")
         return translated_texts

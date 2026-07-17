@@ -8,15 +8,21 @@ per-line timing and speaker by aligning the chunk inputs against the episode's
 that reflow changed.
 
 Usage:
-    uv run python scripts/compare_reflow.py "<path to a *_logs*/chunks dir>" [original.ass]
+    uv run python scripts/compare_reflow.py "<path to a *_logs*/chunks dir>" \
+        [--original path/to/original.ass] [--engine deterministic|llm]
 
 If the original.ass is omitted, it is auto-detected as the sibling
 `*_original.ass` of the log directory; failing that, equal line durations are
 assumed (grouping still works, only duration weighting is approximated).
+
+`--engine llm` makes real (cheap flash-lite) API calls for the loaded segment
+only — one batched call — so A/B'ing on a short range with several dangling
+examples stays inexpensive.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -89,13 +95,27 @@ def _derive(events: list[pyass.Event]) -> tuple[list[float], set[int]]:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    chunks_dir = Path(sys.argv[1])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("chunks_dir", help="Path to a *_logs*/chunks directory")
+    parser.add_argument("--original", help="Path to the episode's *_original.ass")
+    parser.add_argument(
+        "--engine",
+        choices=["deterministic", "llm"],
+        default="deterministic",
+        help="Reflow re-split engine to compare against the raw output.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Override the LLM reflow model (e.g. a model your project can reach).",
+    )
+    args = parser.parse_args()
+
+    chunks_dir = Path(args.chunks_dir)
     ja, en = _load_chunks(chunks_dir)
 
-    if len(sys.argv) >= 3:
-        original_ass: Path | None = Path(sys.argv[2])
+    if args.original:
+        original_ass: Path | None = Path(args.original)
     else:
         parent = chunks_dir.parent.parent
         matches = sorted(parent.glob("*_original.ass"))
@@ -120,7 +140,17 @@ def main() -> None:
         boundaries = set()
         print("No original.ass; using equal durations.\n")
 
-    reflowed = reflow_line_breaks(en, durations, boundaries)
+    resplitter = None
+    if args.engine == "llm":
+        from autosub.core.config import PROJECT_ID
+        from autosub.pipeline.translate.reflow_llm import build_llm_resplitter
+
+        resplitter = build_llm_resplitter(project_id=PROJECT_ID, model=args.model)
+        print(f"Engine: llm (model={args.model or 'flash-lite default'}, one batched call).\n")
+    else:
+        print("Engine: deterministic (no API calls).\n")
+
+    reflowed = reflow_line_breaks(en, durations, boundaries, resplitter=resplitter)
 
     # Report: group changed lines into contiguous runs for readable context.
     changed = [i for i in range(len(en)) if en[i] != reflowed[i]]

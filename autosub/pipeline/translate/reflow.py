@@ -21,8 +21,16 @@ added, dropped, or altered — otherwise the original split is kept verbatim.
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+# A re-split engine takes a batch of sentence groups — each a (pieces, durations)
+# pair — and returns a proposed re-split (or None to leave it alone) per group,
+# aligned to the input. Batching lets the LLM engine serve every group in one
+# call; the deterministic engine just maps over the batch.
+ReflowGroup = "tuple[list[str], list[float]]"
+Resplitter = Callable[[list["tuple[list[str], list[float]]"]], list["list[str] | None"]]
 
 # A piece must never *end* on one of these bare words — that is the dangling
 # connective/preposition/article/auxiliary that reads as broken mid-thought.
@@ -77,6 +85,7 @@ def reflow_line_breaks(
     texts: list[str],
     durations_s: list[float],
     boundaries: set[int] | None = None,
+    resplitter: Resplitter | None = None,
 ) -> list[str]:
     """Re-split translated lines at natural English boundaries.
 
@@ -85,6 +94,10 @@ def reflow_line_breaks(
         durations_s: display duration (seconds) of each line's time slot.
         boundaries: indices ``i`` where a hard group-break must occur *before*
             line ``i`` (speaker change, corner boundary, large time gap).
+        resplitter: engine that proposes a re-split per sentence group. Defaults
+            to the deterministic engine. An alternative (e.g. LLM-backed) engine
+            is held to the same guardrail and quality gate, so it can only
+            improve on the original split, never corrupt or churn it.
 
     Returns:
         A new list of the same length with text redistributed across each
@@ -98,27 +111,24 @@ def reflow_line_breaks(
     n = len(texts)
     if n == 0:
         return list(texts)
+    if resplitter is None:
+        resplitter = _deterministic_batch
+
+    groups = [g for g in _group_indices(texts, boundaries) if len(g) >= 2]
+    batch = [([texts[i] for i in g], [durations_s[i] for i in g]) for g in groups]
+    proposals = resplitter(batch) if batch else []
+    if len(proposals) != len(groups):
+        logger.warning(
+            "Reflow engine returned %d proposals for %d groups; skipping reflow.",
+            len(proposals),
+            len(groups),
+        )
+        return list(texts)
 
     result = list(texts)
     reflowed_groups = 0
-
-    for group in _group_indices(texts, boundaries):
-        if len(group) < 2:
-            continue
-        pieces = [texts[i] for i in group]
-        durs = [durations_s[i] for i in group]
-        new_pieces = _resplit_group(pieces, durs)
-        if new_pieces is None or not _is_preserving(new_pieces, pieces):
-            continue
-        if new_pieces == pieces:
-            continue
-        # Only accept a re-split that is strictly better than the original, so
-        # reflow never churns an already-clean break into a worse or equal one.
-        # A same-partition change (only casing differs, e.g. "But"->"but" at a
-        # re-join seam) is always safe — it moves no words — so allow it too.
-        strictly_better = _split_score(new_pieces) > _split_score(pieces)
-        casing_only = _word_partition(new_pieces) == _word_partition(pieces)
-        if not (strictly_better or casing_only):
+    for group, (pieces, _durs), new_pieces in zip(groups, batch, proposals):
+        if not _accept_resplit(new_pieces, pieces):
             continue
         for slot, i in enumerate(group):
             result[i] = new_pieces[slot]
@@ -129,6 +139,30 @@ def reflow_line_breaks(
             "Line-break reflow adjusted %d sentence group(s).", reflowed_groups
         )
     return result
+
+
+def _deterministic_batch(
+    batch: list[tuple[list[str], list[float]]],
+) -> list[list[str] | None]:
+    """Default engine: apply the deterministic re-split to each group."""
+    return [_resplit_group(pieces, durs) for pieces, durs in batch]
+
+
+def _accept_resplit(new_pieces: list[str] | None, pieces: list[str]) -> bool:
+    """Gate a proposed re-split against the original.
+
+    A proposal is accepted only when it preserves the text (whitespace/casing
+    aside) and either scores strictly higher or is a casing-only change. This
+    guarantees reflow never churns an already-clean break into a worse or equal
+    one — regardless of which engine produced the proposal.
+    """
+    if new_pieces is None or not _is_preserving(new_pieces, pieces):
+        return False
+    if new_pieces == pieces:
+        return False
+    strictly_better = _split_score(new_pieces) > _split_score(pieces)
+    casing_only = _word_partition(new_pieces) == _word_partition(pieces)
+    return strictly_better or casing_only
 
 
 def _group_indices(texts: list[str], boundaries: set[int]) -> list[list[int]]:
