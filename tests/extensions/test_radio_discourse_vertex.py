@@ -82,7 +82,7 @@ def test_classify_roles_with_vertex_defaults_to_flash_lite(monkeypatch):
     )
 
     assert result == ["host"]
-    assert captured["model"] == "gemini-3.1-flash-lite-preview"
+    assert captured["model"] == "gemini-2.5-flash-lite"
 
 
 def test_classify_roles_with_vertex_defaults_to_haiku_for_anthropic(monkeypatch):
