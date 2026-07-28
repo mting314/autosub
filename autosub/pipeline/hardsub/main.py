@@ -54,15 +54,30 @@ def _resolve_ffmpeg() -> str:
     return exe
 
 
-def _ass_filter_arg(path: Path | str) -> str:
+def _escape_filter_path(path: Path | str) -> str:
+    """Forward-slash + colon-escape a path for an ffmpeg filter option value.
+
+    So Windows paths (``C:\\Users\\...``) aren't misread by the option parser.
+    A no-op for POSIX temp paths (no ``\\`` or ``:``).
+    """
+    return str(path).replace("\\", "/").replace(":", r"\:")
+
+
+def _ass_filter_arg(path: Path | str, fonts_dir: Path | str | None = None) -> str:
     """Build the libass ``ass=`` filter argument for a path.
 
-    Uses forward slashes and escapes the drive colon so Windows paths
-    (``C:\\Users\\...``) don't get misread by the filter option parser. A no-op
-    for POSIX temp paths (no ``\\`` or ``:``).
+    When ``fonts_dir`` is given, ``:fontsdir=`` points libass at a directory of
+    bundled fonts. This is REQUIRED for portable/remote rendering: without it
+    libass only consults the host's fontconfig, so a style's Fontname (e.g.
+    ``Lato ExtraBold``) silently falls back to a different face on any machine
+    that lacks that exact font — the subtitles then render in the wrong font and
+    often much larger. Bundling the ``.ass``'s own fonts makes the burn match
+    Aegisub byte-for-byte regardless of what's installed.
     """
-    escaped = str(path).replace("\\", "/").replace(":", r"\:")
-    return f"ass={escaped}"
+    arg = f"ass={_escape_filter_path(path)}"
+    if fonts_dir is not None:
+        arg += f":fontsdir={_escape_filter_path(fonts_dir)}"
+    return arg
 
 
 def hardsub_video(
@@ -74,11 +89,17 @@ def hardsub_video(
     crf: int = 18,
     preset: str = "medium",
     detect_black: bool = True,
+    fonts_dir: Path | str | None = None,
 ) -> None:
     """Burn ``ass_path`` into ``video_path``, trim to ``segments``, write output.
 
     ``segments`` is a list of ``(start, end)`` timestamp strings (ffmpeg-parsable,
     e.g. "00:09:45" or "585"). Empty/None hardsubs the whole video.
+
+    ``fonts_dir`` is a directory of fonts handed to libass via ``fontsdir`` so the
+    ``.ass``'s Fontnames resolve to bundled fonts instead of the host's fontconfig.
+    Defaults to the subtitle's own directory (drop the ``.ttf``/``.otf`` next to
+    the ``.ass``). Pass ``fonts_dir=""``/a nonexistent dir to disable.
     """
     ffmpeg = _resolve_ffmpeg()
     video_path = Path(video_path)
@@ -88,6 +109,22 @@ def hardsub_video(
         raise FileNotFoundError(f"video not found: {video_path}")
     if not ass_path.is_file():
         raise FileNotFoundError(f"subtitle not found: {ass_path}")
+
+    # Resolve the libass font directory. An explicit ``fonts_dir`` is honored as
+    # given; otherwise auto-default to the subtitle's own folder, but ONLY when it
+    # actually holds bundled fonts — so behavior is unchanged for episodes without
+    # any (and existing fontconfig-based rendering still works).
+    if fonts_dir is not None:
+        fonts_dir = Path(fonts_dir)
+        fonts_dir = fonts_dir if fonts_dir.is_dir() else None
+    else:
+        parent = ass_path.parent
+        has_fonts = any(
+            p.is_file() and p.suffix.lower() in (".ttf", ".otf") for p in parent.iterdir()
+        )
+        fonts_dir = parent if has_fonts else None
+    if fonts_dir is not None:
+        logger.info("Using fonts from %s", fonts_dir)
 
     segs = list(segments or [])
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,15 +142,15 @@ def hardsub_video(
             except OSError:
                 shutil.copyfile(ass_path, subs_link)
             logger.info("Hardsubbing %s (whole video)...", video_path.name)
-            _run(_burn_whole_cmd(ffmpeg, video_path, subs_link, output_path, crf, preset), "hardsub burn")
+            _run(_burn_whole_cmd(ffmpeg, video_path, subs_link, output_path, crf, preset, fonts_dir), "hardsub burn")
         elif len(segs) == 1:
             start, end = segs[0]
             logger.info("Hardsubbing %s (%s–%s)...", video_path.name, start, end)
-            cmd = _prepare_segment(ffmpeg, video_path, ass_path, output_path, start, end, crf, preset, tmpdir, 0)
+            cmd = _prepare_segment(ffmpeg, video_path, ass_path, output_path, start, end, crf, preset, tmpdir, 0, fonts_dir)
             _run(cmd, "hardsub burn")
         else:
             logger.info("Hardsubbing %s across %d segments...", video_path.name, len(segs))
-            parts = _burn_segments_parallel(ffmpeg, video_path, ass_path, segs, crf, preset, tmpdir)
+            parts = _burn_segments_parallel(ffmpeg, video_path, ass_path, segs, crf, preset, tmpdir, fonts_dir)
             _concat(ffmpeg, parts, output_path, tmpdir)
             joins = _join_offsets(segs)
 
@@ -157,7 +194,7 @@ def _shift_ass(src_ass: Path, offset_seconds: float, dst_ass: Path) -> None:
         pyass.dump(script, handle)
 
 
-def _prepare_segment(ffmpeg, video, ass_path, out, start, end, crf, preset, tmpdir, idx) -> list[str]:
+def _prepare_segment(ffmpeg, video, ass_path, out, start, end, crf, preset, tmpdir, idx, fonts_dir=None) -> list[str]:
     """Shift the subtitle for this segment and return the input-seek burn command."""
     start_s = parse_timestamp(start)
     duration = parse_timestamp(end) - start_s
@@ -165,28 +202,28 @@ def _prepare_segment(ffmpeg, video, ass_path, out, start, end, crf, preset, tmpd
         raise ValueError(f"segment end must be after start: {start}–{end}")
     shifted = tmpdir / f"seg_{idx:03d}.ass"
     _shift_ass(ass_path, start_s, shifted)
-    return _seg_burn_cmd(ffmpeg, video, shifted, out, start, duration, crf, preset)
+    return _seg_burn_cmd(ffmpeg, video, shifted, out, start, duration, crf, preset, fonts_dir)
 
 
-def _burn_whole_cmd(ffmpeg, video, subs_link, out, crf, preset) -> list[str]:
+def _burn_whole_cmd(ffmpeg, video, subs_link, out, crf, preset, fonts_dir=None) -> list[str]:
     return [
-        ffmpeg, "-y", *_QUIET, "-i", str(video), "-vf", _ass_filter_arg(subs_link),
+        ffmpeg, "-y", *_QUIET, "-i", str(video), "-vf", _ass_filter_arg(subs_link, fonts_dir),
         "-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-c:a", "aac", str(out),
     ]
 
 
-def _seg_burn_cmd(ffmpeg, video, shifted_ass, out, start, duration, crf, preset) -> list[str]:
+def _seg_burn_cmd(ffmpeg, video, shifted_ass, out, start, duration, crf, preset, fonts_dir=None) -> list[str]:
     # -ss BEFORE -i = input seek (fast, accurate): decode only from the keyframe
     # preceding `start`, not from 0. The subtitle is already shifted to match the
     # zero-based post-seek timeline.
     return [
         ffmpeg, "-y", *_QUIET, "-ss", start, "-i", str(video),
-        "-vf", _ass_filter_arg(shifted_ass), "-t", f"{duration:.3f}",
+        "-vf", _ass_filter_arg(shifted_ass, fonts_dir), "-t", f"{duration:.3f}",
         "-c:v", "libx264", "-crf", str(crf), "-preset", preset, "-c:a", "aac", str(out),
     ]
 
 
-def _burn_segments_parallel(ffmpeg, video, ass_path, segs, crf, preset, tmpdir) -> list[Path]:
+def _burn_segments_parallel(ffmpeg, video, ass_path, segs, crf, preset, tmpdir, fonts_dir=None) -> list[Path]:
     """Burn each segment concurrently, bounded to the CPU count.
 
     Each burn runs via ``subprocess.run`` (which fully drains its own stderr, so
@@ -199,7 +236,7 @@ def _burn_segments_parallel(ffmpeg, video, ass_path, segs, crf, preset, tmpdir) 
     def _burn(i: int) -> None:
         start, end = segs[i]
         logger.info("  segment %d/%d: %s–%s", i + 1, len(segs), start, end)
-        cmd = _prepare_segment(ffmpeg, video, ass_path, parts[i], start, end, crf, preset, tmpdir, i)
+        cmd = _prepare_segment(ffmpeg, video, ass_path, parts[i], start, end, crf, preset, tmpdir, i, fonts_dir)
         _run(cmd, f"hardsub segment {i + 1}")
 
     with ThreadPoolExecutor(max_workers=workers) as executor:

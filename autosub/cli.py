@@ -1115,6 +1115,15 @@ def hardsub(
         "--detect-black/--no-detect-black",
         help="Warn if the output contains black intervals (fade/concat-join flashes).",
     ),
+    fonts_dir: Path = typer.Option(
+        None,
+        "--fonts-dir",
+        help="Directory of fonts for libass (fontsdir). Defaults to the .ass's own "
+        "folder — drop the bundled .ttf/.otf there so styles match Aegisub. Without "
+        "the exact font, libass falls back to a wrong/oversized face.",
+        exists=False,
+        file_okay=False,
+    ),
 ):
     """
     Burn subtitles into a video and trim to segment(s).
@@ -1147,6 +1156,7 @@ def hardsub(
             crf=crf,
             preset=preset,
             detect_black=detect_black,
+            fonts_dir=fonts_dir,
         )
     except Exception as e:
         logger.error(f"Error during hardsub: {e}")

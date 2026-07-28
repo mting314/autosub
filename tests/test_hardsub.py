@@ -150,6 +150,46 @@ def test_ass_filter_arg_escapes_windows_path():
     assert hs._ass_filter_arg("C:\\Users\\x\\subs.ass") == "ass=C\\:/Users/x/subs.ass"
 
 
+def test_ass_filter_arg_appends_fontsdir():
+    assert hs._ass_filter_arg("/tmp/x/subs.ass", "/tmp/x") == "ass=/tmp/x/subs.ass:fontsdir=/tmp/x"
+    assert hs._ass_filter_arg("/tmp/x/subs.ass", None) == "ass=/tmp/x/subs.ass"
+
+
+# --- fontsdir defaulting (bundle fonts next to the .ass) ---
+
+
+def test_bundled_font_next_to_ass_adds_fontsdir(tmp_path, monkeypatch):
+    monkeypatch.setattr(hs.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x")
+    ass = tmp_path / "s.ass"
+    _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
+    (tmp_path / "Lato.ttf").write_bytes(b"fontdata")  # bundled font beside the .ass
+    calls = []
+    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+
+    hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[], detect_black=False)
+
+    burn = next(c for c in calls if "-vf" in c)
+    vf = burn[burn.index("-vf") + 1]
+    assert f"fontsdir={tmp_path}" in vf
+
+
+def test_no_bundled_font_omits_fontsdir(tmp_path, monkeypatch):
+    monkeypatch.setattr(hs.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x")
+    ass = tmp_path / "s.ass"
+    _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
+    calls = []
+    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+
+    hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[], detect_black=False)
+
+    burn = next(c for c in calls if "-vf" in c)
+    assert "fontsdir=" not in burn[burn.index("-vf") + 1]
+
+
 # --- join offsets ---
 
 
