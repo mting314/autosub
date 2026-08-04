@@ -4,6 +4,11 @@ import pyass
 
 from autosub.core.schemas import SubtitleLine
 
+# Script resolution the styles are authored against (1080p). Must be written into the
+# header — see the note in generate_ass_file.
+PLAY_RES_X = 1920
+PLAY_RES_Y = 1080
+
 
 def generate_ass_file(lines: List[SubtitleLine], output_path: Path):
     """
@@ -79,6 +84,12 @@ def generate_ass_file(lines: List[SubtitleLine], output_path: Path):
 
     # 3. Create the pyass Script container
     script = pyass.Script(styles=styles, events=pyass_events)
+
+    # pyass omits PlayResX/PlayResY. Without them libass falls back to a 384x288 script
+    # canvas and scales that up to the video frame, so a Fontsize-100 style renders ~5x
+    # too large and every line wraps. Pin the resolution the styles are authored against.
+    script.scriptInfo.append(("PlayResX", str(PLAY_RES_X)))
+    script.scriptInfo.append(("PlayResY", str(PLAY_RES_Y)))
 
     # 4. Dump to disk
     with open(output_path, "w", encoding="utf-8") as f:
