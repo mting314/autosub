@@ -55,7 +55,20 @@ def _wait_for_batch_operation(
         poll_interval_seconds,
     )
 
-    while not bool(getattr(operation, "done")()):
+    while True:
+        try:
+            if bool(getattr(operation, "done")()):
+                break
+        except Exception as exc:
+            if "ResourceExhausted" in str(type(exc).__name__) or "429" in str(exc):
+                logger.warning(
+                    "Rate limit quota encountered while checking batch operation (%s). Backing off 20s...",
+                    exc,
+                )
+                time.sleep(20)
+                continue
+            raise
+
         time.sleep(poll_interval_seconds)
         current_time = time.monotonic()
         if current_time - last_heartbeat_at >= heartbeat_seconds:
