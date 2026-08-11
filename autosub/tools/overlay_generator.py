@@ -8,18 +8,43 @@ from autosub.core.speaker_map import calculate_speaker_slot_layout, load_speaker
 logger = logging.getLogger(__name__)
 
 
+def _crop_and_resize_avatar(img: Image.Image, target_size: Tuple[int, int], radius: int = 10) -> Image.Image:
+    """Crops an image to target size without stretching and applies rounded corners."""
+    orig_w, orig_h = img.size
+    target_w, target_h = target_size
+    target_ratio = target_w / target_h
+    orig_ratio = orig_w / orig_h
+
+    if orig_ratio > target_ratio:
+        new_w = int(orig_h * target_ratio)
+        left = (orig_w - new_w) // 2
+        crop_box = (left, 0, left + new_w, orig_h)
+    else:
+        new_h = int(orig_w / target_ratio)
+        top = int((orig_h - new_h) * 0.15)
+        crop_box = (0, max(0, top), orig_w, min(orig_h, top + new_h))
+
+    cropped = img.crop(crop_box).resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+    mask = Image.new("L", (target_w, target_h), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rounded_rectangle([0, 0, target_w, target_h], radius=radius, fill=255)
+
+    output = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
+    output.paste(cropped, (0, 0), mask)
+    return output
+
+
 def _build_va_card(
     va_img_path: Union[Path, str, None],
     title_text: str,
     subtitle_text: str,
     color_hex: str,
-    card_size: Tuple[int, int] = (340, 330),
-    img_h: int = 240,
-    radius: int = 18,
+    card_size: Tuple[int, int] = (350, 110),
+    radius: int = 14,
 ) -> Image.Image:
-    """Renders a vertical card with VA photo on top and full accent-color text banner on bottom."""
-    total_w, card_h = card_size
-    banner_h = card_h - img_h
+    """Renders a sleek horizontal glassmorphic card with VA photo, accent border, and VA/character text."""
+    cw, ch = card_size
 
     # Parse color
     try:
@@ -32,49 +57,49 @@ def _build_va_card(
     except Exception:
         r, g, b = 255, 127, 39
 
-    # 1. Top Half: Photo Container
-    top_container = Image.new("RGBA", (total_w, img_h), (r, g, b, 120))
+    # Glassmorphic card container
+    card_bg = Image.new("RGBA", (cw, ch), (24, 24, 34, 225))
+    card_draw = ImageDraw.Draw(card_bg)
+
+    # Accent left bar
+    card_draw.rectangle([0, 0, 8, ch], fill=(r, g, b, 255))
+    card_draw.rectangle([8, 0, cw, ch], outline=(255, 255, 255, 35), width=1)
+
+    # Photo thumbnail inside card (placed left)
+    thumb_w = 90
+    thumb_h = ch - 20
+    thumb_x = 20
+    thumb_y = 10
+
     if va_img_path and Path(va_img_path).exists():
         try:
             va_raw = Image.open(va_img_path).convert("RGBA")
-            orig_w, orig_h = va_raw.size
-            target_ratio = total_w / img_h
-            orig_ratio = orig_w / orig_h
-
-            if orig_ratio > target_ratio:
-                new_w = int(orig_h * target_ratio)
-                left = (orig_w - new_w) // 2
-                crop_box = (left, 0, left + new_w, orig_h)
-            else:
-                new_h = int(orig_w / target_ratio)
-                top = int((orig_h - new_h) * 0.15)
-                crop_box = (0, max(0, top), orig_w, min(orig_h, top + new_h))
-
-            cropped = va_raw.crop(crop_box).resize((total_w, img_h), Image.Resampling.LANCZOS)
-            top_container.paste(cropped, (0, 0))
+            va_processed = _crop_and_resize_avatar(va_raw, (thumb_w, thumb_h), radius=10)
+            card_bg.paste(va_processed, (thumb_x, thumb_y), va_processed)
         except Exception as e:
-            logger.warning(f"Failed to process VA photo {va_img_path}: {e}")
-
-    # 2. Bottom Half: Banner Container
-    banner = Image.new("RGBA", (total_w, banner_h), (r, g, b, 255))
-    draw_b = ImageDraw.Draw(banner)
-
-    # Determine text contrast color (dark vs light)
-    luminance = 0.299 * r + 0.587 * g + 0.114 * b
-    if luminance > 140:
-        dark_text_color = (20, 20, 30, 255)
-        sub_text_color = (40, 40, 60, 240)
+            logger.warning(f"Failed to load avatar photo {va_img_path}: {e}")
+            card_draw.rounded_rectangle(
+                [thumb_x, thumb_y, thumb_x + thumb_w, thumb_y + thumb_h],
+                radius=10,
+                fill=(r, g, b, 100),
+            )
     else:
-        dark_text_color = (255, 255, 255, 255)
-        sub_text_color = (235, 235, 245, 230)
+        card_draw.rounded_rectangle(
+            [thumb_x, thumb_y, thumb_x + thumb_w, thumb_y + thumb_h],
+            radius=10,
+            fill=(r, g, b, 100),
+        )
+
+    # Text block on right side of avatar photo
+    text_x = thumb_x + thumb_w + 16
 
     try:
-        font_title = ImageFont.truetype("arialbd.ttf", 24)
-        font_subtitle = ImageFont.truetype("arial.ttf", 18)
+        font_title = ImageFont.truetype("arialbd.ttf", 22)
+        font_subtitle = ImageFont.truetype("arial.ttf", 16)
     except Exception:
         try:
-            font_title = ImageFont.truetype("arial.ttf", 24)
-            font_subtitle = ImageFont.truetype("arial.ttf", 18)
+            font_title = ImageFont.truetype("arial.ttf", 22)
+            font_subtitle = ImageFont.truetype("arial.ttf", 16)
         except Exception:
             font_title = ImageFont.load_default()
             font_subtitle = ImageFont.load_default()
@@ -82,39 +107,24 @@ def _build_va_card(
     t_bbox = font_title.getbbox(title_text)
     s_bbox = font_subtitle.getbbox(subtitle_text) if subtitle_text else (0, 0, 0, 0)
 
-    t_w = t_bbox[2] - t_bbox[0]
     t_h = t_bbox[3] - t_bbox[1]
-    s_w = s_bbox[2] - s_bbox[0]
     s_h = s_bbox[3] - s_bbox[1]
-
     line_spacing = 6
+
     text_block_h = t_h + (line_spacing + s_h if subtitle_text else 0)
-    start_y = max(4, (banner_h - text_block_h) // 2 - 2)
+    start_y = max(10, (ch - text_block_h) // 2 - 2)
 
-    t_x = (total_w - t_w) // 2
-    draw_b.text((t_x, start_y), title_text, font=font_title, fill=dark_text_color)
-
+    card_draw.text((text_x, start_y), title_text, font=font_title, fill=(255, 255, 255, 255))
     if subtitle_text:
-        s_y = start_y + t_h + line_spacing
-        s_x = (total_w - s_w) // 2
-        draw_b.text((s_x, s_y), subtitle_text, font=font_subtitle, fill=sub_text_color)
+        card_draw.text((text_x, start_y + t_h + line_spacing), subtitle_text, font=font_subtitle, fill=(r, g, b, 230))
 
-    # 3. Combine Top & Bottom flush
-    card_raw = Image.new("RGBA", (total_w, card_h), (0, 0, 0, 0))
-    card_raw.paste(top_container, (0, 0))
-    card_raw.paste(banner, (0, img_h))
-
-    # Outer border line for polished feel
-    draw_card = ImageDraw.Draw(card_raw)
-    draw_card.rectangle([0, 0, total_w - 1, card_h - 1], outline=(255, 255, 255, 60), width=1)
-
-    # 4. Outer rounded corner mask around entire card
-    mask = Image.new("L", (total_w, card_h), 0)
+    # Outer rounded corner mask around entire card
+    mask = Image.new("L", (cw, ch), 0)
     draw_mask = ImageDraw.Draw(mask)
-    draw_mask.rounded_rectangle([(0, 0), (total_w, card_h)], radius=radius, fill=255)
+    draw_mask.rounded_rectangle([(0, 0), (cw, ch)], radius=radius, fill=255)
 
-    final_card = Image.new("RGBA", (total_w, card_h), (0, 0, 0, 0))
-    final_card.paste(card_raw, (0, 0), mask=mask)
+    final_card = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    final_card.paste(card_bg, (0, 0), mask=mask)
     return final_card
 
 
@@ -123,7 +133,7 @@ def generate_radio_overlay_image(
     output_path: Path,
     canvas_size: Tuple[int, int] = (1920, 1080),
 ) -> Path:
-    """Renders a 1920x1080 transparent PNG with vertical VA cards for each speaker slot.
+    """Renders a 1920x1080 transparent PNG with avatar cards for each speaker slot.
 
     :param speaker_map_or_path: Speaker map dictionary or path to speaker_map.toml
     :param output_path: Destination PNG filepath
@@ -152,7 +162,7 @@ def generate_radio_overlay_image(
             total_slots=total_slots,
             canvas_width=canvas_w,
             canvas_height=canvas_h,
-            card_width=340,
+            card_width=350,
             card_margin_left=50,
         )
 
@@ -168,13 +178,13 @@ def generate_radio_overlay_image(
             title_text=name,
             subtitle_text=character if character else "",
             color_hex=color_hex,
-            card_size=(cw, ch),
-            img_h=max(60, ch - 85),
-            radius=16,
+            card_size=(cw, min(ch, 110)),
+            radius=14,
         )
 
-        # Paste card onto main canvas
-        img.paste(card_img, (cx, cy), card_img)
+        # Paste card onto main canvas centered in slot Y
+        card_y = int(cy + (ch - card_img.height) / 2)
+        img.paste(card_img, (cx, card_y), card_img)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path, "PNG")

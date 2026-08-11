@@ -34,27 +34,35 @@ def generate_ass_file(
         pyass.Color(r=200, g=255, b=200, a=0),  # Light Green
     ]
 
-    # Build a lookup from speaker map (name → slot, color, etc.)
+    # Build lookups from speaker_map (raw label / name → slot, color, mapped name)
     map_colors: dict[str, pyass.Color] = {}
     map_slots: dict[str, int] = {}
+    raw_to_name: dict[str, str] = {}
+
     if speaker_map:
-        for entry in speaker_map.values():
-            spk_name = entry["name"]
+        for label, entry in speaker_map.items():
+            spk_name = entry.get("name", label)
+            raw_to_name[label] = spk_name
+            raw_to_name[spk_name] = spk_name
             if entry.get("color"):
-                map_colors[spk_name] = hex_to_pyass_color(entry["color"])
+                color_val = hex_to_pyass_color(entry["color"])
+                map_colors[label] = color_val
+                map_colors[spk_name] = color_val
             if entry.get("slot") is not None:
+                map_slots[label] = entry["slot"]
                 map_slots[spk_name] = entry["slot"]
 
-    total_slots = max(len(map_slots), len(unique_speakers)) if map_slots else len(unique_speakers)
+    total_slots = max([s for s in map_slots.values() if s is not None] or [1]) if map_slots else len(unique_speakers)
 
     styles = []
     speakerOriginToStyleMap = {}
 
     for i, speaker_name in enumerate(sorted(unique_speakers)):
-        style_name = speaker_name if speaker_name else "Default"
-        c = map_colors.get(style_name, auto_colors[i % len(auto_colors)])
+        resolved_name = raw_to_name.get(speaker_name, speaker_name)
+        style_name = resolved_name if resolved_name else "Default"
+        c = map_colors.get(speaker_name, map_colors.get(resolved_name, auto_colors[i % len(auto_colors)]))
 
-        slot = map_slots.get(style_name)
+        slot = map_slots.get(speaker_name, map_slots.get(resolved_name))
         if slot is not None:
             from autosub.core.speaker_map import calculate_speaker_slot_layout
             layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
@@ -88,16 +96,18 @@ def generate_ass_file(
             )
         styles.append(st)
         speakerOriginToStyleMap[speaker_name] = style_name
+        speakerOriginToStyleMap[resolved_name] = style_name
 
     # 2. Convert SubtitleLines into pyass Events
     pyass_events: List[pyass.Event] = []
 
     for line in lines:
         assigned_speaker = line.speaker if line.speaker else "Default"
-        assigned_style = speakerOriginToStyleMap.get(assigned_speaker, "Default")
-        event_name = line.role or (line.speaker if line.speaker else "")
+        resolved_name = raw_to_name.get(assigned_speaker, assigned_speaker)
+        assigned_style = speakerOriginToStyleMap.get(resolved_name, speakerOriginToStyleMap.get(assigned_speaker, "Default"))
+        event_name = line.role or (resolved_name if resolved_name else "")
 
-        slot = map_slots.get(assigned_speaker)
+        slot = map_slots.get(assigned_speaker, map_slots.get(resolved_name))
         if slot is not None:
             from autosub.core.speaker_map import calculate_speaker_slot_layout
             layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
