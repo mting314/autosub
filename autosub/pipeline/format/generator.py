@@ -129,6 +129,8 @@ def generate_ass_file(
 
     # 3. Create the pyass Script container
     script = pyass.Script(styles=styles, events=pyass_events)
+    script.scriptInfo.append(("PlayResX", "1920"))
+    script.scriptInfo.append(("PlayResY", "1080"))
 
     # 4. Dump to disk
     with open(output_path, "w", encoding="utf-8") as f:
