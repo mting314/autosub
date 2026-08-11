@@ -62,9 +62,9 @@ def calculate_speaker_slot_layout(
     total_slots: int = 3,
     canvas_width: int = 1920,
     canvas_height: int = 1080,
-    card_width: int = 300,
-    card_margin_left: int = 50,
-    text_gap: int = 60,
+    card_width: int = 260,
+    card_margin_left: int = 30,
+    text_gap: int = 40,
 ) -> dict[str, int]:
     """Calculate 2D coordinates for avatar cards and subtitle text for a given speaker slot.
 
