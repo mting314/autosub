@@ -871,6 +871,43 @@ def postprocess(
         raise typer.Exit(code=1)
 
 
+@app.command(name="generate-overlay")
+def generate_overlay(
+    speaker_map_path: Path = typer.Option(
+        ...,
+        "--speaker-map",
+        "-s",
+        help="Path to speaker_map.toml defining speaker slots, colors, and avatars.",
+        exists=True,
+        dir_okay=False,
+    ),
+    output: Path = typer.Option(
+        Path("radio_overlay.png"),
+        "--output",
+        "-o",
+        help="Output filepath for the generated 1920x1080 transparent overlay PNG.",
+    ),
+    width: int = typer.Option(1920, "--width", help="Canvas width in pixels."),
+    height: int = typer.Option(1080, "--height", help="Canvas height in pixels."),
+):
+    """
+    Generate a 1920x1080 transparent PNG background overlay featuring avatar cards
+    for radio subtitling based on a speaker map TOML configuration.
+    """
+    from autosub.tools.overlay_generator import generate_radio_overlay_image
+
+    try:
+        out_path = generate_radio_overlay_image(
+            speaker_map_or_path=speaker_map_path,
+            output_path=output,
+            canvas_size=(width, height),
+        )
+        typer.echo(f"Successfully generated radio overlay image: {out_path}")
+    except Exception as e:
+        logger.error(f"Failed to generate overlay image: {e}")
+        raise typer.Exit(code=1)
+
+
 @app.command(name="assign-speakers")
 def assign_speakers(
     ass_file: Path = typer.Argument(

@@ -34,12 +34,18 @@ def generate_ass_file(
         pyass.Color(r=200, g=255, b=200, a=0),  # Light Green
     ]
 
-    # Build a color lookup from speaker map (name → color)
+    # Build a lookup from speaker map (name → slot, color, etc.)
     map_colors: dict[str, pyass.Color] = {}
+    map_slots: dict[str, int] = {}
     if speaker_map:
         for entry in speaker_map.values():
+            spk_name = entry["name"]
             if entry.get("color"):
-                map_colors[entry["name"]] = hex_to_pyass_color(entry["color"])
+                map_colors[spk_name] = hex_to_pyass_color(entry["color"])
+            if entry.get("slot") is not None:
+                map_slots[spk_name] = entry["slot"]
+
+    total_slots = max(len(map_slots), len(unique_speakers)) if map_slots else len(unique_speakers)
 
     styles = []
     speakerOriginToStyleMap = {}
@@ -48,20 +54,38 @@ def generate_ass_file(
         style_name = speaker_name if speaker_name else "Default"
         c = map_colors.get(style_name, auto_colors[i % len(auto_colors)])
 
-        # Build style
-        st = pyass.Style(
-            name=style_name,
-            fontName="Arial",
-            fontSize=48,
-            isBold=True,
-            primaryColor=c,
-            outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
-            backColor=pyass.Color(r=0, g=0, b=0, a=0),
-            outline=2.0,
-            shadow=2.0,
-            alignment=pyass.Alignment.BOTTOM,
-            marginV=20,
-        )
+        slot = map_slots.get(style_name)
+        if slot is not None:
+            from autosub.core.speaker_map import calculate_speaker_slot_layout
+            layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
+            st = pyass.Style(
+                name=style_name,
+                fontName="Arial",
+                fontSize=44,
+                isBold=True,
+                primaryColor=c,
+                outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
+                backColor=pyass.Color(r=0, g=0, b=0, a=0),
+                outline=2.0,
+                shadow=2.0,
+                alignment=pyass.Alignment.CENTER_LEFT,
+                marginL=layout["text_x"],
+                marginV=0,
+            )
+        else:
+            st = pyass.Style(
+                name=style_name,
+                fontName="Arial",
+                fontSize=48,
+                isBold=True,
+                primaryColor=c,
+                outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
+                backColor=pyass.Color(r=0, g=0, b=0, a=0),
+                outline=2.0,
+                shadow=2.0,
+                alignment=pyass.Alignment.BOTTOM,
+                marginV=20,
+            )
         styles.append(st)
         speakerOriginToStyleMap[speaker_name] = style_name
 
@@ -69,10 +93,17 @@ def generate_ass_file(
     pyass_events: List[pyass.Event] = []
 
     for line in lines:
-        assigned_style = speakerOriginToStyleMap.get(
-            line.speaker if line.speaker else "Default", "Default"
-        )
+        assigned_speaker = line.speaker if line.speaker else "Default"
+        assigned_style = speakerOriginToStyleMap.get(assigned_speaker, "Default")
         event_name = line.role or (line.speaker if line.speaker else "")
+
+        slot = map_slots.get(assigned_speaker)
+        if slot is not None:
+            from autosub.core.speaker_map import calculate_speaker_slot_layout
+            layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
+            event_text = f"{{\\pos({layout['text_x']},{layout['text_y']})}}{line.text}"
+        else:
+            event_text = line.text
 
         if line.corner:
             pyass_events.append(
@@ -92,7 +123,7 @@ def generate_ass_file(
                 end=pyass.timedelta(seconds=line.end_time),
                 style=assigned_style,
                 name=event_name,
-                text=line.text,
+                text=event_text,
             )
         )
 

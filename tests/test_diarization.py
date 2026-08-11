@@ -222,10 +222,12 @@ color = "#A0D0FF"
     map_file.write_text(toml_content, encoding="utf-8")
 
     result = load_speaker_map(map_file)
-    assert result == {
-        "0": {"name": "Suzuki Minori", "character": "Ena Shinonome", "color": "#FFA0A0"},
-        "1": {"name": "Sato Hinata", "character": "Mizuki Akiyama", "color": "#A0D0FF"},
-    }
+    assert result["0"]["name"] == "Suzuki Minori"
+    assert result["0"]["character"] == "Ena Shinonome"
+    assert result["0"]["color"] == "#FFA0A0"
+    assert result["1"]["name"] == "Sato Hinata"
+    assert result["1"]["character"] == "Mizuki Akiyama"
+    assert result["1"]["color"] == "#A0D0FF"
 
 
 def test_load_speaker_map_missing_color(tmp_path):
@@ -383,5 +385,52 @@ def test_many_to_one_speaker_mapping():
     }
     remap_speaker_labels(lines, speaker_map)
     assert all(l.speaker == "Date Sayuri" for l in lines)
+
+
+def test_generator_slot_ass_positions(tmp_path):
+    """Verify generate_ass_file includes ASS \\pos tags for slot-mapped speakers."""
+    from autosub.pipeline.format.generator import generate_ass_file
+    import pyass
+
+    lines = [
+        SubtitleLine(text="Kanon talking", start_time=0.0, end_time=2.0, speaker="0"),
+        SubtitleLine(text="Keke talking", start_time=1.0, end_time=3.0, speaker="1"),
+    ]
+    speaker_map = {
+        "0": {"name": "Date Sayuri", "character": "Kanon", "color": "#FF9E00", "slot": 1},
+        "1": {"name": "Liyuu", "character": "Keke", "color": "#00A3E0", "slot": 2},
+    }
+    ass_path = tmp_path / "test.ass"
+    generate_ass_file(lines, ass_path, speaker_map=speaker_map)
+
+    with open(ass_path, "r", encoding="utf-8") as f:
+        script = pyass.load(f)
+
+    events = script.events
+    assert len(events) == 2
+    assert r"\pos(" in events[0].text
+    assert r"\pos(" in events[1].text
+    assert events[0].style == "Date Sayuri"
+    assert events[1].style == "Liyuu"
+
+
+def test_per_speaker_timing_rules_overlapping():
+    """Verify apply_timing_rules retains overlapping timestamps when speakers differ."""
+    from autosub.pipeline.format.timing import apply_timing_rules
+
+    lines = [
+        SubtitleLine(text="Speaker A line", start_time=1.0, end_time=4.0, speaker="A"),
+        SubtitleLine(text="Speaker B line", start_time=2.0, end_time=5.0, speaker="B"),
+    ]
+    processed = apply_timing_rules(lines)
+
+    assert len(processed) == 2
+    # Ensure timing was not collapsed between A and B
+    a_line = next(l for l in processed if l.speaker == "A")
+    b_line = next(l for l in processed if l.speaker == "B")
+    assert a_line.start_time == 1.0
+    assert b_line.start_time == 2.0
+    assert b_line.start_time < a_line.end_time  # Overlapping dialogue preserved!
+
 
 

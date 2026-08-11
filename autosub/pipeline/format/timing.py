@@ -360,32 +360,66 @@ def apply_timing_rules(
     interjection_max_duration_ms: int = 1000,
     interjection_merge_threshold_ms: int = 1500,
     interjection_gap_threshold_ms: int = 2000,
+    per_speaker: bool = False,
 ) -> List[SubtitleLine]:
-    """Applies advanced timing rules to subtitle lines."""
+    """Applies advanced timing rules to subtitle lines.
+
+    When per_speaker is True or multiple distinct speakers are present,
+    timing rules run independently per speaker to allow concurrent overlapping dialogue.
+    """
 
     if not lines:
         return []
 
     keyframes = sorted(keyframes_ms) if keyframes_ms else []
-    segments = [SegmentMS(line) for line in lines]
 
-    # Pass 0: Speaker-aware interjection merging (before gap snapping)
-    segments = _apply_interjection_merging(
-        segments,
-        interjection_max_duration_ms,
-        interjection_merge_threshold_ms,
-        interjection_gap_threshold_ms,
-    )
+    # Check if multi-speaker timing is needed
+    unique_speakers = {line.speaker for line in lines if line.speaker}
+    if per_speaker or len(unique_speakers) > 1:
+        # Group lines by speaker
+        speaker_groups: dict[Optional[str], List[SubtitleLine]] = {}
+        for line in lines:
+            speaker_groups.setdefault(line.speaker, []).append(line)
 
-    segments = _apply_min_duration_padding(
-        segments, keyframes, video_duration_ms, min_duration_ms
-    )
-    segments = _apply_gap_snapping(
-        segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
-    )
-    segments = _apply_micro_snapping(
-        segments, keyframes, snap_threshold_ms, video_duration_ms
-    )
+        all_processed: List[SegmentMS] = []
+        for spk, spk_lines in speaker_groups.items():
+            spk_segments = [SegmentMS(line) for line in spk_lines]
+            spk_segments = _apply_interjection_merging(
+                spk_segments,
+                interjection_max_duration_ms,
+                interjection_merge_threshold_ms,
+                interjection_gap_threshold_ms,
+            )
+            spk_segments = _apply_min_duration_padding(
+                spk_segments, keyframes, video_duration_ms, min_duration_ms
+            )
+            spk_segments = _apply_gap_snapping(
+                spk_segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
+            )
+            spk_segments = _apply_micro_snapping(
+                spk_segments, keyframes, snap_threshold_ms, video_duration_ms
+            )
+            all_processed.extend(spk_segments)
+
+        all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
+        segments = all_processed
+    else:
+        segments = [SegmentMS(line) for line in lines]
+        segments = _apply_interjection_merging(
+            segments,
+            interjection_max_duration_ms,
+            interjection_merge_threshold_ms,
+            interjection_gap_threshold_ms,
+        )
+        segments = _apply_min_duration_padding(
+            segments, keyframes, video_duration_ms, min_duration_ms
+        )
+        segments = _apply_gap_snapping(
+            segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
+        )
+        segments = _apply_micro_snapping(
+            segments, keyframes, snap_threshold_ms, video_duration_ms
+        )
 
     # Final Bounds Check
     for seg in segments:

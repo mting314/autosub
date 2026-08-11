@@ -17,26 +17,78 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
         name = "Suzuki Minori"
         character = "Ena Shinonome"
         color = "#FFA0A0"
+        slot = 1
+        avatar = "assets/avatars/minoringo.png"
 
         [speakers."1"]
         name = "Sato Hinata"
         character = "Mizuki Akiyama"
         color = "#A0D0FF"
+        slot = 2
+        avatar = "assets/avatars/hinata.png"
 
-    Returns {"0": {"name": ..., "character": ..., "color": ...}, ...}
+    Returns {"0": {"name": ..., "character": ..., "color": ..., "slot": ..., "avatar": ...}, ...}
     """
     with open(path, "rb") as f:
         data = tomllib.load(f)
 
     speakers = data.get("speakers", {})
     result = {}
+    default_slot = 1
     for label, entry in speakers.items():
+        slot_val = entry.get("slot")
+        if slot_val is None:
+            slot_val = default_slot
+            default_slot += 1
+        else:
+            slot_val = int(slot_val)
+
+        avatar_path = entry.get("avatar")
+        if avatar_path:
+            avatar_path = str(Path(avatar_path))
+
         result[str(label)] = {
             "name": entry.get("name", str(label)),
             "character": entry.get("character"),
             "color": entry.get("color"),
+            "slot": slot_val,
+            "avatar": avatar_path,
         }
     return result
+
+
+def calculate_speaker_slot_layout(
+    slot: int,
+    total_slots: int = 3,
+    canvas_width: int = 1920,
+    canvas_height: int = 1080,
+    card_width: int = 300,
+    card_margin_left: int = 50,
+    text_gap: int = 60,
+) -> dict[str, int]:
+    """Calculate 2D coordinates for avatar cards and subtitle text for a given speaker slot.
+
+    Slots are 1-indexed (1 = top, 2 = middle, 3 = bottom, etc.).
+    """
+    total_slots = max(1, total_slots)
+    slot_index = max(0, slot - 1)
+    slot_height = canvas_height / total_slots
+
+    card_h = int(slot_height * 0.75)
+    center_y = int((slot_index + 0.5) * slot_height)
+    card_top_y = center_y - (card_h // 2)
+
+    text_x = card_margin_left + card_width + text_gap
+
+    return {
+        "slot": slot,
+        "text_x": text_x,
+        "text_y": center_y,
+        "card_x": card_margin_left,
+        "card_y": card_top_y,
+        "card_width": card_width,
+        "card_height": card_h,
+    }
 
 
 def build_speaker_prompt(speaker_map: dict[str, dict]) -> str:
@@ -66,3 +118,4 @@ def hex_to_pyass_color(hex_color: str) -> pyass.Color:
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
     return pyass.Color(r=r, g=g, b=b, a=0)
+
