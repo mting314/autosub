@@ -111,6 +111,8 @@ def _parse_words(
                 start, end = _clamp_word_timestamps(raw_start, raw_end, chunk_duration)
                 if (start, end) != (raw_start, raw_end):
                     clamped_count += 1
+                if (start, end) != (raw_start, raw_end):
+                    clamped_count += 1
                 words_data.append(
                     TranscribedWord(
                         word=word_info.word,
@@ -473,6 +475,7 @@ def transcribe(
     whisper_batch_size: int = 16,
     whisper_diarize: bool = False,
     whisper_hf_token: str | None = None,
+    replacements: dict[str, str] | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -605,3 +608,24 @@ def transcribe(
         handle.write(final_result.model_dump_json(indent=2))
 
     return final_result
+
+
+def _parse_batch_response(
+    response, gcs_uri: str, time_offset: float = 0.0
+) -> list[TranscribedWord]:
+    """Parse a BatchRecognizeResponse into TranscribedWord objects."""
+    words = []
+    for result in response.results[gcs_uri].inline_result.transcript.results:
+        for alt in result.alternatives:
+            for w in alt.words:
+                words.append(
+                    TranscribedWord(
+                        word=w.word,
+                        start_time=_duration_seconds(w.start_offset) + time_offset,
+                        end_time=_duration_seconds(w.end_offset) + time_offset,
+                        speaker=w.speaker_label
+                        if hasattr(w, "speaker_label")
+                        else None,
+                    )
+                )
+    return words
