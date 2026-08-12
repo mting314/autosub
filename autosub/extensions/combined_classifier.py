@@ -71,9 +71,9 @@ class CombinedClassifier(BaseStructuredLLM):
     def _get_system_instruction(self, num_lines: int) -> str:
         segments_text = ""
         for seg in self._segments:
-            segments_text += f'- {seg["name"]}: {seg.get("description", "")}\n'
+            segments_text += f"- {seg['name']}: {seg.get('description', '')}\n"
             if seg.get("cues"):
-                segments_text += f'  Common cue phrases: {", ".join(seg["cues"])}\n'
+                segments_text += f"  Common cue phrases: {', '.join(seg['cues'])}\n"
 
         return (
             "You are analyzing a Japanese solo voice-actress radio show transcript.\n"

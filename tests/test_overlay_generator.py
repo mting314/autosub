@@ -1,26 +1,30 @@
-from pathlib import Path
 from PIL import Image
-import pytest
 
-from autosub.core.speaker_map import calculate_speaker_slot_layout, load_speaker_map
+from autosub.core.speaker_map import calculate_speaker_slot_layout
 from autosub.tools.overlay_generator import generate_radio_overlay_image
 
 
 def test_calculate_speaker_slot_layout():
     # Slot 1 of 3 on 1920x1080 canvas
-    layout1 = calculate_speaker_slot_layout(slot=1, total_slots=3, canvas_width=1920, canvas_height=1080)
+    layout1 = calculate_speaker_slot_layout(
+        slot=1, total_slots=3, canvas_width=1920, canvas_height=1080
+    )
     assert layout1["slot"] == 1
-    assert layout1["text_x"] == 410  # 50 + 300 + 60
+    assert layout1["text_x"] == 330  # 30 + 260 + 40
     assert layout1["text_y"] == 180  # 1080 / 3 * 0.5
-    assert layout1["card_x"] == 50
+    assert layout1["card_x"] == 30
 
     # Slot 2 of 3
-    layout2 = calculate_speaker_slot_layout(slot=2, total_slots=3, canvas_width=1920, canvas_height=1080)
+    layout2 = calculate_speaker_slot_layout(
+        slot=2, total_slots=3, canvas_width=1920, canvas_height=1080
+    )
     assert layout2["slot"] == 2
     assert layout2["text_y"] == 540  # 1080 / 3 * 1.5
 
     # Slot 3 of 3
-    layout3 = calculate_speaker_slot_layout(slot=3, total_slots=3, canvas_width=1920, canvas_height=1080)
+    layout3 = calculate_speaker_slot_layout(
+        slot=3, total_slots=3, canvas_width=1920, canvas_height=1080
+    )
     assert layout3["slot"] == 3
     assert layout3["text_y"] == 900  # 1080 / 3 * 2.5
 
@@ -43,7 +47,9 @@ slot = 2
     map_file.write_text(toml_content, encoding="utf-8")
 
     out_png = tmp_path / "overlay.png"
-    result_path = generate_radio_overlay_image(map_file, out_png, canvas_size=(1920, 1080))
+    result_path = generate_radio_overlay_image(
+        map_file, out_png, canvas_size=(1920, 1080)
+    )
 
     assert result_path.exists()
     assert result_path == out_png

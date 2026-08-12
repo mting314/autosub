@@ -349,7 +349,9 @@ def test_parse_words_clamps_bogus_timestamps():
             ]
         )
     ]
-    words = transcribe_main._parse_words(results, offset_seconds=1080.0, chunk_duration=1080.0)
+    words = transcribe_main._parse_words(
+        results, offset_seconds=1080.0, chunk_duration=1080.0
+    )
     # Bogus word: end clamped to start (100.0), then offset applied
     assert words[0].start_time == 1180.0
     assert words[0].end_time == 1180.0

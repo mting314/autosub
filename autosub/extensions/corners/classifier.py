@@ -62,9 +62,9 @@ class VertexCornerClassifier(BaseStructuredLLM):
     def _get_system_instruction(self, num_lines: int) -> str:
         segments_text = ""
         for seg in self._segments:
-            segments_text += f'- {seg["name"]}: {seg.get("description", "")}\n'
+            segments_text += f"- {seg['name']}: {seg.get('description', '')}\n"
             if seg.get("cues"):
-                segments_text += f'  Common cue phrases: {", ".join(seg["cues"])}\n'
+                segments_text += f"  Common cue phrases: {', '.join(seg['cues'])}\n"
 
         return (
             "You are analyzing a Japanese radio show or program transcript for segment transitions.\n"
@@ -145,9 +145,7 @@ def classify_corners_with_vertex(
     provider = config.get("provider", "google-vertex")
     project_id = config.get("project_id")
     if provider == "google-vertex" and not project_id:
-        raise ValueError(
-            "corners Vertex mode requires a Google Cloud project id."
-        )
+        raise ValueError("corners Vertex mode requires a Google Cloud project id.")
 
     classifier = VertexCornerClassifier(
         project_id=project_id,

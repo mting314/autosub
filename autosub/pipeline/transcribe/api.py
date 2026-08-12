@@ -134,9 +134,7 @@ def transcribe_uri(
     """
     endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
     location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
-    client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint=endpoint)
-    )
+    client = speech_v2.SpeechClient(client_options=ClientOptions(api_endpoint=endpoint))
 
     features = speech_v2.RecognitionFeatures(
         enable_word_time_offsets=True,
@@ -206,9 +204,7 @@ def transcribe_local_file(
     """
     endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
     location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
-    client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint=endpoint)
-    )
+    client = speech_v2.SpeechClient(client_options=ClientOptions(api_endpoint=endpoint))
 
     features = speech_v2.RecognitionFeatures(
         enable_word_time_offsets=True,

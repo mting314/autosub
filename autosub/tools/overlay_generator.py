@@ -52,7 +52,9 @@ def _build_va_card(
                 top = int((orig_h - new_h) * 0.12)
                 crop_box = (0, max(0, top), orig_w, min(orig_h, top + new_h))
 
-            cropped = va_raw.crop(crop_box).resize((total_w, img_h), Image.Resampling.LANCZOS)
+            cropped = va_raw.crop(crop_box).resize(
+                (total_w, img_h), Image.Resampling.LANCZOS
+            )
             top_container.paste(cropped, (0, 0))
         except Exception as e:
             logger.warning(f"Failed to process VA photo {va_img_path}: {e}")
@@ -91,7 +93,7 @@ def _build_va_card(
 
     line_spacing = 4
     text_block_h = t_h + (line_spacing + s_h if subtitle_text else 0)
-    start_y = max(4, (banner_height - text_block_h) // 2 - 2)
+    start_y = max(4, int((banner_height - text_block_h) // 2 - 2))
 
     t_x = (total_w - t_w) // 2
     draw_b.text((t_x, start_y), title_text, font=font_title, fill=dark_text_color)
@@ -108,7 +110,9 @@ def _build_va_card(
 
     # Outer subtle border line
     draw_card = ImageDraw.Draw(card_raw)
-    draw_card.rectangle([0, 0, total_w - 1, card_h - 1], outline=(255, 255, 255, 60), width=1)
+    draw_card.rectangle(
+        [0, 0, total_w - 1, card_h - 1], outline=(255, 255, 255, 60), width=1
+    )
 
     # 4. Single outer rounded mask around entire card
     mask = Image.new("L", (total_w, card_h), 0)

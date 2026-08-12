@@ -1,4 +1,3 @@
-import subprocess
 import tempfile
 import logging
 import ffmpeg
@@ -42,8 +41,8 @@ def extract_audio(
             input_args["to"] = end_time
 
         output_args: dict = {
-            "ac": 1,       # Mono channel
-            "ar": "16k",   # 16kHz sample rate
+            "ac": 1,  # Mono channel
+            "ar": "16k",  # 16kHz sample rate
             "loglevel": "error",
         }
         if opus:

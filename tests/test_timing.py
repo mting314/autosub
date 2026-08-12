@@ -268,7 +268,9 @@ def test_interjection_merge_basic():
     lines = [
         SubtitleLine(text="Speaker A start", start_time=0.0, end_time=2.0, speaker="A"),
         SubtitleLine(text="うん", start_time=2.1, end_time=2.4, speaker="B"),
-        SubtitleLine(text="Speaker A continues", start_time=2.5, end_time=4.0, speaker="A"),
+        SubtitleLine(
+            text="Speaker A continues", start_time=2.5, end_time=4.0, speaker="A"
+        ),
     ]
     segments = [SegmentMS(line) for line in lines]
     result = _apply_interjection_merging(
@@ -293,7 +295,9 @@ def test_interjection_extend_basic():
     lines = [
         SubtitleLine(text="Speaker A start", start_time=0.0, end_time=2.0, speaker="A"),
         SubtitleLine(text="そうだね", start_time=2.5, end_time=3.0, speaker="B"),
-        SubtitleLine(text="Speaker A continues", start_time=3.8, end_time=5.0, speaker="A"),
+        SubtitleLine(
+            text="Speaker A continues", start_time=3.8, end_time=5.0, speaker="A"
+        ),
     ]
     segments = [SegmentMS(line) for line in lines]
     result = _apply_interjection_merging(
@@ -312,7 +316,9 @@ def test_interjection_no_merge_b_too_long():
     """B's line is too long to be considered an interjection → no change."""
     lines = [
         SubtitleLine(text="A talks", start_time=0.0, end_time=2.0, speaker="A"),
-        SubtitleLine(text="B has a long response here", start_time=2.1, end_time=3.5, speaker="B"),
+        SubtitleLine(
+            text="B has a long response here", start_time=2.1, end_time=3.5, speaker="B"
+        ),
         SubtitleLine(text="A continues", start_time=3.6, end_time=5.0, speaker="A"),
     ]
     segments = [SegmentMS(line) for line in lines]

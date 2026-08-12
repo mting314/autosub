@@ -1,7 +1,12 @@
 import pyass
 
 from autosub.core.schemas import SubtitleLine, TranscribedWord
-from autosub.core.speaker_map import build_speaker_prompt, hex_to_pyass_color, load_speaker_map, remap_speaker_labels
+from autosub.core.speaker_map import (
+    build_speaker_prompt,
+    hex_to_pyass_color,
+    load_speaker_map,
+    remap_speaker_labels,
+)
 from autosub.pipeline.format.chunker import chunk_words_to_lines
 from autosub.core.profile import load_unified_profile
 
@@ -292,7 +297,11 @@ def test_hex_to_pyass_color_no_hash():
 
 def test_build_speaker_prompt_with_characters():
     speaker_map = {
-        "0": {"name": "Suzuki Minori", "character": "Ena Shinonome", "color": "#FFA0A0"},
+        "0": {
+            "name": "Suzuki Minori",
+            "character": "Ena Shinonome",
+            "color": "#FFA0A0",
+        },
         "1": {"name": "Sato Hinata", "character": "Mizuki Akiyama", "color": "#A0D0FF"},
     }
     result = build_speaker_prompt(speaker_map)
@@ -316,14 +325,17 @@ def test_build_speaker_prompt_without_characters():
 def _make_transcript_result(speaker_labels):
     """Build a mock TranscriptionResult with words tagged by speaker labels."""
     from autosub.core.schemas import TranscriptionResult
+
     words = []
     for i, label in enumerate(speaker_labels):
-        words.append(TranscribedWord(
-            word=f"word{i}",
-            start_time=float(i),
-            end_time=float(i) + 0.5,
-            speaker=label,
-        ))
+        words.append(
+            TranscribedWord(
+                word=f"word{i}",
+                start_time=float(i),
+                end_time=float(i) + 0.5,
+                speaker=label,
+            )
+        )
     return TranscriptionResult(words=words)
 
 
@@ -384,20 +396,24 @@ def test_many_to_one_speaker_mapping():
         "6": {"name": "Date Sayuri", "character": "Kanon", "color": "#FF0000"},
     }
     remap_speaker_labels(lines, speaker_map)
-    assert all(l.speaker == "Date Sayuri" for l in lines)
+    assert all(line.speaker == "Date Sayuri" for line in lines)
 
 
 def test_generator_slot_ass_positions(tmp_path):
     """Verify generate_ass_file includes ASS \\pos tags for slot-mapped speakers."""
     from autosub.pipeline.format.generator import generate_ass_file
-    import pyass
 
     lines = [
         SubtitleLine(text="Kanon talking", start_time=0.0, end_time=2.0, speaker="0"),
         SubtitleLine(text="Keke talking", start_time=1.0, end_time=3.0, speaker="1"),
     ]
     speaker_map = {
-        "0": {"name": "Date Sayuri", "character": "Kanon", "color": "#FF9E00", "slot": 1},
+        "0": {
+            "name": "Date Sayuri",
+            "character": "Kanon",
+            "color": "#FF9E00",
+            "slot": 1,
+        },
         "1": {"name": "Liyuu", "character": "Keke", "color": "#00A3E0", "slot": 2},
     }
     ass_path = tmp_path / "test.ass"
@@ -426,11 +442,8 @@ def test_per_speaker_timing_rules_overlapping():
 
     assert len(processed) == 2
     # Ensure timing was not collapsed between A and B
-    a_line = next(l for l in processed if l.speaker == "A")
-    b_line = next(l for l in processed if l.speaker == "B")
+    a_line = next(ln for ln in processed if ln.speaker == "A")
+    b_line = next(ln for ln in processed if ln.speaker == "B")
     assert a_line.start_time == 1.0
     assert b_line.start_time == 2.0
     assert b_line.start_time < a_line.end_time  # Overlapping dialogue preserved!
-
-
-

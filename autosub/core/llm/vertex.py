@@ -101,9 +101,7 @@ class BaseVertexLLM:
                 continue
             for part in candidate.content.parts:
                 if hasattr(part, "thought") and part.thought and part.text:
-                    logger.debug(
-                        "%s thinking:\n%s", operation_name, part.text[:2000]
-                    )
+                    logger.debug("%s thinking:\n%s", operation_name, part.text[:2000])
 
         if response.text:
             logger.debug("%s raw output:\n%s", operation_name, response.text)

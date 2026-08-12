@@ -394,7 +394,10 @@ def apply_timing_rules(
                 spk_segments, keyframes, video_duration_ms, min_duration_ms
             )
             spk_segments = _apply_gap_snapping(
-                spk_segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
+                spk_segments,
+                keyframes,
+                snap_threshold_ms,
+                conditional_snap_threshold_ms,
             )
             spk_segments = _apply_micro_snapping(
                 spk_segments, keyframes, snap_threshold_ms, video_duration_ms

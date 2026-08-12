@@ -104,7 +104,9 @@ def build_speaker_prompt(speaker_map: dict[str, dict]) -> str:
     return "\n".join(lines)
 
 
-def remap_speaker_labels(lines: list[SubtitleLine], speaker_map: dict[str, dict]) -> None:
+def remap_speaker_labels(
+    lines: list[SubtitleLine], speaker_map: dict[str, dict]
+) -> None:
     """Replace raw API speaker labels with character names. Mutates in place."""
     for line in lines:
         if line.speaker and line.speaker in speaker_map:
@@ -118,4 +120,3 @@ def hex_to_pyass_color(hex_color: str) -> pyass.Color:
     g = int(hex_color[2:4], 16)
     b = int(hex_color[4:6], 16)
     return pyass.Color(r=r, g=g, b=b, a=0)
-
