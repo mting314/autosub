@@ -125,7 +125,7 @@ def generate_radio_overlay_image(
     output_path: Path,
     canvas_size: Tuple[int, int] = (1920, 1080),
 ) -> Path:
-    """Renders a 1920x1080 transparent PNG with vertical VA cards for each speaker slot.
+    """Renders a 1920x1080 transparent PNG with vertical VA cards and translucent text background bars.
 
     :param speaker_map_or_path: Speaker map dictionary or path to speaker_map.toml
     :param output_path: Destination PNG filepath
@@ -142,6 +142,48 @@ def generate_radio_overlay_image(
 
     total_slots = max(len(speaker_map), 1)
 
+    # 1. Draw translucent dark background bars behind subtitle text slots
+    bar_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    bar_draw = ImageDraw.Draw(bar_layer)
+
+    for label, entry in speaker_map.items():
+        slot = entry.get("slot", 1)
+        layout = calculate_speaker_slot_layout(
+            slot=slot,
+            total_slots=total_slots,
+            canvas_width=canvas_w,
+            canvas_height=canvas_h,
+            card_width=260,
+            card_margin_left=30,
+            text_gap=40,
+        )
+
+        cx, cy, cw, ch = (
+            layout["card_x"],
+            layout["card_y"],
+            layout["card_width"],
+            layout["card_height"],
+        )
+
+        center_y = int(cy + ch / 2)
+        bar_h = 100
+        bar_y1 = center_y - (bar_h // 2)
+        bar_y2 = bar_y1 + bar_h
+        bar_x1 = cx + cw + 20
+        bar_x2 = canvas_w - 30
+
+        # Translucent dark charcoal background bar (approx 70% opacity)
+        bar_draw.rounded_rectangle(
+            [(bar_x1, bar_y1), (bar_x2, bar_y2)],
+            radius=14,
+            fill=(14, 14, 20, 175),
+            outline=(255, 255, 255, 30),
+            width=1,
+        )
+
+    img.paste(bar_layer, (0, 0), bar_layer)
+
+    # 2. Render and paste VA cards
     for label, entry in speaker_map.items():
         slot = entry.get("slot", 1)
         name = entry.get("name", label)
