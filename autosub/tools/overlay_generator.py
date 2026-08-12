@@ -144,14 +144,24 @@ def generate_radio_overlay_image(
     canvas_w, canvas_h = canvas_size
     img = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
 
-    total_slots = max(len(speaker_map), 1)
+    valid_slots = [
+        entry.get("slot")
+        for entry in speaker_map.values()
+        if entry.get("slot") is not None
+    ]
+    total_slots = max(valid_slots) if valid_slots else 1
 
     # 1. Draw translucent dark background bars behind subtitle text slots
     bar_layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     bar_draw = ImageDraw.Draw(bar_layer)
 
+    drawn_bar_slots = set()
     for label, entry in speaker_map.items():
         slot = entry.get("slot", 1)
+        if slot in drawn_bar_slots:
+            continue
+        drawn_bar_slots.add(slot)
+
         layout = calculate_speaker_slot_layout(
             slot=slot,
             total_slots=total_slots,
@@ -188,8 +198,13 @@ def generate_radio_overlay_image(
     img.paste(bar_layer, (0, 0), bar_layer)
 
     # 2. Render and paste VA cards
+    drawn_card_slots = set()
     for label, entry in speaker_map.items():
         slot = entry.get("slot", 1)
+        if slot in drawn_card_slots:
+            continue
+        drawn_card_slots.add(slot)
+
         name = entry.get("name", label)
         character = entry.get("character", "")
         color_hex = entry.get("color") or "#FFFFFF"
