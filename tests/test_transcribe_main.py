@@ -71,7 +71,7 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
         language_code: str = "ja-JP",
         vocabulary: list[str] | None = None,
         num_speakers: int | None = None,
-        model: str = "chirp_2",
+        model: str = "chirp_3",
     ) -> SimpleNamespace:
         segment_id = audio_content.decode("utf-8")
         barrier.wait(timeout=2)
@@ -93,7 +93,7 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
     assert [word.start_time for word in result.words] == [0.1, 15.1]
     assert len(result.segments) == 2
     assert result.metadata is not None
-    assert result.metadata.backend == "chirp_2"
+    assert result.metadata.backend == "chirp_3"
     assert output_path.exists()
     assert all(not path.exists() for path in created_audio_paths)
 
@@ -129,7 +129,7 @@ def test_transcribe_fails_if_any_segment_fails(tmp_path, monkeypatch):
         language_code: str = "ja-JP",
         vocabulary: list[str] | None = None,
         num_speakers: int | None = None,
-        model: str = "chirp_2",
+        model: str = "chirp_3",
     ) -> SimpleNamespace:
         segment_id = audio_content.decode("utf-8")
         barrier.wait(timeout=2)
