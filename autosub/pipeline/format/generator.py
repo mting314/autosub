@@ -153,6 +153,12 @@ def generate_ass_file(
     script.scriptInfo.append(("PlayResX", "1920"))
     script.scriptInfo.append(("PlayResY", "1080"))
 
+    # Auto-link project background overlay for Aegisub if present
+    output_dir = Path(output_path).parent
+    bg_overlay = output_dir / "radio_background_with_overlay.png"
+    if bg_overlay.exists():
+        script.scriptInfo.append(("Video File", "radio_background_with_overlay.png"))
+
     # 4. Dump to disk
     with open(output_path, "w", encoding="utf-8") as f:
         pyass.dump(script, f)

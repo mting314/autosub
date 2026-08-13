@@ -246,6 +246,16 @@ def translate_subtitles(
 
     script.events = new_events
 
+    # Auto-link project background overlay for Aegisub if present
+    has_video = any(k == "Video File" for k, _ in script.scriptInfo)
+    if not has_video:
+        output_dir = Path(output_ass_path).parent
+        bg_overlay = output_dir / "radio_background_with_overlay.png"
+        if bg_overlay.exists():
+            script.scriptInfo.append(
+                ("Video File", "radio_background_with_overlay.png")
+            )
+
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
     with open(output_ass_path, "w", encoding="utf-8") as f:
         pyass.dump(script, f)
