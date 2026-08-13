@@ -180,7 +180,7 @@ def generate_radio_overlay_image(
         )
 
         center_y = int(cy + ch / 2)
-        bar_h = 150
+        bar_h = 180
         bar_y1 = center_y - (bar_h // 2)
         bar_y2 = bar_y1 + bar_h
         bar_x1 = cx + cw + 20
