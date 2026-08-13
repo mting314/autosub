@@ -232,7 +232,7 @@ def generate_radio_overlay_image(
             title_text=name,
             subtitle_text=character if character else "",
             color_hex=color_hex,
-            card_size=(cw, 310),
+            card_size=(cw, 330),
             banner_height=70,
             radius=14,
         )
