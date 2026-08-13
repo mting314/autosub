@@ -377,10 +377,10 @@ def transcribe(
         help="Profile name to load transcription vocabulary hints.",
     ),
     transcription_backend: str = typer.Option(
-        "chirp_2",
+        "chirp_3",
         "--backend",
         "--transcription-backend",
-        help="Transcription backend to use ('chirp_2', 'chirp_3', or 'whisperx').",
+        help="Transcription backend to use ('chirp_3' or 'whisperx').",
     ),
     whisper_model: str = typer.Option(
         "large-v2",

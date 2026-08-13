@@ -29,8 +29,8 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
 
     Returns {"0": {"name": ..., "character": ..., "color": ..., "slot": ..., "avatar": ...}, ...}
     """
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
+    with open(path, "r", encoding="utf-8-sig") as f:
+        data = tomllib.loads(f.read())
 
     speakers = data.get("speakers", {})
     result = {}
