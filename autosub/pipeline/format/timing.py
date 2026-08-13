@@ -350,6 +350,23 @@ def _apply_interjection_merging(
     return segments
 
 
+def _prevent_same_speaker_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
+    """Ensure no two segments for the same speaker overlap on screen."""
+    for i in range(len(segments)):
+        seg1 = segments[i]
+        for j in range(i + 1, len(segments)):
+            seg2 = segments[j]
+            if seg1.speaker and seg1.speaker == seg2.speaker:
+                if seg2.start_ms < seg1.end_ms:
+                    max_allowed_end = seg2.start_ms - 50
+                    if max_allowed_end > seg1.start_ms:
+                        seg1.end_ms = max_allowed_end
+                    else:
+                        seg1.end_ms = seg1.start_ms + 500
+                break
+    return segments
+
+
 def apply_timing_rules(
     lines: List[SubtitleLine],
     keyframes_ms: Optional[List[int]] = None,
@@ -402,6 +419,7 @@ def apply_timing_rules(
             spk_segments = _apply_micro_snapping(
                 spk_segments, keyframes, snap_threshold_ms, video_duration_ms
             )
+            spk_segments = _prevent_same_speaker_overlaps(spk_segments)
             all_processed.extend(spk_segments)
 
         all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
@@ -423,6 +441,7 @@ def apply_timing_rules(
         segments = _apply_micro_snapping(
             segments, keyframes, snap_threshold_ms, video_duration_ms
         )
+        segments = _prevent_same_speaker_overlaps(segments)
 
     # Final Bounds Check
     for seg in segments:

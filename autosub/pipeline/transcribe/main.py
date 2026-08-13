@@ -74,6 +74,8 @@ def _clamp_word_timestamps(
 
     if end <= 0 or end < start:
         end = start
+    elif end - start > 3.0:
+        end = start + 1.0
 
     return start, end
 
