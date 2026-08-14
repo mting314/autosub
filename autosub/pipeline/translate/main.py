@@ -250,11 +250,14 @@ def translate_subtitles(
 
         event_idx += 1
 
+        # Auto-wrap single lines that exceed max_len (52 chars) to prevent overlay overflow
+        wrapped_translation = _wrap_long_line(translated_text, max_len=52)
+
         # Update the event with the new text
         if bilingual:
-            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{translated_text}"
+            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{wrapped_translation}"
         else:
-            event.text = translated_text
+            event.text = wrapped_translation
 
         new_events.append(event)
 
@@ -531,3 +534,15 @@ def _translate_chunked(
         all_translated.extend(completed[chunk_idx])
 
     return all_translated, splits
+
+
+def _wrap_long_line(text: str, max_len: int = 52) -> str:
+    """Wraps a single long line at the space closest to the middle if it exceeds max_len."""
+    if len(text) <= max_len or "\\N" in text:
+        return text
+    mid = len(text) // 2
+    spaces = [i for i, c in enumerate(text) if c == " "]
+    if not spaces:
+        return text
+    best_space = min(spaces, key=lambda s: abs(s - mid))
+    return text[:best_space] + "\\N" + text[best_space + 1 :]
