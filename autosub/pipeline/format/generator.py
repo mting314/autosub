@@ -77,7 +77,7 @@ def generate_ass_file(
             st = pyass.Style(
                 name=style_name,
                 fontName="Arial",
-                fontSize=44,
+                fontSize=54,
                 isBold=True,
                 primaryColor=c,
                 outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
@@ -92,7 +92,7 @@ def generate_ass_file(
             st = pyass.Style(
                 name=style_name,
                 fontName="Arial",
-                fontSize=48,
+                fontSize=54,
                 isBold=True,
                 primaryColor=c,
                 outlineColor=pyass.Color(r=0, g=0, b=0, a=0),

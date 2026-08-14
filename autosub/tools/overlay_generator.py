@@ -180,7 +180,7 @@ def generate_radio_overlay_image(
         )
 
         center_y = int(cy + ch / 2)
-        bar_h = 150
+        bar_h = 180
         bar_y1 = center_y - (bar_h // 2)
         bar_y2 = bar_y1 + bar_h
         bar_x1 = cx + cw + 20
@@ -232,7 +232,7 @@ def generate_radio_overlay_image(
             title_text=name,
             subtitle_text=character if character else "",
             color_hex=color_hex,
-            card_size=(cw, 310),
+            card_size=(cw, 330),
             banner_height=70,
             radius=14,
         )
