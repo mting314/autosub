@@ -39,7 +39,9 @@ def main() -> None:
 
     out_files = sorted(chunks_dir.glob("chunk_*_output.json"))
     if wanted:
-        out_files = [f for f in out_files if any(f"chunk_{w}" in f.name for w in wanted)]
+        out_files = [
+            f for f in out_files if any(f"chunk_{w}" in f.name for w in wanted)
+        ]
 
     translator = VertexTranslator(
         project_id=PROJECT_ID,
@@ -54,7 +56,9 @@ def main() -> None:
         in_file = Path(str(out_file).replace("_output.json", "_input.json"))
         ins = json.loads(in_file.read_text(encoding="utf-8"))
         ja = [i["text"] for i in ins]
-        baseline = [o["translated"] for o in json.loads(out_file.read_text(encoding="utf-8"))]
+        baseline = [
+            o["translated"] for o in json.loads(out_file.read_text(encoding="utf-8"))
+        ]
 
         new = translator.translate(ja)
 
@@ -62,13 +66,17 @@ def main() -> None:
         n = _danglers(new)
         base_total += len(b)
         new_total += len(n)
-        print(f"\n=== {out_file.name}: baseline danglers={len(b)}  new-prompt danglers={len(n)} ===")
+        print(
+            f"\n=== {out_file.name}: baseline danglers={len(b)}  new-prompt danglers={len(n)} ==="
+        )
         for t in b:
             print(f"  BASELINE dangles: {t}")
         for t in n:
             print(f"  NEW-PROMPT dangles: {t}")
 
-    print(f"\n########  TOTAL dangling line-ends: baseline={base_total}  new-prompt={new_total}  ########")
+    print(
+        f"\n########  TOTAL dangling line-ends: baseline={base_total}  new-prompt={new_total}  ########"
+    )
 
 
 if __name__ == "__main__":

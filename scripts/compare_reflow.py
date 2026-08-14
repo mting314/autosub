@@ -47,7 +47,9 @@ def _load_chunks(chunks_dir: Path) -> tuple[list[str], list[str]]:
         in_file = Path(str(out_file).replace("_output.json", "_input.json"))
         outs = json.loads(out_file.read_text(encoding="utf-8"))
         outs = outs if isinstance(outs, list) else outs.get("subtitle_translations", [])
-        ins = json.loads(in_file.read_text(encoding="utf-8")) if in_file.exists() else []
+        ins = (
+            json.loads(in_file.read_text(encoding="utf-8")) if in_file.exists() else []
+        )
         en.extend(o.get("translated", "") for o in outs)
         ja.extend(i.get("text", "") for i in ins)
     return ja, en
@@ -129,8 +131,10 @@ def main() -> None:
         if offset is not None:
             sliced = events[offset : offset + len(en)]
             durations, boundaries = _derive(sliced)
-            print(f"Aligned to {original_ass.name} at event offset {offset} "
-                  f"(real timing + speaker boundaries).\n")
+            print(
+                f"Aligned to {original_ass.name} at event offset {offset} "
+                f"(real timing + speaker boundaries).\n"
+            )
         else:
             durations = [2.0] * len(en)
             boundaries = set()
@@ -146,7 +150,9 @@ def main() -> None:
         from autosub.pipeline.translate.reflow_llm import build_llm_resplitter
 
         resplitter = build_llm_resplitter(project_id=PROJECT_ID, model=args.model)
-        print(f"Engine: llm (model={args.model or 'flash-lite default'}, one batched call).\n")
+        print(
+            f"Engine: llm (model={args.model or 'flash-lite default'}, one batched call).\n"
+        )
     else:
         print("Engine: deterministic (no API calls).\n")
 
@@ -165,9 +171,7 @@ def main() -> None:
         else:
             runs.append([i])
 
-    dangling_before = sum(
-        1 for t in en if t.split() and _forbidden_end(t.split()[-1])
-    )
+    dangling_before = sum(1 for t in en if t.split() and _forbidden_end(t.split()[-1]))
     dangling_after = sum(
         1 for t in reflowed if t.split() and _forbidden_end(t.split()[-1])
     )
