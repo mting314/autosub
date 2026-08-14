@@ -695,6 +695,21 @@ def translate(
         exists=True,
         dir_okay=False,
     ),
+    reflow: bool = typer.Option(
+        True,
+        "--reflow/--no-reflow",
+        help="Re-split translated lines at natural English boundaries (moves dangling connectives to the next line).",
+    ),
+    reflow_engine: str = typer.Option(
+        "deterministic",
+        "--reflow-engine",
+        help="Reflow re-split engine: 'deterministic' (no API calls) or 'llm' (cheap flash-lite model chooses break points).",
+    ),
+    reflow_model: str = typer.Option(
+        None,
+        "--reflow-model",
+        help="Model for the 'llm' reflow engine (defaults to flash-lite; override if your project lacks access to it).",
+    ),
 ):
     """
     Step 3: Translates a .ass subtitle file using the configured Translation Engine.
@@ -717,6 +732,9 @@ def translate(
             "vertex_reasoning_dynamic": vertex_reasoning_dynamic,
             "bilingual": bilingual,
             "chunk_size": chunk_size,
+            "reflow": reflow,
+            "reflow_engine": reflow_engine,
+            "reflow_model": reflow_model,
         },
     )
     out = resolved["out"]
@@ -733,6 +751,9 @@ def translate(
     vertex_reasoning_dynamic = resolved["vertex_reasoning_dynamic"]
     bilingual = resolved["bilingual"]
     chunk_size = resolved["chunk_size"]
+    reflow = resolved["reflow"]
+    reflow_engine = resolved["reflow_engine"]
+    reflow_model = resolved["reflow_model"]
 
     if not out:
         out = input_ass.with_name("translated.ass")
@@ -813,6 +834,9 @@ def translate(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            reflow=reflow,
+            reflow_engine=reflow_engine,
+            reflow_model=reflow_model,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -1231,6 +1255,21 @@ def run(
         exists=True,
         dir_okay=False,
     ),
+    reflow: bool = typer.Option(
+        True,
+        "--reflow/--no-reflow",
+        help="Re-split translated lines at natural English boundaries (moves dangling connectives to the next line).",
+    ),
+    reflow_engine: str = typer.Option(
+        "deterministic",
+        "--reflow-engine",
+        help="Reflow re-split engine: 'deterministic' (no API calls) or 'llm' (cheap flash-lite model chooses break points).",
+    ),
+    reflow_model: str = typer.Option(
+        None,
+        "--reflow-model",
+        help="Model for the 'llm' reflow engine (defaults to flash-lite; override if your project lacks access to it).",
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -1261,6 +1300,9 @@ def run(
             "start": start,
             "end": end,
             "chunk_size": chunk_size,
+            "reflow": reflow,
+            "reflow_engine": reflow_engine,
+            "reflow_model": reflow_model,
         },
     )
     out_dir = resolved["out_dir"]
@@ -1286,6 +1328,9 @@ def run(
     start = resolved["start"]
     end = resolved["end"]
     chunk_size = resolved["chunk_size"]
+    reflow = resolved["reflow"]
+    reflow_engine = resolved["reflow_engine"]
+    reflow_model = resolved["reflow_model"]
     time_ranges = _normalize_time_ranges(start, end)
 
     logger.info(f"Starting full autosub pipeline for: {video_path}")
@@ -1496,6 +1541,9 @@ def run(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            reflow=reflow,
+            reflow_engine=reflow_engine,
+            reflow_model=reflow_model,
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
