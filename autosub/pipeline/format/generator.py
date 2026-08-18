@@ -86,6 +86,7 @@ def generate_ass_file(
                 shadow=2.0,
                 alignment=pyass.Alignment.CENTER_LEFT,
                 marginL=layout["text_x"],
+                marginR=80,
                 marginV=0,
             )
         else:
