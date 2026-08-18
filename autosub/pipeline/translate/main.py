@@ -537,9 +537,11 @@ def _translate_chunked(
 
 
 def _wrap_long_line(text: str, max_len: int = 40) -> str:
-    """Wraps lines so that no individual line segment exceeds max_len characters."""
+    """Wraps lines so no sub-line exceeds max_len characters and at most two lines per box."""
     existing_lines = text.split("\\N")
-    if all(len(s.strip()) <= max_len for s in existing_lines):
+    if len(existing_lines) <= 2 and all(
+        len(s.strip()) <= max_len for s in existing_lines
+    ):
         return text
 
     full_text = " ".join(text.replace("\\N", " ").split())
@@ -550,21 +552,25 @@ def _wrap_long_line(text: str, max_len: int = 40) -> str:
     if not words:
         return text
 
-    new_lines: list[str] = []
-    curr_words: list[str] = []
-    curr_len = 0
+    # Attempt a 2-line split at the space nearest the middle of full_text
+    mid = len(full_text) // 2
+    spaces = [i for i, c in enumerate(full_text) if c == " "]
+    if spaces:
+        best_space = min(spaces, key=lambda s: abs(s - mid))
+        l1 = full_text[:best_space].strip()
+        l2 = full_text[best_space + 1 :].strip()
+        if len(l1) <= max_len and len(l2) <= max_len:
+            return f"{l1}\\N{l2}"
 
-    for w in words:
-        if curr_len + len(w) + (1 if curr_words else 0) <= max_len:
-            curr_words.append(w)
-            curr_len += len(w) + (1 if len(curr_words) > 1 else 0)
+    # Fallback: greedy split into exactly 2 lines
+    l1_words: list[str] = []
+    l1_len = 0
+    for i, w in enumerate(words):
+        if l1_len + len(w) + (1 if l1_words else 0) <= max_len:
+            l1_words.append(w)
+            l1_len += len(w) + (1 if len(l1_words) > 1 else 0)
         else:
-            if curr_words:
-                new_lines.append(" ".join(curr_words))
-            curr_words = [w]
-            curr_len = len(w)
+            l2_words = words[i:]
+            return f"{' '.join(l1_words)}\\N{' '.join(l2_words)}"
 
-    if curr_words:
-        new_lines.append(" ".join(curr_words))
-
-    return "\\N".join(new_lines)
+    return full_text

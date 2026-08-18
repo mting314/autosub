@@ -10,6 +10,7 @@ from autosub.pipeline.translate.main import (
     _load_checkpoint,
     _save_checkpoint,
     _write_error_report,
+    _wrap_long_line,
     translate_subtitles,
 )
 
@@ -607,3 +608,41 @@ def test_fingerprint_changes_with_chunk_size():
     fp1 = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
     fp2 = _compute_fingerprint(texts, chunk_size=3, corner_boundaries=None)
     assert fp1 != fp2
+
+
+# --- Line Wrapping & Box Boundary Invariants ---
+
+
+def test_wrap_long_line_at_most_two_lines_per_box():
+    """Invariant 1: We only have at most two lines per box (max 1 \\N line break)."""
+    test_cases = [
+        "Short line under threshold.",
+        "Well then, let's start the radio show wearing our matching brooches.",
+        "They want us to tell them our favorite green things that we like to eat or see every single day.",
+        "Line 1\\NLine 2\\NLine 3\\NLine 4 should be re-balanced to at most two lines.",
+        "Super long single sentence that keeps going on and on without stopping until it reaches a massive character count.",
+    ]
+    for text in test_cases:
+        wrapped = _wrap_long_line(text, max_len=40)
+        lines = wrapped.split("\\N")
+        assert len(lines) <= 2, (
+            f"Expected at most 2 lines per box, but got {len(lines)} for text: '{text}'"
+        )
+
+
+def test_wrap_long_line_nothing_extends_past_boxes():
+    """Invariant 2: Nothing extends past boxes (no line segment exceeds max_len=40 chars)."""
+    test_cases = [
+        "Short line.",
+        "Well then, let's start the radio show wearing our matching brooches.",
+        "Like pretending to be a cameraman so no one notices.",
+        "They want us to tell them our favorite green things.",
+        "That groundless feeling makes me like you even more.",
+    ]
+    for text in test_cases:
+        wrapped = _wrap_long_line(text, max_len=40)
+        sublines = wrapped.split("\\N")
+        for sub in sublines:
+            assert len(sub.strip()) <= 40, (
+                f"Sub-line '{sub}' ({len(sub.strip())} chars) extends past max box length (40 chars) in wrapped text: '{wrapped}'"
+            )
