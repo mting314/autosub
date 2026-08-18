@@ -593,8 +593,15 @@ def _split_and_wrap_events(
             processed.append(event)
             continue
 
+        clean_check = re.sub(r"\{\\[^}]*\}", "", event.text).strip()
+        if not clean_check:
+            continue
+
         split_events = _wrap_and_split_single_event(event, max_line_len, max_event_len)
-        processed.extend(split_events)
+        for se in split_events:
+            se_clean = re.sub(r"\{\\[^}]*\}", "", se.text).strip()
+            if se_clean:
+                processed.append(se)
 
     return processed
 
