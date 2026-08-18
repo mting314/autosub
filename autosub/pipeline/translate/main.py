@@ -3,6 +3,7 @@ import json
 import logging
 import traceback
 from pathlib import Path
+import re
 
 import pyass
 from autosub.core.config import PROJECT_ID
@@ -261,7 +262,9 @@ def translate_subtitles(
 
         new_events.append(event)
 
-    script.events = new_events
+    script.events = _split_and_wrap_events(
+        new_events, max_line_len=40, max_event_len=80
+    )
 
     # Auto-link project background overlay for Aegisub if present
     has_video = any(k == "Video File" for k, _ in script.scriptInfo)
@@ -574,3 +577,88 @@ def _wrap_long_line(text: str, max_len: int = 40) -> str:
             return f"{' '.join(l1_words)}\\N{' '.join(l2_words)}"
 
     return full_text
+
+
+def _split_and_wrap_events(
+    events: list[pyass.Event], max_line_len: int = 40, max_event_len: int = 80
+) -> list[pyass.Event]:
+    """Splits overlong events (> 80 chars) into multiple events and wraps text so max 2 lines per box and max 40 chars per line."""
+    processed: list[pyass.Event] = []
+
+    for event in events:
+        if (
+            not isinstance(event, pyass.Event)
+            or event.format != pyass.EventFormat.DIALOGUE
+        ):
+            processed.append(event)
+            continue
+
+        split_events = _wrap_and_split_single_event(event, max_line_len, max_event_len)
+        processed.extend(split_events)
+
+    return processed
+
+
+def _wrap_and_split_single_event(
+    event: pyass.Event, max_line_len: int = 40, max_event_len: int = 80
+) -> list[pyass.Event]:
+    pos_match = re.match(r"(\{\\pos\(\d+,\d+\)\})(.*)", event.text)
+    pos_tag = pos_match.group(1) if pos_match else ""
+    raw_text = pos_match.group(2) if pos_match else event.text
+    clean_text = " ".join(raw_text.replace("\\N", " ").split())
+
+    if len(clean_text) <= max_event_len:
+        if len(clean_text) <= max_line_len:
+            event.text = pos_tag + clean_text
+            return [event]
+        mid = len(clean_text) // 2
+        spaces = [i for i, c in enumerate(clean_text) if c == " "]
+        best = min(spaces, key=lambda s: abs(s - mid)) if spaces else mid
+        l1 = clean_text[:best].strip()
+        l2 = clean_text[best + 1 :].strip()
+        event.text = f"{pos_tag}{l1}\\N{l2}"
+        return [event]
+
+    mid_char = len(clean_text) // 2
+    spaces = [i for i, c in enumerate(clean_text) if c == " "]
+    best = min(spaces, key=lambda s: abs(s - mid_char)) if spaces else mid_char
+    part1 = clean_text[:best].strip()
+    part2 = clean_text[best + 1 :].strip()
+
+    total_dur = (event.end - event.start).total_seconds()
+    if total_dur <= 0.1:
+        total_dur = 1.0
+    ratio = len(part1) / max(1, len(clean_text))
+    dur1 = total_dur * ratio
+    mid_time = event.start + pyass.timedelta(seconds=dur1)
+
+    e1 = pyass.Event(
+        format=event.format,
+        style=event.style,
+        start=event.start,
+        end=mid_time,
+        effect=event.effect,
+        name=event.name,
+        text=part1,
+    )
+    e2 = pyass.Event(
+        format=event.format,
+        style=event.style,
+        start=mid_time,
+        end=event.end,
+        effect=event.effect,
+        name=event.name,
+        text=part2,
+    )
+
+    res1 = _wrap_and_split_single_event(e1, max_line_len, max_event_len)
+    for r in res1:
+        clean_r = re.sub(r"\{\\pos\(\d+,\d+\)\}", "", r.text)
+        r.text = pos_tag + clean_r
+
+    res2 = _wrap_and_split_single_event(e2, max_line_len, max_event_len)
+    for r in res2:
+        clean_r = re.sub(r"\{\\pos\(\d+,\d+\)\}", "", r.text)
+        r.text = pos_tag + clean_r
+
+    return res1 + res2

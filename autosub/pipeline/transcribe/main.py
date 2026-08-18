@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TRANSCRIPTION_BACKEND = "chirp_3"
 SUPPORTED_TRANSCRIPTION_BACKENDS = {
-    DEFAULT_TRANSCRIPTION_BACKEND,
+    "chirp_2",
     "chirp_3",
     "whisperx",
 }
