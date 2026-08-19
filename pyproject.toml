@@ -28,6 +28,13 @@ dependencies = [
 whisperx = [
     "whisperx>=3.8.5",
 ]
+# Dependency-parse engine for Netflix-style line breaking. The model ships
+# separately: `python -m spacy download en_core_web_sm`. Without either, the
+# translate stage falls back to the regex engine, a coarser approximation of
+# the same rules.
+linebreak = [
+    "spacy>=3.8.0",
+]
 
 [project.scripts]
 autosub = "autosub.cli:app"

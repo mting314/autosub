@@ -607,3 +607,163 @@ def test_fingerprint_changes_with_chunk_size():
     fp1 = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
     fp2 = _compute_fingerprint(texts, chunk_size=3, corner_boundaries=None)
     assert fp1 != fp2
+
+
+def test_translate_preserves_slot_pos_tags(tmp_path, monkeypatch):
+    """The slot \\pos written by the format stage must survive translation."""
+    input_ass_path = tmp_path / "original.ass"
+    output_ass_path = tmp_path / "translated.ass"
+    input_ass_path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "Title: Test",
+                "ScriptType: v4.00+",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\pos(330,540)}こんにちは",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeVertexTranslator:
+        def __init__(self, **kwargs):
+            pass
+
+        def translate(self, texts: list[str]) -> list[str]:
+            # Translators return prose, dropping any override tags they were sent.
+            return ["Hello there"] * len(texts)
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", "test-project")
+    monkeypatch.setattr(translator_module, "VertexTranslator", FakeVertexTranslator)
+
+    translate_subtitles(
+        input_ass_path, output_ass_path, engine="vertex", bilingual=False
+    )
+
+    written = output_ass_path.read_text(encoding="utf-8")
+    assert "{\\pos(330,540)}Hello there" in written
+
+
+def test_split_leading_tags_separates_override_blocks():
+    from autosub.pipeline.translate.main import _split_leading_tags
+
+    assert _split_leading_tags("{\\pos(1,2)}hi") == ("{\\pos(1,2)}", "hi")
+    assert _split_leading_tags("{\\pos(1,2)}{\\b1}hi") == ("{\\pos(1,2)}{\\b1}", "hi")
+    assert _split_leading_tags("plain") == ("", "plain")
+    # Tags that are not leading stay part of the body.
+    assert _split_leading_tags("hi {\\i1}there") == ("", "hi {\\i1}there")
+
+
+# --- Netflix line-break rules ---
+
+
+def _wrap(text):
+    from autosub.pipeline.translate.linebreak import wrap_line
+
+    return wrap_line(text, nlp=None)
+
+
+def test_wrapped_lines_stay_within_two_lines_and_the_char_cap():
+    """Netflix budget: at most two lines, at most 42 characters each."""
+    test_cases = [
+        "Short line under threshold.",
+        "Well then, let's start the radio show wearing our matching brooches.",
+        "They want us to tell them our favorite green things.",
+        "Line 1\\NLine 2\\NLine 3\\NLine 4 should be re-balanced.",
+        "That groundless feeling makes me like you even more.",
+    ]
+    for text in test_cases:
+        wrapped = _wrap(text)
+        if wrapped is None:
+            continue  # no legal layout; the caller splits it into two events
+        for line in wrapped.split("\\N"):
+            assert len(line.strip()) <= 42, f"{line!r} exceeds 42 chars"
+        assert len(wrapped.split("\\N")) <= 2, f"too many lines for {text!r}"
+
+
+def test_short_line_is_left_on_one_line():
+    assert _wrap("Thanks for having me.") == "Thanks for having me."
+
+
+def test_break_prefers_punctuation_over_the_midpoint():
+    """The old midpoint split broke 'Shiki-san\'s | birthday'; the comma is correct."""
+    wrapped = _wrap("Tomorrow is Shiki-san's birthday, isn't it?")
+    assert wrapped == "Tomorrow is Shiki-san's birthday,\\Nisn't it?"
+
+
+def test_never_breaks_before_an_infinitive_marker():
+    from autosub.pipeline.translate.linebreak import best_break
+
+    prose = "We really wanted to find something green to give her today"
+    idx = best_break(prose, nlp=None, max_chars=42, require_fit=False)
+    assert idx is None or not prose[idx:].startswith("to ")
+
+
+def test_never_strands_a_coordinator_without_a_comma():
+    from autosub.pipeline.translate.linebreak import best_break
+
+    prose = "She picked the brooch and I paid for the wrapping at the counter"
+    idx = best_break(prose, nlp=None, max_chars=42, require_fit=False)
+    if idx is not None:
+        assert not prose[:idx].strip().endswith(("and", "but", "or"))
+
+
+def test_unbreakable_long_line_returns_none_for_event_splitting():
+    """A long run with no legal boundary must not be broken arbitrarily."""
+    assert _wrap("aaaaaaaaaa " * 12) is None
+
+
+def test_inline_override_tags_survive_wrapping():
+    """Japanese terms are italicised inline; wrapping must not strip the tags."""
+    from autosub.pipeline.translate.linebreak import wrap_line
+
+    text = r"She called it {\i1}oshi{\i0} which is the one you support the most, apparently"
+    wrapped = wrap_line(text, nlp=None, max_chars=62)
+    assert wrapped is not None
+    assert r"{\i1}" in wrapped and r"{\i0}" in wrapped
+    assert r"\N" in wrapped
+
+
+def test_wrapping_measures_visible_text_not_tag_characters():
+    """A short line dressed in tags must not be broken as though it were long."""
+    from autosub.pipeline.translate.linebreak import visible_length, wrap_line
+
+    text = r"{\i1}{\b1}{\fs48}Short line.{\r}"
+    assert visible_length(text) == len("Short line.")
+    assert "\\N" not in (wrap_line(text, nlp=None, max_chars=20) or "")
+
+
+def test_split_text_keeps_tags_and_splits_on_visible_text():
+    from autosub.pipeline.translate.linebreak import split_text
+
+    parts = split_text(
+        r"She called it {\i1}oshi{\i0} which is the one you support, apparently",
+        nlp=None,
+        max_chars=20,
+    )
+    assert parts is not None
+    assert r"{\i1}" in parts[0] + parts[1]
+
+
+def test_zero_duration_event_is_not_split():
+    """Splitting a zero-length event would put the cut past its own end."""
+    import pyass
+    from autosub.pipeline.translate.main import _lay_out_event
+
+    event = pyass.Event(
+        format=pyass.EventFormat.DIALOGUE,
+        style="S",
+        start=pyass.timedelta(seconds=5),
+        end=pyass.timedelta(seconds=5),
+        text="This sentence is far too long to fit, and it needs a split.",
+    )
+    out = _lay_out_event(event, None, 20)
+    assert len(out) == 1
+    assert out[0].start <= out[0].end

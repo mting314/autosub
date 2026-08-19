@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -8,8 +9,21 @@ import pyass
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 from autosub.pipeline.translate.chunker import make_chunks
+from autosub.pipeline.translate.linebreak import (
+    MAX_CHARS_PER_LINE,
+    capacity_for_style,
+    load_nlp,
+    normalized_text,
+    split_text,
+    strip_tags,
+    visible_length,
+    wrap_line,
+)
 
 logger = logging.getLogger(__name__)
+
+# Guard against pathological recursion when a line keeps failing to fit.
+_MAX_SPLIT_DEPTH = 4
 
 
 def _compute_fingerprint(
@@ -250,15 +264,20 @@ def translate_subtitles(
 
         event_idx += 1
 
+        # Carry the source line's override tags (slot \pos) onto the translation;
+        # the translator returns prose only, so they would otherwise be dropped.
+        leading_tags, _ = _split_leading_tags(original_text)
+        _, translated_body = _split_leading_tags(translated_text)
+
         # Update the event with the new text
         if bilingual:
-            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{translated_text}"
+            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{translated_body}"
         else:
-            event.text = translated_text
+            event.text = leading_tags + translated_body
 
         new_events.append(event)
 
-    script.events = new_events
+    script.events = _apply_line_breaks(new_events, _line_capacities(script))
 
     # Auto-link project background overlay for Aegisub if present
     has_video = any(k == "Video File" for k, _ in script.scriptInfo)
@@ -531,3 +550,128 @@ def _translate_chunked(
         all_translated.extend(completed[chunk_idx])
 
     return all_translated, splits
+
+
+_LEADING_TAGS_RE = re.compile(r"^((?:\{[^}]*\})+)")
+
+
+def _split_leading_tags(text: str) -> tuple[str, str]:
+    """Separate leading ASS override blocks from the visible text.
+
+    The format stage writes each line's slot position as a leading \\pos tag. The
+    translator only ever returns prose, so the tags have to be carried across by
+    hand or every line falls back to the style default and the slot layout is lost.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end() :]
+
+
+def _line_capacities(script: pyass.Script) -> dict[str, int]:
+    """Characters that fit on one line, per style, from the script's own layout.
+
+    A positioned line has whatever width its style's margins leave it, which for
+    an overlay slot is not the full-width figure Netflix's 42 assumes.
+    """
+    play_res_x = None
+    for key, value in script.scriptInfo:
+        if key == "PlayResX":
+            try:
+                play_res_x = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    capacities: dict[str, int] = {}
+    for style in getattr(script, "styles", []) or []:
+        capacities[style.name] = capacity_for_style(
+            play_res_x,
+            getattr(style, "marginL", None),
+            getattr(style, "marginR", None),
+            getattr(style, "fontSize", None),
+        )
+    return capacities
+
+
+def _apply_line_breaks(
+    events: list[pyass.Event], capacities: dict[str, int] | None = None
+) -> list[pyass.Event]:
+    """Lay every dialogue event out within its box, at most two lines.
+
+    Lines that cannot fit two lines become two consecutive events, cut at a
+    grammatical boundary. Empty events are dropped.
+    """
+    nlp = load_nlp()
+    capacities = capacities or {}
+    processed: list[pyass.Event] = []
+
+    for event in events:
+        if (
+            not isinstance(event, pyass.Event)
+            or event.format != pyass.EventFormat.DIALOGUE
+        ):
+            processed.append(event)
+            continue
+        if not strip_tags(event.text).strip():
+            continue
+        max_chars = capacities.get(event.style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_event(event, nlp, max_chars))
+
+    return processed
+
+
+def _lay_out_event(
+    event: pyass.Event, nlp, max_chars: int, depth: int = 0
+) -> list[pyass.Event]:
+    """Fit one event into two lines, splitting it into two events if it will not."""
+    tags, body = _split_leading_tags(event.text)
+
+    wrapped = wrap_line(body, nlp, max_chars)
+    if wrapped is not None:
+        event.text = tags + wrapped
+        return [event]
+
+    parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    if parts is None:
+        # No grammatical break exists. Leaving the line long is better than
+        # breaking it mid-phrase; the QC pass flags it for rewording.
+        normalized = normalized_text(body)
+        logger.warning(
+            "No safe line break for %r; leaving it over length for review.",
+            strip_tags(normalized)[:60],
+        )
+        event.text = tags + normalized
+        return [event]
+
+    part1, part2 = parts
+
+    # Divide the display time in proportion to how much text each piece carries.
+    # The QC pass can snap the cut to a real silence later; the transcript is not
+    # available here. Never let the cut leave the event's own span, or a piece
+    # would end before it starts and libass would drop it.
+    total = (event.end - event.start).total_seconds()
+    if total <= 0:
+        return [event]
+    seen1 = visible_length(part1)
+    share = seen1 / max(1, seen1 + visible_length(part2))
+    mid = event.start + pyass.timedelta(seconds=total * share)
+    mid = min(max(mid, event.start), event.end)
+
+    first = _clone_event(event, event.start, mid, tags + part1)
+    second = _clone_event(event, mid, event.end, tags + part2)
+    return _lay_out_event(first, nlp, max_chars, depth + 1) + _lay_out_event(
+        second, nlp, max_chars, depth + 1
+    )
+
+
+def _clone_event(event: pyass.Event, start, end, text: str) -> pyass.Event:
+    return pyass.Event(
+        format=event.format,
+        style=event.style,
+        start=start,
+        end=end,
+        effect=event.effect,
+        name=event.name,
+        text=text,
+    )
