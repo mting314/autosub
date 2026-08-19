@@ -12,9 +12,11 @@ from autosub.pipeline.translate.chunker import make_chunks
 from autosub.pipeline.translate.linebreak import (
     MAX_CHARS_PER_LINE,
     capacity_for_style,
-    event_split_point,
     load_nlp,
+    normalized_text,
+    split_text,
     strip_tags,
+    visible_length,
     wrap_line,
 )
 
@@ -554,26 +556,31 @@ def _lay_out_event(
         event.text = tags + wrapped
         return [event]
 
-    idx = event_split_point(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
-    prose = " ".join(strip_tags(body).replace("\\N", " ").split())
-    if idx is None:
+    parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    if parts is None:
         # No grammatical break exists. Leaving the line long is better than
         # breaking it mid-phrase; the QC pass flags it for rewording.
+        normalized = normalized_text(body)
         logger.warning(
             "No safe line break for %r; leaving it over length for review.",
-            prose[:60],
+            strip_tags(normalized)[:60],
         )
-        event.text = tags + prose
+        event.text = tags + normalized
         return [event]
 
-    part1, part2 = prose[:idx].strip(), prose[idx:].strip()
+    part1, part2 = parts
 
-    # Divide the display time in proportion to text length. The QC pass can snap
-    # the cut to a real silence later; the transcript is not available here.
-    total = (event.end - event.start).total_seconds() or 1.0
-    mid = event.start + pyass.timedelta(
-        seconds=total * len(part1) / max(1, len(prose))
-    )
+    # Divide the display time in proportion to how much text each piece carries.
+    # The QC pass can snap the cut to a real silence later; the transcript is not
+    # available here. Never let the cut leave the event's own span, or a piece
+    # would end before it starts and libass would drop it.
+    total = (event.end - event.start).total_seconds()
+    if total <= 0:
+        return [event]
+    seen1 = visible_length(part1)
+    share = seen1 / max(1, seen1 + visible_length(part2))
+    mid = event.start + pyass.timedelta(seconds=total * share)
+    mid = min(max(mid, event.start), event.end)
 
     first = _clone_event(event, event.start, mid, tags + part1)
     second = _clone_event(event, mid, event.end, tags + part2)

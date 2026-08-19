@@ -710,3 +710,52 @@ def test_never_strands_a_coordinator_without_a_comma():
 def test_unbreakable_long_line_returns_none_for_event_splitting():
     """A long run with no legal boundary must not be broken arbitrarily."""
     assert _wrap("aaaaaaaaaa " * 12) is None
+
+
+def test_inline_override_tags_survive_wrapping():
+    """Japanese terms are italicised inline; wrapping must not strip the tags."""
+    from autosub.pipeline.translate.linebreak import wrap_line
+
+    text = r"She called it {\i1}oshi{\i0} which is the one you support the most, apparently"
+    wrapped = wrap_line(text, nlp=None, max_chars=62)
+    assert wrapped is not None
+    assert r"{\i1}" in wrapped and r"{\i0}" in wrapped
+    assert r"\N" in wrapped
+
+
+def test_wrapping_measures_visible_text_not_tag_characters():
+    """A short line dressed in tags must not be broken as though it were long."""
+    from autosub.pipeline.translate.linebreak import visible_length, wrap_line
+
+    text = r"{\i1}{\b1}{\fs48}Short line.{\r}"
+    assert visible_length(text) == len("Short line.")
+    assert "\\N" not in (wrap_line(text, nlp=None, max_chars=20) or "")
+
+
+def test_split_text_keeps_tags_and_splits_on_visible_text():
+    from autosub.pipeline.translate.linebreak import split_text
+
+    parts = split_text(
+        r"She called it {\i1}oshi{\i0} which is the one you support, apparently",
+        nlp=None,
+        max_chars=20,
+    )
+    assert parts is not None
+    assert r"{\i1}" in parts[0] + parts[1]
+
+
+def test_zero_duration_event_is_not_split():
+    """Splitting a zero-length event would put the cut past its own end."""
+    import pyass
+    from autosub.pipeline.translate.main import _lay_out_event
+
+    event = pyass.Event(
+        format=pyass.EventFormat.DIALOGUE,
+        style="S",
+        start=pyass.timedelta(seconds=5),
+        end=pyass.timedelta(seconds=5),
+        text="This sentence is far too long to fit, and it needs a split.",
+    )
+    out = _lay_out_event(event, None, 20)
+    assert len(out) == 1
+    assert out[0].start <= out[0].end

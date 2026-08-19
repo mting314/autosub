@@ -271,8 +271,67 @@ def _break_offsets(prose: str, nlp=None) -> list[tuple[int, float]]:
     return _candidates_regex(prose)
 
 
-def _normalize(text: str) -> str:
-    return " ".join(text.replace("\\N", " ").split())
+def _normalized_with_offsets(text: str) -> tuple[str, str, list[int]]:
+    """Normalise whitespace while keeping track of where the visible text sits.
+
+    Returns the tagged text with existing breaks and runs of whitespace collapsed
+    to single spaces, the visible characters alone, and for each visible
+    character its index in the tagged string. Breaks are chosen against what the
+    viewer reads but applied to the tagged string, so inline formatting such as
+    the italics on a Japanese term survives the wrap.
+    """
+    tagged: list[str] = []
+    visible: list[str] = []
+    offsets: list[int] = []
+    tagged_len = 0
+    pending_space = False
+    i, n = 0, len(text)
+
+    while i < n:
+        if text[i] == "{":
+            close = text.find("}", i)
+            if close == -1:
+                break
+            # Emit a pending space before the block so the tag stays attached to
+            # the word it formats rather than drifting in front of the space.
+            if pending_space and visible:
+                tagged.append(" ")
+                visible.append(" ")
+                offsets.append(tagged_len)
+                tagged_len += 1
+                pending_space = False
+            block = text[i : close + 1]
+            tagged.append(block)
+            tagged_len += len(block)
+            i = close + 1
+            continue
+        if text.startswith("\\N", i):
+            pending_space = True
+            i += 2
+            continue
+        char = text[i]
+        if char.isspace():
+            pending_space = True
+            i += 1
+            continue
+        if pending_space and visible:
+            tagged.append(" ")
+            visible.append(" ")
+            offsets.append(tagged_len)
+            tagged_len += 1
+        pending_space = False
+        tagged.append(char)
+        visible.append(char)
+        offsets.append(tagged_len)
+        tagged_len += 1
+        i += 1
+
+    return "".join(tagged), "".join(visible), offsets
+
+
+def visible_length(text: str) -> int:
+    """Number of characters the viewer actually sees, ignoring override blocks."""
+    return len(_normalized_with_offsets(text)[1])
 
 
 def best_break(
@@ -323,6 +382,11 @@ def best_break(
     return min(viable)[1]
 
 
+def normalized_text(text: str) -> str:
+    """The text with existing breaks and repeated whitespace collapsed."""
+    return _normalized_with_offsets(text)[0]
+
+
 def wrap_line(
     text: str, nlp=None, max_chars: int = MAX_CHARS_PER_LINE
 ) -> str | None:
@@ -332,32 +396,40 @@ def wrap_line(
     already fits on one line, or None when no legal two-line layout exists (the
     caller should split it into two events instead).
     """
-    prose = _normalize(strip_tags(text))
+    tagged, prose, offsets = _normalized_with_offsets(text)
     if not prose:
-        return prose
+        return tagged
     if len(prose) <= max_chars:
-        return prose
+        return tagged
 
     idx = best_break(prose, nlp, max_chars, require_fit=True)
     if idx is None:
         return None
-    return f"{prose[:idx].strip()}\\N{prose[idx:].strip()}"
+    cut = offsets[idx]
+    return f"{tagged[:cut].rstrip()}\\N{tagged[cut:].lstrip()}"
 
 
-def event_split_point(
+def split_text(
     text: str, nlp=None, max_chars: int = MAX_CHARS_PER_LINE
-) -> int | None:
-    """Offset at which to cut text into two separate events.
+) -> tuple[str, str] | None:
+    """Cut text into two pieces for two separate events, or None if unsafe.
 
     Used when the text cannot be laid out as two lines. Prefers a break that
-    leaves the first part fully laid out, and otherwise takes the most
+    leaves the first piece fully laid out, and otherwise takes the most
     grammatical break available.
     """
-    prose = _normalize(strip_tags(text))
+    tagged, prose, offsets = _normalized_with_offsets(text)
+    if not prose:
+        return None
+
     idx = best_break(prose, nlp, max_chars * MAX_LINES, require_fit=True)
-    if idx is not None:
-        return idx
-    return best_break(prose, nlp, max_chars, require_fit=False)
+    if idx is None:
+        idx = best_break(prose, nlp, max_chars, require_fit=False)
+    if idx is None:
+        return None
+
+    cut = offsets[idx]
+    return tagged[:cut].rstrip(), tagged[cut:].lstrip()
 
 
 def capacity_for_style(
