@@ -651,3 +651,62 @@ def test_split_leading_tags_separates_override_blocks():
     assert _split_leading_tags("plain") == ("", "plain")
     # Tags that are not leading stay part of the body.
     assert _split_leading_tags("hi {\\i1}there") == ("", "hi {\\i1}there")
+
+
+# --- Netflix line-break rules ---
+
+
+def _wrap(text):
+    from autosub.pipeline.translate.linebreak import wrap_line
+
+    return wrap_line(text, nlp=None)
+
+
+def test_wrapped_lines_stay_within_two_lines_and_the_char_cap():
+    """Netflix budget: at most two lines, at most 42 characters each."""
+    test_cases = [
+        "Short line under threshold.",
+        "Well then, let's start the radio show wearing our matching brooches.",
+        "They want us to tell them our favorite green things.",
+        "Line 1\\NLine 2\\NLine 3\\NLine 4 should be re-balanced.",
+        "That groundless feeling makes me like you even more.",
+    ]
+    for text in test_cases:
+        wrapped = _wrap(text)
+        if wrapped is None:
+            continue  # no legal layout; the caller splits it into two events
+        for line in wrapped.split("\\N"):
+            assert len(line.strip()) <= 42, f"{line!r} exceeds 42 chars"
+        assert len(wrapped.split("\\N")) <= 2, f"too many lines for {text!r}"
+
+
+def test_short_line_is_left_on_one_line():
+    assert _wrap("Thanks for having me.") == "Thanks for having me."
+
+
+def test_break_prefers_punctuation_over_the_midpoint():
+    """The old midpoint split broke 'Shiki-san\'s | birthday'; the comma is correct."""
+    wrapped = _wrap("Tomorrow is Shiki-san's birthday, isn't it?")
+    assert wrapped == "Tomorrow is Shiki-san's birthday,\\Nisn't it?"
+
+
+def test_never_breaks_before_an_infinitive_marker():
+    from autosub.pipeline.translate.linebreak import best_break
+
+    prose = "We really wanted to find something green to give her today"
+    idx = best_break(prose, nlp=None, max_chars=42, require_fit=False)
+    assert idx is None or not prose[idx:].startswith("to ")
+
+
+def test_never_strands_a_coordinator_without_a_comma():
+    from autosub.pipeline.translate.linebreak import best_break
+
+    prose = "She picked the brooch and I paid for the wrapping at the counter"
+    idx = best_break(prose, nlp=None, max_chars=42, require_fit=False)
+    if idx is not None:
+        assert not prose[:idx].strip().endswith(("and", "but", "or"))
+
+
+def test_unbreakable_long_line_returns_none_for_event_splitting():
+    """A long run with no legal boundary must not be broken arbitrarily."""
+    assert _wrap("aaaaaaaaaa " * 12) is None

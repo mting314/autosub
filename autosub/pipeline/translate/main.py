@@ -9,8 +9,19 @@ import pyass
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 from autosub.pipeline.translate.chunker import make_chunks
+from autosub.pipeline.translate.linebreak import (
+    MAX_CHARS_PER_LINE,
+    capacity_for_style,
+    event_split_point,
+    load_nlp,
+    strip_tags,
+    wrap_line,
+)
 
 logger = logging.getLogger(__name__)
+
+# Guard against pathological recursion when a line keeps failing to fit.
+_MAX_SPLIT_DEPTH = 4
 
 
 def _compute_fingerprint(
@@ -250,7 +261,7 @@ def translate_subtitles(
 
         new_events.append(event)
 
-    script.events = new_events
+    script.events = _apply_line_breaks(new_events, _line_capacities(script))
 
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
     with open(output_ass_path, "w", encoding="utf-8") as f:
@@ -477,3 +488,107 @@ def _split_leading_tags(text: str) -> tuple[str, str]:
     if not match:
         return "", text
     return match.group(1), text[match.end() :]
+
+
+def _line_capacities(script: pyass.Script) -> dict[str, int]:
+    """Characters that fit on one line, per style, from the script's own layout.
+
+    A positioned line has whatever width its style's margins leave it, which for
+    an overlay slot is not the full-width figure Netflix's 42 assumes.
+    """
+    play_res_x = None
+    for key, value in script.scriptInfo:
+        if key == "PlayResX":
+            try:
+                play_res_x = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    capacities: dict[str, int] = {}
+    for style in getattr(script, "styles", []) or []:
+        capacities[style.name] = capacity_for_style(
+            play_res_x,
+            getattr(style, "marginL", None),
+            getattr(style, "marginR", None),
+            getattr(style, "fontSize", None),
+        )
+    return capacities
+
+
+def _apply_line_breaks(
+    events: list[pyass.Event], capacities: dict[str, int] | None = None
+) -> list[pyass.Event]:
+    """Lay every dialogue event out within its box, at most two lines.
+
+    Lines that cannot fit two lines become two consecutive events, cut at a
+    grammatical boundary. Empty events are dropped.
+    """
+    nlp = load_nlp()
+    capacities = capacities or {}
+    processed: list[pyass.Event] = []
+
+    for event in events:
+        if (
+            not isinstance(event, pyass.Event)
+            or event.format != pyass.EventFormat.DIALOGUE
+        ):
+            processed.append(event)
+            continue
+        if not strip_tags(event.text).strip():
+            continue
+        max_chars = capacities.get(event.style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_event(event, nlp, max_chars))
+
+    return processed
+
+
+def _lay_out_event(
+    event: pyass.Event, nlp, max_chars: int, depth: int = 0
+) -> list[pyass.Event]:
+    """Fit one event into two lines, splitting it into two events if it will not."""
+    tags, body = _split_leading_tags(event.text)
+
+    wrapped = wrap_line(body, nlp, max_chars)
+    if wrapped is not None:
+        event.text = tags + wrapped
+        return [event]
+
+    idx = event_split_point(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    prose = " ".join(strip_tags(body).replace("\\N", " ").split())
+    if idx is None:
+        # No grammatical break exists. Leaving the line long is better than
+        # breaking it mid-phrase; the QC pass flags it for rewording.
+        logger.warning(
+            "No safe line break for %r; leaving it over length for review.",
+            prose[:60],
+        )
+        event.text = tags + prose
+        return [event]
+
+    part1, part2 = prose[:idx].strip(), prose[idx:].strip()
+
+    # Divide the display time in proportion to text length. The QC pass can snap
+    # the cut to a real silence later; the transcript is not available here.
+    total = (event.end - event.start).total_seconds() or 1.0
+    mid = event.start + pyass.timedelta(
+        seconds=total * len(part1) / max(1, len(prose))
+    )
+
+    first = _clone_event(event, event.start, mid, tags + part1)
+    second = _clone_event(event, mid, event.end, tags + part2)
+    return _lay_out_event(first, nlp, max_chars, depth + 1) + _lay_out_event(
+        second, nlp, max_chars, depth + 1
+    )
+
+
+def _clone_event(event: pyass.Event, start, end, text: str) -> pyass.Event:
+    return pyass.Event(
+        format=event.format,
+        style=event.style,
+        start=start,
+        end=end,
+        effect=event.effect,
+        name=event.name,
+        text=text,
+    )
