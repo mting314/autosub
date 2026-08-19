@@ -378,3 +378,10 @@ def test_parse_words_clamps_without_chunk_duration():
     words = transcribe_main._parse_words(results, offset_seconds=0.0)
     assert words[0].start_time == 1853.28
     assert words[0].end_time == 1853.28  # clamped to start
+
+
+def test_chirp_2_is_a_supported_backend():
+    """DEFAULT_TRANSCRIPTION_BACKEND is chirp_3, so listing it left chirp_2 out."""
+    from autosub.pipeline.transcribe.main import SUPPORTED_TRANSCRIPTION_BACKENDS
+
+    assert SUPPORTED_TRANSCRIPTION_BACKENDS == {"chirp_2", "chirp_3", "whisperx"}
