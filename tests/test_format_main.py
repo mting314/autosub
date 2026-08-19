@@ -321,7 +321,10 @@ def test_format_subtitles_warns_when_same_input_file_is_passed_twice(tmp_path, c
     dialogue_events = [
         event for event in script.events if isinstance(event, pyass.Event)
     ]
-    assert len(dialogue_events) == 2
+    # Duplicate input is not deduped, but both copies land on the same slot at the
+    # same time, so they merge into one event instead of stacking on screen.
+    assert len(dialogue_events) == 1
+    assert dialogue_events[0].text.count("おすすめです。") == 2
 
 
 def test_format_subtitles_warns_when_input_time_ranges_overlap(tmp_path, caplog):

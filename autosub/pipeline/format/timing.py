@@ -1,6 +1,10 @@
 from typing import List, Optional
 
 from autosub.core.schemas import SubtitleLine
+from autosub.core.speaker_map import build_slot_lookup
+
+# Breathing room left between two lines that share the same on-screen slot.
+SLOT_OVERLAP_GAP_MS = 50
 
 
 class SegmentMS:
@@ -350,21 +354,34 @@ def _apply_interjection_merging(
     return segments
 
 
-def _prevent_same_speaker_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
-    """Ensure no two segments for the same speaker overlap on screen."""
-    for i in range(len(segments)):
-        seg1 = segments[i]
-        for j in range(i + 1, len(segments)):
-            seg2 = segments[j]
-            if seg1.speaker and seg1.speaker == seg2.speaker:
-                if seg2.start_ms < seg1.end_ms:
-                    max_allowed_end = seg2.start_ms - 50
-                    if max_allowed_end > seg1.start_ms:
-                        seg1.end_ms = max_allowed_end
-                    else:
-                        seg1.end_ms = seg1.start_ms + 500
-                break
-    return segments
+def _prevent_slot_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
+    """Ensure no two segments that share an on-screen slot are visible at once.
+
+    Callers must pass a group of segments that all render in the same box. Two
+    events at the same position do not stack, they draw on top of each other, so
+    the earlier one is truncated to clear the later one.
+    """
+    resolved: List[SegmentMS] = []
+    for segment in sorted(segments, key=lambda seg: (seg.start_ms, seg.end_ms)):
+        if not resolved:
+            resolved.append(segment)
+            continue
+
+        previous = resolved[-1]
+        if segment.start_ms >= previous.end_ms:
+            resolved.append(segment)
+            continue
+
+        truncated_end = segment.start_ms - SLOT_OVERLAP_GAP_MS
+        if truncated_end > previous.start_ms:
+            previous.end_ms = truncated_end
+            resolved.append(segment)
+        else:
+            # Starts land on top of each other, so there is nothing to truncate
+            # to. Merging keeps both texts readable instead of stacking glyphs.
+            previous.text = f"{previous.text} {segment.text}".strip()
+            previous.end_ms = max(previous.end_ms, segment.end_ms)
+    return resolved
 
 
 def apply_timing_rules(
@@ -378,11 +395,16 @@ def apply_timing_rules(
     interjection_merge_threshold_ms: int = 1500,
     interjection_gap_threshold_ms: int = 2000,
     per_speaker: bool = False,
+    speaker_map: Optional[dict[str, dict]] = None,
 ) -> List[SubtitleLine]:
     """Applies advanced timing rules to subtitle lines.
 
     When per_speaker is True or multiple distinct speakers are present,
     timing rules run independently per speaker to allow concurrent overlapping dialogue.
+
+    Grouping is by on-screen slot rather than raw speaker label. Speaker maps are
+    many-to-one, so several diarization labels commonly share one slot; grouping by
+    label would let those labels overlap inside a single box.
     """
 
     if not lines:
@@ -390,13 +412,22 @@ def apply_timing_rules(
 
     keyframes = sorted(keyframes_ms) if keyframes_ms else []
 
+    slot_lookup = build_slot_lookup(speaker_map)
+
+    def slot_key(speaker: Optional[str]) -> Optional[str]:
+        """Identify the box a line renders in, falling back to the raw label."""
+        if speaker is None:
+            return None
+        slot = slot_lookup.get(str(speaker))
+        return f"slot:{slot}" if slot is not None else speaker
+
     # Check if multi-speaker timing is needed
-    unique_speakers = {line.speaker for line in lines if line.speaker}
-    if per_speaker or len(unique_speakers) > 1:
-        # Group lines by speaker
+    unique_slots = {slot_key(line.speaker) for line in lines if line.speaker}
+    if per_speaker or len(unique_slots) > 1:
+        # Group lines by the slot they render in
         speaker_groups: dict[Optional[str], List[SubtitleLine]] = {}
         for line in lines:
-            speaker_groups.setdefault(line.speaker, []).append(line)
+            speaker_groups.setdefault(slot_key(line.speaker), []).append(line)
 
         all_processed: List[SegmentMS] = []
         for spk, spk_lines in speaker_groups.items():
@@ -419,7 +450,7 @@ def apply_timing_rules(
             spk_segments = _apply_micro_snapping(
                 spk_segments, keyframes, snap_threshold_ms, video_duration_ms
             )
-            spk_segments = _prevent_same_speaker_overlaps(spk_segments)
+            spk_segments = _prevent_slot_overlaps(spk_segments)
             all_processed.extend(spk_segments)
 
         all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
@@ -441,7 +472,7 @@ def apply_timing_rules(
         segments = _apply_micro_snapping(
             segments, keyframes, snap_threshold_ms, video_duration_ms
         )
-        segments = _prevent_same_speaker_overlaps(segments)
+        segments = _prevent_slot_overlaps(segments)
 
     # Final Bounds Check
     for seg in segments:

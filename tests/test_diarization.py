@@ -462,3 +462,62 @@ def test_chirp2_diarization_rejected():
             num_speakers=2,
             transcription_backend="chirp_2",
         )
+
+
+def test_labels_sharing_a_slot_are_not_allowed_to_overlap():
+    """Two diarization labels for one person share a box and must not stack."""
+    from autosub.pipeline.format.timing import apply_timing_rules
+
+    # Labels "0" and "4" are the same person, so both render in slot 1.
+    speaker_map = {
+        "0": {"name": "Sakakura Sakura", "slot": 1},
+        "4": {"name": "Sakakura Sakura", "slot": 1},
+        "2": {"name": "Ookuma Wakana", "slot": 2},
+    }
+    lines = [
+        SubtitleLine(text="first", start_time=1.0, end_time=9.0, speaker="0"),
+        SubtitleLine(text="second", start_time=4.0, end_time=6.0, speaker="4"),
+    ]
+    processed = apply_timing_rules(lines, speaker_map=speaker_map)
+
+    first = next(ln for ln in processed if ln.text == "first")
+    second = next(ln for ln in processed if ln.text == "second")
+    assert first.end_time <= second.start_time
+
+
+def test_different_slots_still_allow_concurrent_dialogue():
+    """De-overlapping is per slot, so separate boxes keep talking over each other."""
+    from autosub.pipeline.format.timing import apply_timing_rules
+
+    speaker_map = {
+        "0": {"name": "Sakakura Sakura", "slot": 1},
+        "2": {"name": "Ookuma Wakana", "slot": 2},
+    }
+    lines = [
+        SubtitleLine(text="slot one", start_time=1.0, end_time=9.0, speaker="0"),
+        SubtitleLine(text="slot two", start_time=4.0, end_time=6.0, speaker="2"),
+    ]
+    processed = apply_timing_rules(lines, speaker_map=speaker_map)
+
+    one = next(ln for ln in processed if ln.text == "slot one")
+    two = next(ln for ln in processed if ln.text == "slot two")
+    assert two.start_time < one.end_time
+
+
+def test_simultaneous_lines_in_one_slot_merge_instead_of_stacking():
+    """With no room to truncate into, both texts survive in a single event."""
+    from autosub.pipeline.format.timing import apply_timing_rules
+
+    speaker_map = {
+        "0": {"name": "Sakakura Sakura", "slot": 1},
+        "4": {"name": "Sakakura Sakura", "slot": 1},
+    }
+    lines = [
+        SubtitleLine(text="alpha", start_time=5.00, end_time=5.80, speaker="0"),
+        SubtitleLine(text="bravo", start_time=5.02, end_time=5.90, speaker="4"),
+    ]
+    processed = apply_timing_rules(lines, speaker_map=speaker_map)
+
+    assert len(processed) == 1
+    assert "alpha" in processed[0].text
+    assert "bravo" in processed[0].text

@@ -481,6 +481,7 @@ def format_subtitles(
         interjection_gap_threshold_ms=timing_config.get(
             "interjection_gap_threshold_ms", 2000
         ),
+        speaker_map=speaker_map,
     )
 
     logger.info(f"Writing .ass file to {output_ass_path}...")

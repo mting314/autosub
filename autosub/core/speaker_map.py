@@ -57,6 +57,27 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
     return result
 
 
+def build_slot_lookup(speaker_map: dict[str, dict] | None) -> dict[str, int]:
+    """Map every raw diarization label and speaker name to its on-screen slot.
+
+    Speaker maps are many-to-one: several diarization labels routinely resolve to
+    the same person, and therefore to the same subtitle slot. Anything that reasons
+    about what shares a box on screen must key off the slot, not the raw label.
+    """
+    lookup: dict[str, int] = {}
+    if not speaker_map:
+        return lookup
+    for label, entry in speaker_map.items():
+        slot = entry.get("slot")
+        if slot is None:
+            continue
+        lookup[str(label)] = int(slot)
+        name = entry.get("name")
+        if name:
+            lookup[str(name)] = int(slot)
+    return lookup
+
+
 def calculate_speaker_slot_layout(
     slot: int,
     total_slots: int = 3,

@@ -3,7 +3,11 @@ from typing import List
 import pyass
 
 from autosub.core.schemas import SubtitleLine
-from autosub.core.speaker_map import hex_to_pyass_color, remap_speaker_labels
+from autosub.core.speaker_map import (
+    build_slot_lookup,
+    hex_to_pyass_color,
+    remap_speaker_labels,
+)
 
 # Script resolution the styles are authored against (1080p). Must be written into the
 # header — see the note in generate_ass_file.
@@ -53,9 +57,7 @@ def generate_ass_file(
                 color_val = hex_to_pyass_color(entry["color"])
                 map_colors[label] = color_val
                 map_colors[spk_name] = color_val
-            if entry.get("slot") is not None:
-                map_slots[label] = entry["slot"]
-                map_slots[spk_name] = entry["slot"]
+        map_slots.update(build_slot_lookup(speaker_map))
 
     total_slots = (
         max([s for s in map_slots.values() if s is not None] or [1])
