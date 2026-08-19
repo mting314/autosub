@@ -599,3 +599,55 @@ def test_fingerprint_changes_with_chunk_size():
     fp1 = _compute_fingerprint(texts, chunk_size=2, corner_boundaries=None)
     fp2 = _compute_fingerprint(texts, chunk_size=3, corner_boundaries=None)
     assert fp1 != fp2
+
+
+def test_translate_preserves_slot_pos_tags(tmp_path, monkeypatch):
+    """The slot \\pos written by the format stage must survive translation."""
+    input_ass_path = tmp_path / "original.ass"
+    output_ass_path = tmp_path / "translated.ass"
+    input_ass_path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "Title: Test",
+                "ScriptType: v4.00+",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\pos(330,540)}こんにちは",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeVertexTranslator:
+        def __init__(self, **kwargs):
+            pass
+
+        def translate(self, texts: list[str]) -> list[str]:
+            # Translators return prose, dropping any override tags they were sent.
+            return ["Hello there"] * len(texts)
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", "test-project")
+    monkeypatch.setattr(translator_module, "VertexTranslator", FakeVertexTranslator)
+
+    translate_subtitles(
+        input_ass_path, output_ass_path, engine="vertex", bilingual=False
+    )
+
+    written = output_ass_path.read_text(encoding="utf-8")
+    assert "{\\pos(330,540)}Hello there" in written
+
+
+def test_split_leading_tags_separates_override_blocks():
+    from autosub.pipeline.translate.main import _split_leading_tags
+
+    assert _split_leading_tags("{\\pos(1,2)}hi") == ("{\\pos(1,2)}", "hi")
+    assert _split_leading_tags("{\\pos(1,2)}{\\b1}hi") == ("{\\pos(1,2)}{\\b1}", "hi")
+    assert _split_leading_tags("plain") == ("", "plain")
+    # Tags that are not leading stay part of the body.
+    assert _split_leading_tags("hi {\\i1}there") == ("", "hi {\\i1}there")

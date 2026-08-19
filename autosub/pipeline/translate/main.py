@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -236,11 +237,16 @@ def translate_subtitles(
 
         event_idx += 1
 
+        # Carry the source line's override tags (slot \pos) onto the translation;
+        # the translator returns prose only, so they would otherwise be dropped.
+        leading_tags, _ = _split_leading_tags(original_text)
+        _, translated_body = _split_leading_tags(translated_text)
+
         # Update the event with the new text
         if bilingual:
-            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{translated_text}"
+            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{translated_body}"
         else:
-            event.text = translated_text
+            event.text = leading_tags + translated_body
 
         new_events.append(event)
 
@@ -455,3 +461,19 @@ def _translate_chunked(
         all_translated.extend(completed[chunk_idx])
 
     return all_translated, splits
+
+
+_LEADING_TAGS_RE = re.compile(r"^((?:\{[^}]*\})+)")
+
+
+def _split_leading_tags(text: str) -> tuple[str, str]:
+    """Separate leading ASS override blocks from the visible text.
+
+    The format stage writes each line's slot position as a leading \\pos tag. The
+    translator only ever returns prose, so the tags have to be carried across by
+    hand or every line falls back to the style default and the slot layout is lost.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end() :]
