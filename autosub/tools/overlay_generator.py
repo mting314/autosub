@@ -17,6 +17,11 @@ _FONT_FALLBACKS = ("arialbd.ttf", "Arial Bold.ttf", "arial.ttf", "Arial.ttf")
 # Share of the card width the banner text should span.
 _BANNER_TEXT_WIDTH = 0.92
 
+# Breathing room inside the name banner, as a share of its height: padding above
+# and below the block, and the gap between the VA name and the character name.
+_BANNER_PAD = 0.13
+_BANNER_LINE_GAP = 0.16
+
 
 def _load_font(size: int, font_dir: Optional[Path] = None):
     """Load Lato ExtraBold at the given size, falling back if it is not installed."""
@@ -169,21 +174,25 @@ def _build_va_card(
         dark_text_color = (255, 255, 255, 255)
         sub_text_color = (235, 235, 245, 230)
 
-    # Size the names to fill the banner, bounded by the card width and the space
-    # left once both lines are stacked.
+    # Reserve the padding and the gap between the names first, then size the text
+    # to whatever is left. Sizing the text first leaves the two lines crammed
+    # together against the banner edges.
+    text_width = int(total_w * _BANNER_TEXT_WIDTH)
+    pad = int(banner_height * _BANNER_PAD)
+    gap = int(banner_height * _BANNER_LINE_GAP) if subtitle_text else 0
+    available = max(1, banner_height - 2 * pad - gap)
+
+    if subtitle_text:
+        title_budget = int(available * 0.58)
+        subtitle_budget = available - title_budget
+    else:
+        title_budget, subtitle_budget = available, 0
+
     font_title = _fit_font(
-        title_text,
-        max_width=int(total_w * _BANNER_TEXT_WIDTH),
-        max_height=int(banner_height * (0.52 if subtitle_text else 0.8)),
-        font_dir=font_dir,
+        title_text, text_width, title_budget, font_dir=font_dir
     )
     font_subtitle = (
-        _fit_font(
-            subtitle_text,
-            max_width=int(total_w * _BANNER_TEXT_WIDTH),
-            max_height=int(banner_height * 0.30),
-            font_dir=font_dir,
-        )
+        _fit_font(subtitle_text, text_width, subtitle_budget, font_dir=font_dir)
         if subtitle_text
         else font_title
     )
@@ -191,22 +200,28 @@ def _build_va_card(
     t_bbox = font_title.getbbox(title_text)
     s_bbox = font_subtitle.getbbox(subtitle_text) if subtitle_text else (0, 0, 0, 0)
 
-    t_w = t_bbox[2] - t_bbox[0]
-    t_h = t_bbox[3] - t_bbox[1]
-    s_w = s_bbox[2] - s_bbox[0]
-    s_h = s_bbox[3] - s_bbox[1]
+    t_w, t_h = t_bbox[2] - t_bbox[0], t_bbox[3] - t_bbox[1]
+    s_w, s_h = s_bbox[2] - s_bbox[0], s_bbox[3] - s_bbox[1]
 
-    line_spacing = 4
-    text_block_h = t_h + (line_spacing + s_h if subtitle_text else 0)
-    start_y = max(4, int((banner_height - text_block_h) // 2 - 2))
+    # Centre the block on the banner, measuring from the ink rather than the em
+    # box so the visible gap matches the one asked for.
+    text_block_h = t_h + (gap + s_h if subtitle_text else 0)
+    start_y = max(pad, (banner_height - text_block_h) // 2)
 
     t_x = (total_w - t_w) // 2
-    draw_b.text((t_x, start_y), title_text, font=font_title, fill=dark_text_color)
+    draw_b.text(
+        (t_x, start_y - t_bbox[1]), title_text, font=font_title, fill=dark_text_color
+    )
 
     if subtitle_text:
-        s_y = start_y + t_h + line_spacing
+        s_y = start_y + t_h + gap
         s_x = (total_w - s_w) // 2
-        draw_b.text((s_x, s_y), subtitle_text, font=font_subtitle, fill=sub_text_color)
+        draw_b.text(
+            (s_x, s_y - s_bbox[1]),
+            subtitle_text,
+            font=font_subtitle,
+            fill=sub_text_color,
+        )
 
     # 3. Combine Top & Bottom flush
     card_raw = Image.new("RGBA", (total_w, card_h), (0, 0, 0, 0))
@@ -342,7 +357,7 @@ def generate_radio_overlay_image(
             subtitle_text=character if character else "",
             color_hex=color_hex,
             card_size=(cw, 330),
-            banner_height=70,
+            banner_height=88,
             radius=14,
             font_dir=font_dir,
         )
