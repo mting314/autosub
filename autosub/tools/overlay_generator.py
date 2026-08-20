@@ -163,7 +163,22 @@ def _build_va_card(
 
     # 1. Top Portion: Large Portrait Photo
     top_container = Image.new("RGBA", (total_w, img_h), (r, g, b, 120))
-    if va_img_path and Path(va_img_path).exists():
+    if not va_img_path:
+        logger.warning(
+            "No avatar set for %s; the card will show a blank tinted panel.",
+            title_text or "an unnamed speaker",
+        )
+    elif not Path(va_img_path).exists():
+        # Avatar paths in a speaker map are relative to the working directory, so
+        # a run started elsewhere silently produces blank cards. Say so loudly.
+        logger.warning(
+            "Avatar for %s not found at %s (resolved from %s); the card will show "
+            "a blank tinted panel.",
+            title_text or "an unnamed speaker",
+            va_img_path,
+            Path.cwd(),
+        )
+    else:
         try:
             va_raw = Image.open(va_img_path).convert("RGBA")
             cropped = _crop_to_face(va_raw, total_w, img_h)

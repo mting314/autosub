@@ -58,3 +58,37 @@ slot = 2
     with Image.open(out_png) as img:
         assert img.size == (1920, 1080)
         assert img.mode == "RGBA"
+
+
+def test_missing_avatar_warns_instead_of_silently_blanking(tmp_path, caplog):
+    """A blank card is easy to miss; an unresolvable avatar path must be logged."""
+    import logging
+
+    from autosub.tools.overlay_generator import generate_radio_overlay_image
+
+    speaker_map = {
+        "0": {
+            "name": "Someone",
+            "character": "A Character",
+            "color": "#5DD1CA",
+            "slot": 1,
+            "avatar": "relative/path/that/does/not/exist.png",
+        }
+    }
+    with caplog.at_level(logging.WARNING):
+        generate_radio_overlay_image(speaker_map, tmp_path / "overlay.png")
+
+    assert "not found" in caplog.text
+    assert "Someone" in caplog.text
+
+
+def test_avatarless_speaker_warns(tmp_path, caplog):
+    import logging
+
+    from autosub.tools.overlay_generator import generate_radio_overlay_image
+
+    speaker_map = {"0": {"name": "Someone", "color": "#5DD1CA", "slot": 1}}
+    with caplog.at_level(logging.WARNING):
+        generate_radio_overlay_image(speaker_map, tmp_path / "overlay.png")
+
+    assert "No avatar set" in caplog.text
