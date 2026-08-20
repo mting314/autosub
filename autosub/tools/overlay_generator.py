@@ -104,13 +104,23 @@ def _crop_to_face(img: Image.Image, target_w: int, target_h: int) -> Image.Image
     Source photos often carry a white page margin, a coloured frame and a caption
     band with the subject's name. Framing on the face drops all three, because
     they sit outside the head.
+
+    An asset that has already been cropped is passed through untouched, so
+    committed avatars are used exactly as prepared.
     """
     width, height = img.size
+    target_ratio = target_w / target_h
+
+    # A source already at least as wide as the card wants has nothing left to
+    # crop away — it is a prepared asset. Re-framing would zoom in twice.
+    if width / height >= target_ratio * 0.98:
+        return img.resize((target_w, target_h), Image.Resampling.LANCZOS)
+
     left, right = _content_bounds_x(img)
     centre_x = (left + right) / 2
 
     crop_h = height * _FACE_CROP_SCALE
-    crop_w = crop_h * (target_w / target_h)
+    crop_w = crop_h * target_ratio
     if crop_w > right - left:  # never widen past the artwork into the margin
         crop_w = right - left
         crop_h = crop_w * (target_h / target_w)
