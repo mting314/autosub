@@ -81,16 +81,21 @@ def generate_ass_file(
             from autosub.core.speaker_map import calculate_speaker_slot_layout
 
             layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
+            # White fill with the character's colour in the outline, matching the
+            # convention these projects already use. Putting the colour in the
+            # fill instead leaves dark characters unreadable on the slot's dark
+            # backdrop: navy #172B80 scores 1.17:1 against it, well under the 3.0
+            # WCAG floor for large text, and its black outline does not rescue it.
             st = pyass.Style(
                 name=style_name,
                 fontName="Arial",
                 fontSize=54,
                 isBold=True,
-                primaryColor=c,
-                outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
+                primaryColor=pyass.Color(r=255, g=255, b=255, a=0),
+                outlineColor=c,
                 backColor=pyass.Color(r=0, g=0, b=0, a=0),
-                outline=2.0,
-                shadow=2.0,
+                outline=2.5,
+                shadow=1.5,
                 alignment=pyass.Alignment.CENTER_LEFT,
                 marginL=layout["text_x"],
                 marginR=80,
