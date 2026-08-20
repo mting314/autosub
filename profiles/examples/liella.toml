@@ -14,7 +14,7 @@ vocab = [
     "青山なぎさ", # Aoyama Nagisa
     "鈴原希実", # Suzuhara Nozomi
     "薮島朱音", # Yabushima Akane
-    "大熊和奏", # Ookuma Wakana
+    "大熊和奏", # Okuma Wakana
     "絵森彩", # Emori Aya
     "結那", # Yuina
     "坂倉花", # Sakakura Sakura
@@ -93,7 +93,7 @@ explanation = "VA name (Yabushima Akane). ASR variants: 藪縞あかね, 藪2茜
 
 [[format.normalizer.terms]]
 value = "大熊和奏"
-explanation = "VA name (Ookuma Wakana). ASR variants: 大熊のちゃん (name truncated), 大熊若菜."
+explanation = "VA name (Okuma Wakana). ASR variants: 大熊のちゃん (name truncated), 大熊若菜."
 
 [[format.normalizer.terms]]
 value = "さゆりん"
