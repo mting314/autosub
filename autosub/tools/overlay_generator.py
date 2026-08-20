@@ -8,6 +8,72 @@ from autosub.core.speaker_map import calculate_speaker_slot_layout, load_speaker
 logger = logging.getLogger(__name__)
 
 
+# Where the subject's face sits in a standard portrait headshot, and how much of
+# the frame to keep around it. Measured against the official Love Live cast
+# photos: a square of 66% of the source height, centred 35% down, holds the whole
+# head without clipping hair, and stops well above any caption band.
+_FACE_CENTRE_Y = 0.35
+_FACE_CROP_SCALE = 0.66
+
+
+def _content_bounds_x(img: Image.Image) -> Tuple[int, int]:
+    """Horizontal extent of the artwork, excluding a plain white page margin.
+
+    Official cast photos are supplied as a card floating on white. Cropping that
+    margin away first keeps the face centred on the subject rather than on the
+    page.
+    """
+    grey = img.convert("L")
+    width, height = grey.size
+    pixels = grey.load()
+    step = max(1, height // 64)
+
+    def column_is_margin(x: int) -> bool:
+        return all(pixels[x, y] > 235 for y in range(0, height, step))
+
+    left = 0
+    while left < width - 1 and column_is_margin(left):
+        left += 1
+    right = width
+    while right > left + 1 and column_is_margin(right - 1):
+        right -= 1
+
+    # A thin coloured frame usually hugs the margin; step inside it.
+    inset = max(2, int((right - left) * 0.02))
+    left, right = left + inset, right - inset
+    if right - left < width * 0.2:  # detection went wrong, keep the full width
+        return 0, width
+    return left, right
+
+
+def _crop_to_face(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    """Crop a headshot to the subject's face at the requested aspect ratio.
+
+    Source photos often carry a white page margin, a coloured frame and a caption
+    band with the subject's name. Framing on the face drops all three, because
+    they sit outside the head.
+    """
+    width, height = img.size
+    left, right = _content_bounds_x(img)
+    centre_x = (left + right) / 2
+
+    crop_h = height * _FACE_CROP_SCALE
+    crop_w = crop_h * (target_w / target_h)
+    if crop_w > right - left:  # never widen past the artwork into the margin
+        crop_w = right - left
+        crop_h = crop_w * (target_h / target_w)
+
+    top = max(0.0, height * _FACE_CENTRE_Y - crop_h / 2)
+    top = min(top, height - crop_h)
+    box = (
+        int(max(0, centre_x - crop_w / 2)),
+        int(top),
+        int(min(width, centre_x + crop_w / 2)),
+        int(top + crop_h),
+    )
+    return img.crop(box).resize((target_w, target_h), Image.Resampling.LANCZOS)
+
+
 def _build_va_card(
     va_img_path: Union[Path, str, None],
     title_text: str,
@@ -37,24 +103,7 @@ def _build_va_card(
     if va_img_path and Path(va_img_path).exists():
         try:
             va_raw = Image.open(va_img_path).convert("RGBA")
-            orig_w, orig_h = va_raw.size
-            target_ratio = total_w / img_h
-            orig_ratio = orig_w / orig_h
-
-            if orig_ratio > target_ratio:
-                # Image is wider: crop sides (center crop)
-                new_w = int(orig_h * target_ratio)
-                left = (orig_w - new_w) // 2
-                crop_box = (left, 0, left + new_w, orig_h)
-            else:
-                # Image is taller: crop top/bottom (12% offset from top for headshots)
-                new_h = int(orig_w / target_ratio)
-                top = int((orig_h - new_h) * 0.12)
-                crop_box = (0, max(0, top), orig_w, min(orig_h, top + new_h))
-
-            cropped = va_raw.crop(crop_box).resize(
-                (total_w, img_h), Image.Resampling.LANCZOS
-            )
+            cropped = _crop_to_face(va_raw, total_w, img_h)
             top_container.paste(cropped, (0, 0))
         except Exception as e:
             logger.warning(f"Failed to process VA photo {va_img_path}: {e}")
