@@ -1,11 +1,58 @@
 import logging
 from pathlib import Path
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 from PIL import Image, ImageDraw, ImageFont
 
 from autosub.core.speaker_map import calculate_speaker_slot_layout, load_speaker_map
 
 logger = logging.getLogger(__name__)
+
+
+# Lato ExtraBold, the subtitling font these projects use. Each event folder ships
+# its own copy, so the project directory is searched before installed fonts —
+# the same order scripts/generate_overlays.py uses in the projects repo.
+_FONT_FILE = "LATO-EXTRABOLD.TTF"
+_FONT_FALLBACKS = ("arialbd.ttf", "Arial Bold.ttf", "arial.ttf", "Arial.ttf")
+
+# Share of the card width the banner text should span.
+_BANNER_TEXT_WIDTH = 0.92
+
+
+def _load_font(size: int, font_dir: Optional[Path] = None):
+    """Load Lato ExtraBold at the given size, falling back if it is not installed."""
+    candidates: list[str] = []
+    if font_dir:
+        candidates.append(str(Path(font_dir) / _FONT_FILE))
+    candidates.append(_FONT_FILE)
+    candidates.extend(_FONT_FALLBACKS)
+
+    for name in candidates:
+        try:
+            return ImageFont.truetype(name, size)
+        except Exception:
+            continue
+    logger.warning(
+        "%s not found and no fallback available; banner text will use a bitmap font.",
+        _FONT_FILE,
+    )
+    return ImageFont.load_default()
+
+
+def _fit_font(
+    text: str, max_width: int, max_height: int, font_dir: Optional[Path] = None
+):
+    """Largest size at which text fits the given box."""
+    if not text:
+        return _load_font(max(8, max_height), font_dir)
+
+    best = _load_font(8, font_dir)
+    for size in range(8, max(9, max_height) + 1):
+        font = _load_font(size, font_dir)
+        left, top, right, bottom = font.getbbox(text)
+        if right - left > max_width or bottom - top > max_height:
+            break
+        best = font
+    return best
 
 
 # Where the subject's face sits in a standard portrait headshot, and how much of
@@ -82,6 +129,7 @@ def _build_va_card(
     card_size: Tuple[int, int] = (260, 310),
     banner_height: int = 70,
     radius: int = 14,
+    font_dir: Optional[Path] = None,
 ) -> Image.Image:
     """Renders a vertical portrait VA card with a large top photo and VA + character name banner at the bottom."""
     total_w, card_h = card_size
@@ -121,16 +169,24 @@ def _build_va_card(
         dark_text_color = (255, 255, 255, 255)
         sub_text_color = (235, 235, 245, 230)
 
-    try:
-        font_title = ImageFont.truetype("arialbd.ttf", 20)
-        font_subtitle = ImageFont.truetype("arial.ttf", 15)
-    except Exception:
-        try:
-            font_title = ImageFont.truetype("arial.ttf", 20)
-            font_subtitle = ImageFont.truetype("arial.ttf", 15)
-        except Exception:
-            font_title = ImageFont.load_default()
-            font_subtitle = ImageFont.load_default()
+    # Size the names to fill the banner, bounded by the card width and the space
+    # left once both lines are stacked.
+    font_title = _fit_font(
+        title_text,
+        max_width=int(total_w * _BANNER_TEXT_WIDTH),
+        max_height=int(banner_height * (0.52 if subtitle_text else 0.8)),
+        font_dir=font_dir,
+    )
+    font_subtitle = (
+        _fit_font(
+            subtitle_text,
+            max_width=int(total_w * _BANNER_TEXT_WIDTH),
+            max_height=int(banner_height * 0.30),
+            font_dir=font_dir,
+        )
+        if subtitle_text
+        else font_title
+    )
 
     t_bbox = font_title.getbbox(title_text)
     s_bbox = font_subtitle.getbbox(subtitle_text) if subtitle_text else (0, 0, 0, 0)
@@ -185,8 +241,12 @@ def generate_radio_overlay_image(
     :param canvas_size: Output image resolution (default 1920x1080)
     :return: Output Path
     """
+    font_dir: Optional[Path] = None
     if isinstance(speaker_map_or_path, (str, Path)):
         speaker_map = load_speaker_map(Path(speaker_map_or_path))
+        # Each event folder ships its own copy of the subtitling font next to the
+        # speaker map, so prefer that over whatever happens to be installed.
+        font_dir = Path(speaker_map_or_path).parent
     else:
         speaker_map = speaker_map_or_path
 
@@ -284,6 +344,7 @@ def generate_radio_overlay_image(
             card_size=(cw, 330),
             banner_height=70,
             radius=14,
+            font_dir=font_dir,
         )
 
         # Paste card onto main canvas centered in slot Y
