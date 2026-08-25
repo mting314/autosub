@@ -590,6 +590,7 @@ def _line_capacities(script: pyass.Script) -> dict[str, int]:
             getattr(style, "marginL", None),
             getattr(style, "marginR", None),
             getattr(style, "fontSize", None),
+            getattr(style, "fontName", None),
         )
     return capacities
 

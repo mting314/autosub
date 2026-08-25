@@ -88,8 +88,8 @@ def generate_ass_file(
             # WCAG floor for large text, and its black outline does not rescue it.
             st = pyass.Style(
                 name=style_name,
-                fontName="Arial",
-                fontSize=54,
+                fontName="Lato ExtraBold",
+                fontSize=70,
                 isBold=True,
                 primaryColor=pyass.Color(r=255, g=255, b=255, a=0),
                 outlineColor=c,

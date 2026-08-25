@@ -41,8 +41,14 @@ logger = logging.getLogger(__name__)
 MAX_CHARS_PER_LINE = 42
 MAX_LINES = 2
 
-# Mean glyph advance as a fraction of font size, measured by rendering mixed-case
-# English through libass at Arial 54 (24.2px per character).
+# Mean glyph advance as a fraction of font size. Measured per face by rendering
+# mixed-case English through libass, because the figure varies a lot between
+# fonts: Lato ExtraBold sets far narrower than Arial at the same nominal size.
+# A face not listed here falls back to the conservative Arial-ish figure.
+_CHAR_WIDTH_RATIOS = {
+    "arial": 0.42,
+    "lato extrabold": 0.31,
+}
 _CHAR_WIDTH_RATIO = 0.45
 
 # A break must leave at least this share of the line on each side, so a
@@ -437,6 +443,7 @@ def capacity_for_style(
     margin_l: int | None,
     margin_r: int | None,
     font_size: float | None,
+    font_name: str | None = None,
 ) -> int:
     """Characters that fit on one line of the box this style renders into.
 
@@ -450,4 +457,5 @@ def capacity_for_style(
     usable = play_res_x - (margin_l or 0) - (margin_r or 0)
     if usable <= 0:
         return MAX_CHARS_PER_LINE
-    return max(20, int(usable / (font_size * _CHAR_WIDTH_RATIO)))
+    ratio = _CHAR_WIDTH_RATIOS.get((font_name or "").strip().lower(), _CHAR_WIDTH_RATIO)
+    return max(20, int(usable / (font_size * ratio)))
