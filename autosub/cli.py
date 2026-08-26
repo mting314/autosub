@@ -901,6 +901,57 @@ def postprocess(
         raise typer.Exit(code=1)
 
 
+@app.command(name="embed-fonts")
+def embed_fonts_command(
+    ass_file: Path = typer.Argument(
+        ...,
+        help="Subtitle file whose fonts should be attached.",
+        exists=True,
+        dir_okay=False,
+    ),
+    out: Path = typer.Option(
+        None,
+        "--out",
+        "-o",
+        help="Where to write the result (defaults to editing the file in place).",
+    ),
+    font_dir: list[Path] = typer.Option(
+        None,
+        "--font-dir",
+        help="Extra directory to search for fonts. Repeatable.",
+    ),
+):
+    """
+    Attach the fonts a subtitle file asks for into its [Fonts] section.
+
+    libass resolves a style's Fontname against the rendering machine's installed
+    fonts, so a burn done elsewhere silently falls back to a different face.
+    Attaching the fonts makes the file render identically anywhere, with no
+    fontsdir and nothing installed. Fonts are read from the styles and inline
+    \\fn tags, so this covers whatever font the project uses.
+    """
+    from autosub.tools.font_collector import embed_fonts
+
+    try:
+        embedded, missing = embed_fonts(ass_file, out, font_dir or None)
+    except Exception as e:
+        logger.error(f"Failed to embed fonts: {e}")
+        raise typer.Exit(code=1)
+
+    target = out or ass_file
+    for path in embedded:
+        typer.echo(f"  attached {path.name}")
+    if missing:
+        for name in missing:
+            typer.echo(f"  MISSING  {name}")
+        typer.echo(
+            f"Attached {len(embedded)} font(s) to {target}; "
+            f"{len(missing)} not found — those will fall back when burned."
+        )
+        raise typer.Exit(code=1)
+    typer.echo(f"Attached {len(embedded)} font(s) to {target}.")
+
+
 @app.command(name="generate-overlay")
 def generate_overlay(
     speaker_map_path: Path = typer.Option(
