@@ -716,3 +716,49 @@ def test_run_supports_whisperx_backend_options(tmp_path, monkeypatch):
     assert captured_transcribe["whisper_batch_size"] == 8
     assert captured_transcribe["whisper_diarize"] is True
     assert captured_transcribe["whisper_hf_token"] == "hf-token"
+
+
+# --- hardsub ---
+
+
+def test_hardsub_lone_start_rejected(tmp_path):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    input_ass = tmp_path / "subs.ass"
+    _write_minimal_ass(input_ass)
+
+    result = runner.invoke(
+        app,
+        ["hardsub", str(video_path), "--ass", str(input_ass), "--start", "0:10:00"],
+    )
+
+    assert result.exit_code == 2
+    assert "--start and --end must be provided together" in result.output
+
+
+def test_hardsub_passes_paired_segments(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    input_ass = tmp_path / "subs.ass"
+    _write_minimal_ass(input_ass)
+    captured: dict[str, object] = {}
+
+    from autosub.pipeline.hardsub import main as hardsub_module
+
+    monkeypatch.setattr(
+        hardsub_module,
+        "hardsub_video",
+        lambda *args, **kwargs: captured.update(segments=kwargs.get("segments")),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "hardsub", str(video_path), "--ass", str(input_ass),
+            "--start", "0:10:00", "--end", "0:11:00",
+            "--start", "0:20:00", "--end", "0:21:00",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["segments"] == [("0:10:00", "0:11:00"), ("0:20:00", "0:21:00")]
