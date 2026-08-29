@@ -339,3 +339,93 @@ def test_no_corners_returns_empty_list(tmp_path):
         assert data["corners"] == []
     finally:
         autosub.core.profile.Path = original_path
+
+
+def test_profile_extending_two_bases_accumulates_both(tmp_path):
+    """A show profile combines a format base with a franchise base.
+
+    proseka/sekaraji is `extends = ["multi_seiyuu_radio", "proseka/base"]`: the first
+    base supplies the multi-host translation framing, the second supplies the Project
+    Sekai vocabulary and glossary. Both must survive, and the child must still win on
+    conflicts. This is the contract the proseka/base split depends on.
+    """
+    profile_dir = tmp_path / "profiles"
+    profile_dir.mkdir()
+
+    (profile_dir / "format_base.toml").write_text(
+        """
+prompt = "how to translate a two-host radio show"
+vocab = ["ラジオネーム"]
+
+[glossary]
+"ラジオネーム" = "Radio name:"
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_dir / "franchise_base.toml").write_text(
+        """
+prompt = "what the franchise is"
+vocab = ["プロセカ"]
+
+[glossary]
+"プロセカ" = "ProSeka"
+"セカイ" = "sekai"
+
+[format.normalizer]
+engine = "llm"
+model = "base-model"
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_dir / "show.toml").write_text(
+        """
+extends = ["format_base", "franchise_base"]
+
+prompt = "what this specific show is"
+vocab = ["セカラジ"]
+
+[glossary]
+"セカラジ" = "Sekaraji"
+"セカイ" = "SEKAI"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    import autosub.core.profile
+
+    original_path = autosub.core.profile.Path
+
+    class MockPath(autosub.core.profile.Path):
+        def __new__(cls, *args, **kwargs):
+            if args and args[0] == "profiles":
+                return profile_dir
+            return super().__new__(cls, *args, **kwargs)
+
+    autosub.core.profile.Path = MockPath
+
+    try:
+        data = load_unified_profile("show")
+
+        # Vocab accumulates from both bases, then the child, in extends order.
+        assert data["vocab"] == ["ラジオネーム", "プロセカ", "セカラジ"]
+
+        # Prompt fragments concatenate in the same order, so the show's own framing
+        # comes last and reads as the most specific instruction.
+        assert data["prompt"] == [
+            "how to translate a two-host radio show",
+            "what the franchise is",
+            "what this specific show is",
+        ]
+
+        # Glossaries merge; the child overrides a key the franchise base also defines.
+        assert data["glossary"] == {
+            "ラジオネーム": "Radio name:",
+            "プロセカ": "ProSeka",
+            "セカラジ": "Sekaraji",
+            "セカイ": "SEKAI",
+        }
+
+        # Config the child never mentions is inherited untouched.
+        assert data["normalizer"]["model"] == "base-model"
+    finally:
+        autosub.core.profile.Path = original_path

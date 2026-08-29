@@ -1,4 +1,4 @@
-extends = ["solo_seiyuu_radio"]
+extends = ["solo_seiyuu_radio", "proseka/base"]
 
 prompt = [
     """
@@ -23,111 +23,22 @@ Recurring scripted lines — these appear in every AfterTalk episode. Use these 
 - Short sign-off: "それではまた次回" → "See you next time." / "See you again next time!"
 - "バイバイ" → "Bye bye!"
 
-ProSeka-specific style rules:
-1. Preserve third-person self-reference. When the host refers to themselves by their own name or character name (みのり, エナ), keep it in English ("Minori will be talking", not "I'll be talking") — it's a deliberate speech pattern.
-2. Song titles must be translated exactly as they appear — do not paraphrase, add words, or swap nouns ("painting" vs "drawing" matters). If unsure, transliterate rather than guess.
-3. Preserve tsukkomi (self-directed comedic retorts). When the host catches themselves and calls it out (e.g., お前かい), translate the comedic self-awareness, not just the surface meaning.
-4. 特訓前/特訓後 are "untrained/trained" (e.g., "untrained art", "the trained version"). Never use ML-flavored variants like "pre-trained/post-trained" or "before/after training".
-5. Specific times like 5分 usually refer to clock times in the livestream schedule (e.g., 10:05 PM), not durations.
-6. Vocaloid character names (MEIKO, KAITO, MIKU, RIN, LEN, LUKA) are ALWAYS ALL CAPS in English. 咲子 in Vocaloid context is MEIKO.
-7. Producer/artist names (aqu3ra, MARETU, chouchou-P, Ayase) use their official Latin stylization — numerals-for-letters, lowercase, trailing -P. Never add Japanese honorifics. If you can't identify the canonical spelling, leave the original katakana rather than guessing a romanization.
-8. Brand capitalization is non-negotiable: ProSeka (capital S), AfterTalk (capital T), AfterLive (capital L), SEKAI (all caps).
-9. Event titles and song titles must be wrapped in double quotes when mentioned by name (e.g., "Colors of Pure Sense", "The Name of Your Drawing"). Do not italicize them.
-10. Unit names (MORE MORE JUMP!, Leo/need, etc.) are NOT quoted. Only event stories and songs get quotes.
+AfterTalk-specific style rules (the game-wide ProSeka rules are in proseka/base):
+1. Specific times like 5分 usually refer to clock times in the livestream schedule (e.g., 10:05 PM), not durations.
+2. Brand capitalization: AfterTalk (capital T), AfterLive (capital L).
 """,
 ]
+# Game-wide vocabulary, glossary, and the transcript normalizer live in proseka/base.
+# Only AfterTalk's own program terms belong here.
 vocab = [
-    # --- Game & Program ---
-    "プロセカ",
-    "プロジェクトセカイ",
-    "カラフルステージ",
+    # --- Program ---
     "アフタートーク",
     "アフターライブ",
-    "初音ミク",
-
-    # --- Units ---
-    "レオニード",
-    "Leo/need",
-    "モア・モア・ジャンプ！",
-    "MORE MORE JUMP!",
-    "ビビッドバッドスクワッド",
-    "Vivid BAD SQUAD",
-    "ワンダーランズ×ショウタイム",
-    "Wonderlands x Showtime",
-    "25時、ナイトコードで。",
-    "Nightcord at 25:00",
-
-    # --- Unit Abbreviations ---
-    "レオニ",
-    "モモジャン",
-    "ビビバス",
-    "ワンダショ",
-    "ニーゴ",
-
-    # --- Virtual Singers ---
-    "初音ミク",
-    "鏡音リン",
-    "鏡音レン",
-    "巡音ルカ",
-    "MEIKO",
-    "KAITO",
-
-    # --- Game Terms ---
-    "セカイ",
-    "断片セカイ",
-    "イベントストーリー",
-    "書き下ろし楽曲",
-    "バーチャルシンガー",
-    "ファンフェスタ",
-    "特訓前",
-    "特訓後",
-
-    # --- Schools ---
-    "宮益坂女子学園",
-    "東尾",
-
-    # --- Fan Jargon ---
-    "コニーゴ",
-
-    # --- Livestream Terms ---
-    "おたより",
-    "ラジオネーム",
-    "ペンネーム",
-    "メッセージ",
-
 ]
 
 [glossary]
-"プロセカ" = "ProSeka"
 "アフタートーク" = "AfterTalk"
 "アフターライブ" = "AfterLive"
-"セカイ" = "SEKAI"
-"断片セカイ" = "Fragment SEKAI"
-"バーチャルシンガー" = "Virtual Singer"
-"ファンフェスタ" = "fan festa"
-"ワンダーホイ" = "Wonderhoi!"
-"レオニ" = "Leoni"
-"ニーゴ" = "Niigo"
-"ビビバス" = "Vivibasu"
-"ワンダショ" = "Wandasho"
-"モモジャン" = "Momojan"
-"宮益坂女子学園" = "Miyamasuzaka Girls Academy"
-"東尾" = "Toubi"
-"特訓前" = "untrained"
-"特訓後" = "trained"
-"コニーゴ" = "kon-niigo"
-"初音ミク" = "Hatsune Miku"
-"鏡音リン" = "Kagamine Rin"
-"鏡音レン" = "Kagamine Len"
-"巡音ルカ" = "Megurine Luka"
-"咲子" = "MEIKO"
-
-[format.normalizer]
-engine = "llm"
-provider = "google-vertex"
-model = "gemini-3.1-flash-lite-preview"
-reasoning_effort = "minimal"
-allow_llm_correction = true
 
 [[corners]]
 name = "Story Watchalong"
