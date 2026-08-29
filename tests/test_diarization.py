@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pyass
 
 from autosub.core.schemas import SubtitleLine, TranscribedWord
@@ -233,6 +235,62 @@ color = "#A0D0FF"
     assert result["1"]["name"] == "Sato Hinata"
     assert result["1"]["character"] == "Mizuki Akiyama"
     assert result["1"]["color"] == "#A0D0FF"
+
+
+def test_speaker_map_avatar_resolves_beside_the_map(tmp_path, monkeypatch):
+    """An avatar next to the speaker map is found from any working directory.
+
+    Speaker maps get read from wherever the pipeline happens to be running — a git
+    worktree, or a remote box the project folder was copied onto — so an avatar path
+    that only resolves from the repo root is a silently blank card waiting to happen.
+    """
+    project = tmp_path / "project"
+    (project / "assets").mkdir(parents=True)
+    avatar = project / "assets" / "host.png"
+    avatar.write_bytes(b"not really a png")
+
+    map_file = project / "speaker_map.toml"
+    map_file.write_text(
+        '[speakers."0"]\nname = "A Host"\navatar = "assets/host.png"\n',
+        encoding="utf-8",
+    )
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    result = load_speaker_map(map_file)
+    assert Path(result["0"]["avatar"]) == avatar
+
+
+def test_speaker_map_avatar_prefers_the_working_directory(tmp_path, monkeypatch):
+    """The existing repo-root-relative maps keep winning over the beside-map fallback."""
+    project = tmp_path / "project"
+    project.mkdir()
+    map_file = project / "speaker_map.toml"
+    map_file.write_text(
+        '[speakers."0"]\nname = "A Host"\navatar = "assets/host.png"\n',
+        encoding="utf-8",
+    )
+    # Same relative path exists both beside the map and under the working directory.
+    for root in (project, tmp_path / "cwd"):
+        (root / "assets").mkdir(parents=True, exist_ok=True)
+        (root / "assets" / "host.png").write_bytes(b"not really a png")
+
+    monkeypatch.chdir(tmp_path / "cwd")
+    result = load_speaker_map(map_file)
+    assert Path(result["0"]["avatar"]) == Path("assets/host.png")
+
+
+def test_speaker_map_avatar_kept_verbatim_when_missing(tmp_path):
+    """An unresolvable avatar is reported as written, so the warning names the real path."""
+    map_file = tmp_path / "speaker_map.toml"
+    map_file.write_text(
+        '[speakers."0"]\nname = "A Host"\navatar = "assets/nope.png"\n',
+        encoding="utf-8",
+    )
+    result = load_speaker_map(map_file)
+    assert result["0"]["avatar"] == "assets/nope.png"
 
 
 def test_load_speaker_map_missing_color(tmp_path):

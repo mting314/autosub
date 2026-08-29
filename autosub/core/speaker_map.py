@@ -9,6 +9,28 @@ from autosub.core.schemas import SubtitleLine
 logger = logging.getLogger(__name__)
 
 
+def _resolve_avatar(avatar: str, map_path: Path) -> str:
+    """Locate an avatar named in a speaker map.
+
+    A path that resolves from the working directory is used as-is, which is how the
+    existing maps written relative to the repo root behave. Otherwise it is tried
+    again relative to the speaker map itself, so a map can point at assets next to it
+    and keep working when the pipeline runs from somewhere else — a git worktree, or a
+    remote box the map was copied onto.
+    """
+    candidate = Path(avatar)
+    if candidate.exists():
+        return str(candidate)
+
+    beside_map = map_path.parent / candidate
+    if beside_map.exists():
+        return str(beside_map)
+
+    # Neither location has it. Keep the original so the caller reports the path the
+    # map actually asked for, rather than one this function invented.
+    return str(candidate)
+
+
 def load_speaker_map(path: Path) -> dict[str, dict]:
     """Load a speaker_map.toml file.
 
@@ -45,7 +67,7 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
 
         avatar_path = entry.get("avatar")
         if avatar_path:
-            avatar_path = str(Path(avatar_path))
+            avatar_path = _resolve_avatar(avatar_path, path)
 
         result[str(label)] = {
             "name": entry.get("name", str(label)),
