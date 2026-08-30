@@ -5,8 +5,9 @@
 # profile for that show:
 #
 #   proseka/base
-#    ├── proseka/aftertalk   solo-host event recap livestream
-#    └── proseka/sekaraji    two-host biweekly web radio
+#    └── proseka/aftertalk   solo-host event recap livestream
+#         ├── proseka/leoneed, proseka/mmj, proseka/vbs,
+#         └── proseka/wxs, proseka/n25   per-unit cast and notes
 #
 # Nothing here should mention a specific program.
 
