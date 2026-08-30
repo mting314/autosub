@@ -149,9 +149,14 @@ description = "連絡ノート. The show's relay segment: the previous episode's
 # Bare "連絡ノート" is deliberately not a cue: the hosts refer to the notebook in
 # passing during other corners, and it pulled a false Contact Notebook boundary at
 # 08:52 of episode 72.
+# The sponsor credit used to be a cue here. It is not: across episodes 69-72 it
+# reads at the very END of every episode, and only sometimes also at the notebook,
+# so it pulled a false Contact Notebook boundary onto the sign-off every time.
+# Episode 69 says 連絡ノート"の"質問, episode 70/72 say 連絡ノート"に"質問, so both
+# particles are matched and the trailing conjugation is left off.
 cues = [
-    "連絡ノートに質問が届いています",
-    "この番組はプロジェクトセカイ カラフルステージ feat. 初音ミクの提供でお送りします",
+    "連絡ノートに質問が届",
+    "連絡ノートの質問が届",
 ]
 
 [[corners]]
@@ -160,9 +165,16 @@ description = "General listener mail (お便り) with no set theme, read early i
 # Bare "ラジオネーム" is deliberately not a cue. Every letter in Theme Mail is also
 # introduced by a radio name, and the Ending says "ラジオネームもお忘れなく" — between
 # them they pulled three false Listener Mail boundaries in episode 72.
+# Each episode announces this corner differently, so all four observed openings
+# are listed; only one fires per episode. The closing solicitation is included as
+# a boundary too — it is the most reliable marker of the corner, appearing in
+# three of the four episodes surveyed.
 cues = [
-    "皆さんからのお便りもご紹介していきたい",
     "お便りもご紹介していきたい",
+    "お便りを紹介していきます",
+    "お便りも届いています",
+    "お便りは以上",
+    "プロセカキャストに聞いてみたい質問やテーマ",
 ]
 
 [[corners]]
@@ -177,12 +189,13 @@ cues = [
 
 [[corners]]
 name = "Theme Mail"
-description = "The main mail corner, built around a theme announced for this episode (episode 72's was 秋に楽しみなこと, 'what you're looking forward to this autumn'). The hosts state the theme, work through submissions, and close by thanking listeners and naming the theme again. Distinct from Listener Mail by the explicit テーマ framing."
+description = "The main mail corner, built around a theme announced for this episode. The hosts state the theme, work through submissions, and close by thanking listeners and naming the theme again. Distinct from Listener Mail by the explicit テーマ framing. Observed themes: 私の宝物 (ep69), 暑い夏の対策 (ep70), お家時間の過ごし方 (ep71), 秋に楽しみなこと (ep72) — the theme is always restated at the close as ...というテーマでお届けしました."
 cues = [
     "今回はこんなテーマでメールを募集しました",
     "というテーマでお届けしました",
     "早速メールを紹介していきます",
     "今回のご紹介は以上です",
+    "今回の紹介は以上です",
 ]
 
 [[corners]]
@@ -194,5 +207,7 @@ cues = [
     "ラジオネームもお忘れなく",
     "次回のキャストさんに向けて連絡ノートにコメントを残していきたい",
     "ここまでのお相手は",
+    "お別れです",
+    "お別れのお時間",
     "バイバイ",
 ]
