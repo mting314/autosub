@@ -80,16 +80,7 @@ def apply_corners(
 
     result: list[SubtitleLine] = []
     for line, corner in zip(lines, resolved_corners, strict=False):
-        result.append(
-            SubtitleLine(
-                text=line.text,
-                start_time=line.start_time,
-                end_time=line.end_time,
-                speaker=line.speaker,
-                role=line.role,
-                corner=corner,
-            )
-        )
+        result.append(line.model_copy(update={"corner": corner}))
 
     detected = [c for c in resolved_corners if c is not None]
     if detected:

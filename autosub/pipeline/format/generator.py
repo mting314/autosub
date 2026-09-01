@@ -1,13 +1,30 @@
 from pathlib import Path
-from typing import List
+from typing import Literal, NamedTuple
 import pyass
 
-from autosub.core.schemas import SubtitleLine
+from autosub.core.schemas import SubtitleCue, SubtitleDocument, SubtitleLine
 from autosub.core.speaker_map import hex_to_pyass_color, remap_speaker_labels
+
+# Script resolution the styles are authored against (1080p). Must be written into the
+# header — see the note in _script_from_entries.
+PLAY_RES_X = 1920
+PLAY_RES_Y = 1080
+
+
+AssRenderMode = Literal["source", "translated", "bilingual", "final"]
+
+
+class _AssEntry(NamedTuple):
+    text: str
+    start_time: float
+    end_time: float
+    speaker: str | None = None
+    role: str | None = None
+    corner: str | None = None
 
 
 def generate_ass_file(
-    lines: List[SubtitleLine],
+    lines: list[SubtitleLine],
     output_path: Path,
     speaker_map: dict[str, dict] | None = None,
 ):
@@ -22,8 +39,114 @@ def generate_ass_file(
     if speaker_map:
         remap_speaker_labels(lines, speaker_map)
 
+    write_ass_script(
+        _script_from_entries(
+            [_line_to_entry(line) for line in lines], speaker_map=speaker_map
+        ),
+        output_path,
+    )
+
+
+def build_ass_script(
+    document: SubtitleDocument,
+    *,
+    mode: AssRenderMode,
+    chunk_boundaries: list[int] | set[int] | None = None,
+    speaker_map: dict[str, dict] | None = None,
+) -> pyass.Script:
+    """Build the ASS script for a document without writing it.
+
+    Split out from render_ass_document so callers that need a layout pass over
+    the finished events (line breaking, which needs per-style capacities that
+    only exist once styles are built) can modify the script before it is
+    written.
+    """
+    entries = [
+        _AssEntry(
+            text=_cue_text_for_mode(cue, mode),
+            start_time=cue.start_time,
+            end_time=cue.end_time,
+            speaker=cue.speaker,
+            role=cue.role,
+            corner=cue.corner,
+        )
+        for cue in document.cues
+    ]
+
+    script = _script_from_entries(entries, speaker_map=speaker_map)
+    boundaries = (
+        document.chunk_boundaries if chunk_boundaries is None else chunk_boundaries
+    )
+    if boundaries:
+        script.events = _insert_chunk_boundary_comments(script.events, set(boundaries))
+    return script
+
+
+def render_ass_document(
+    document: SubtitleDocument,
+    output_path: Path,
+    *,
+    mode: AssRenderMode,
+    chunk_boundaries: list[int] | set[int] | None = None,
+    speaker_map: dict[str, dict] | None = None,
+) -> None:
+    """Render a structured subtitle document into an ASS byproduct."""
+    write_ass_script(
+        build_ass_script(
+            document,
+            mode=mode,
+            chunk_boundaries=chunk_boundaries,
+            speaker_map=speaker_map,
+        ),
+        output_path,
+    )
+
+
+def write_ass_script(script: pyass.Script, output_path: Path) -> None:
+    # Auto-link project background overlay for Aegisub if present.
+    output_dir = Path(output_path).parent
+    if (output_dir / "radio_background_with_overlay.png").exists():
+        script.scriptInfo.append(("Video File", "radio_background_with_overlay.png"))
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        pyass.dump(script, f)
+
+
+def _cue_text_for_mode(cue: SubtitleCue, mode: AssRenderMode) -> str:
+    source = cue.normalized_source_text or cue.source_text
+    translated = cue.translated_text or source
+    final = cue.final_text or translated
+
+    if mode == "source":
+        return source
+    if mode == "translated":
+        return translated
+    if mode == "final":
+        return final
+    if mode == "bilingual":
+        return rf"{{\fs24\a6}}{source}{{\N}}{{\fs48\a2}}{final}"
+    raise ValueError(f"Unknown ASS render mode: {mode}")
+
+
+def _line_to_entry(line: SubtitleLine) -> _AssEntry:
+    return _AssEntry(
+        text=line.text,
+        start_time=line.start_time,
+        end_time=line.end_time,
+        speaker=line.speaker,
+        role=line.role,
+        corner=line.corner,
+    )
+
+
+def _script_from_entries(
+    entries: list[_AssEntry],
+    speaker_map: dict[str, dict] | None = None,
+) -> pyass.Script:
     # 1. Identify unique speakers and generate styles
-    unique_speakers = {line.speaker if line.speaker else "Default" for line in lines}
+    unique_speakers = {
+        entry.speaker if entry.speaker else "Default" for entry in entries
+    }
 
     # Pre-defined array of subtle color tints for up to a few speakers
     auto_colors = [
@@ -59,8 +182,7 @@ def generate_ass_file(
     )
 
     styles = []
-    speakerOriginToStyleMap = {}
-
+    speaker_origin_to_style_map = {}
     for i, speaker_name in enumerate(sorted(unique_speakers)):
         resolved_name = raw_to_name.get(speaker_name, speaker_name)
         style_name = resolved_name if resolved_name else "Default"
@@ -104,45 +226,46 @@ def generate_ass_file(
                 marginV=20,
             )
         styles.append(st)
-        speakerOriginToStyleMap[speaker_name] = style_name
-        speakerOriginToStyleMap[resolved_name] = style_name
+        speaker_origin_to_style_map[speaker_name] = style_name
+        speaker_origin_to_style_map[resolved_name] = style_name
 
-    # 2. Convert SubtitleLines into pyass Events
-    pyass_events: List[pyass.Event] = []
+    # 2. Convert entries into pyass Events
+    pyass_events: list[pyass.Event] = []
 
-    for line in lines:
-        assigned_speaker = line.speaker if line.speaker else "Default"
+    for entry in entries:
+        assigned_speaker = entry.speaker if entry.speaker else "Default"
         resolved_name = raw_to_name.get(assigned_speaker, assigned_speaker)
-        assigned_style = speakerOriginToStyleMap.get(
-            resolved_name, speakerOriginToStyleMap.get(assigned_speaker, "Default")
+        assigned_style = speaker_origin_to_style_map.get(
+            resolved_name,
+            speaker_origin_to_style_map.get(assigned_speaker, "Default"),
         )
-        event_name = line.role or (resolved_name if resolved_name else "")
+        event_name = entry.role or (resolved_name if resolved_name else "")
 
         slot = map_slots.get(assigned_speaker, map_slots.get(resolved_name))
         if slot is not None:
             from autosub.core.speaker_map import calculate_speaker_slot_layout
 
             layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
-            event_text = f"{{\\pos({layout['text_x']},{layout['text_y']})}}{line.text}"
+            event_text = f"{{\\pos({layout['text_x']},{layout['text_y']})}}{entry.text}"
         else:
-            event_text = line.text
+            event_text = entry.text
 
-        if line.corner:
+        if entry.corner:
             pyass_events.append(
                 pyass.Event(
                     format=pyass.EventFormat.COMMENT,
-                    start=pyass.timedelta(seconds=line.start_time),
-                    end=pyass.timedelta(seconds=line.end_time),
+                    start=pyass.timedelta(seconds=entry.start_time),
+                    end=pyass.timedelta(seconds=entry.end_time),
                     style=assigned_style,
                     effect="corner",
-                    text=f"=== Corner: {line.corner} ===",
+                    text=f"=== Corner: {entry.corner} ===",
                 )
             )
 
         pyass_events.append(
             pyass.Event(
-                start=pyass.timedelta(seconds=line.start_time),
-                end=pyass.timedelta(seconds=line.end_time),
+                start=pyass.timedelta(seconds=entry.start_time),
+                end=pyass.timedelta(seconds=entry.end_time),
                 style=assigned_style,
                 name=event_name,
                 text=event_text,
@@ -151,15 +274,34 @@ def generate_ass_file(
 
     # 3. Create the pyass Script container
     script = pyass.Script(styles=styles, events=pyass_events)
-    script.scriptInfo.append(("PlayResX", "1920"))
-    script.scriptInfo.append(("PlayResY", "1080"))
 
-    # Auto-link project background overlay for Aegisub if present
-    output_dir = Path(output_path).parent
-    bg_overlay = output_dir / "radio_background_with_overlay.png"
-    if bg_overlay.exists():
-        script.scriptInfo.append(("Video File", "radio_background_with_overlay.png"))
+    # pyass omits PlayResX/PlayResY. Without them libass falls back to a 384x288 script
+    # canvas and scales that up to the video frame, so a Fontsize-100 style renders ~5x
+    # too large and every line wraps. Pin the resolution the styles are authored against.
+    script.scriptInfo.append(("PlayResX", str(PLAY_RES_X)))
+    script.scriptInfo.append(("PlayResY", str(PLAY_RES_Y)))
+    return script
 
-    # 4. Dump to disk
-    with open(output_path, "w", encoding="utf-8") as f:
-        pyass.dump(script, f)
+
+def _insert_chunk_boundary_comments(
+    events: list[pyass.Event],
+    chunk_boundaries: set[int],
+) -> list[pyass.Event]:
+    new_events: list[pyass.Event] = []
+    dialogue_idx = 0
+    for event in events:
+        if isinstance(event, pyass.Event) and event.format != pyass.EventFormat.COMMENT:
+            if dialogue_idx in chunk_boundaries:
+                new_events.append(
+                    pyass.Event(
+                        format=pyass.EventFormat.COMMENT,
+                        start=event.start,
+                        end=event.end,
+                        style=event.style,
+                        effect="",
+                        text="[autosub] Chunk boundary - review translation around this line",
+                    )
+                )
+            dialogue_idx += 1
+        new_events.append(event)
+    return new_events

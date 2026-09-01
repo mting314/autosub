@@ -21,7 +21,7 @@ class CornerDecision(BaseModel):
 
 class VertexCornerClassifier(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-3.1-flash-lite-preview",
+        "google-vertex": "gemini-2.5-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
     }
@@ -42,7 +42,7 @@ class VertexCornerClassifier(BaseStructuredLLM):
         trace_path: Path | str | None = None,
     ):
         resolved_model = model or self.DEFAULT_MODELS.get(
-            provider, "gemini-3.1-flash-lite-preview"
+            provider, "gemini-2.5-flash-lite"
         )
         super().__init__(
             project_id=project_id,

@@ -1,22 +1,42 @@
 import hashlib
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
-import re
 
 import pyass
+
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
+from autosub.core.schemas import SubtitleCue, SubtitleDocument
+from autosub.pipeline.format.generator import (
+    build_ass_script,
+    render_ass_document,
+    write_ass_script,
+)
 from autosub.pipeline.translate.chunker import make_chunks
+from autosub.pipeline.translate.linebreak import (
+    MAX_CHARS_PER_LINE,
+    capacity_for_style,
+    load_nlp,
+    normalized_text,
+    split_text,
+    strip_tags,
+    visible_length,
+    wrap_line,
+)
 
 logger = logging.getLogger(__name__)
 
+# Guard against pathological recursion when a line keeps failing to fit.
+_MAX_SPLIT_DEPTH = 4
 
-def _compute_fingerprint(
-    texts: list[str], chunk_size: int, corner_boundaries: list[int] | None
+
+def _compute_cue_fingerprint(
+    cues: list[SubtitleCue], chunk_size: int, corner_boundaries: list[int] | None
 ) -> str:
-    """Hash input texts and chunking config to detect stale checkpoints."""
+    """Hash translation inputs and cue metadata to detect stale checkpoints."""
     h = hashlib.sha256()
     h.update(str(chunk_size).encode())
     h.update(b"\x00")
@@ -24,53 +44,25 @@ def _compute_fingerprint(
         h.update(str(b).encode())
         h.update(b"\x00")
     h.update(b"\x01")
-    for t in texts:
-        h.update(t.encode())
+    for cue in cues:
+        source_text = cue.normalized_source_text or cue.source_text
+        payload = {
+            "text": source_text,
+            "start_time": cue.start_time,
+            "end_time": cue.end_time,
+            "speaker": cue.speaker,
+            "role": cue.role,
+            "corner": cue.corner,
+        }
+        h.update(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode())
         h.update(b"\x00")
     return h.hexdigest()
 
 
-def _extract_corner_boundaries(
-    all_events: list[pyass.Event],
-    events_to_translate: list[pyass.Event],
-) -> list[int]:
-    """Extract corner boundary indices from Comment events in the ASS script.
-
-    Corner Comment events (effect="corner") are placed by the format-time
-    corners extension. This function maps each corner Comment to the index
-    of the next dialogue event in the translate list, giving the chunker
-    pre-computed boundary positions.
-    """
-    translate_set = set(id(e) for e in events_to_translate)
-    boundaries: list[int] = []
-    pending_corner = False
-    dialogue_idx = 0
-
-    for event in all_events:
-        if (
-            isinstance(event, pyass.Event)
-            and event.format == pyass.EventFormat.COMMENT
-            and event.effect == "corner"
-        ):
-            # A corner annotation attaches to the *next* translatable dialogue
-            # event, not necessarily the immediately following event. This
-            # handles intervening non-translatable Comments (e.g. chunk markers)
-            # that may appear between the corner Comment and its target dialogue.
-            pending_corner = True
-            continue
-
-        if id(event) in translate_set:
-            if pending_corner:
-                boundaries.append(dialogue_idx)
-                pending_corner = False
-            dialogue_idx += 1
-
-    return boundaries
-
-
 def translate_subtitles(
-    input_ass_path: Path,
-    output_ass_path: Path,
+    input_json_path: Path,
+    output_json_path: Path,
+    output_ass_path: Path | None = None,
     engine: str = "vertex",
     system_prompt: str | None = None,
     target_lang: str = "en",
@@ -89,39 +81,46 @@ def translate_subtitles(
     reflow: bool = True,
     reflow_engine: str = "deterministic",
     reflow_model: str | None = None,
+    speaker_map: dict[str, dict] | None = None,
 ) -> None:
     """
-    Reads an original .ass file, translates the dialogue events, and outputs a new .ass file.
+    Reads a formatted subtitle JSON document, translates cue source text, and
+    writes a translated JSON document plus a rendered ASS byproduct.
 
-    Corner boundaries are automatically extracted from Comment events with
-    effect="corner" in the input ASS (placed by the corners format extension).
+    Corner boundaries are read directly from structured cue metadata.
     """
-    logger.info(f"Loading '{input_ass_path}' for translation...")
+    if output_ass_path is None:
+        output_ass_path = output_json_path.with_suffix(".ass")
 
-    with open(input_ass_path, "r", encoding="utf-8") as f:
-        script = pyass.load(f)
+    logger.info(f"Loading '{input_json_path}' for translation...")
+    document = SubtitleDocument.model_validate_json(
+        input_json_path.read_text(encoding="utf-8")
+    )
+    if document.stage != "formatted":
+        raise ValueError(f"translate expects stage='formatted', got {document.stage!r}")
 
-    # Extract only the dialogue text
-    # We maintain a reference list to easily write the translations back to the correct events
-    events_to_translate = []
+    cues_to_translate = []
     texts_to_translate = []
-
-    for event in script.events:
-        # Skip Comment events so they aren't sent to the LLM
-        if isinstance(event, pyass.Event) and event.format == pyass.EventFormat.COMMENT:
-            continue
-        if isinstance(event, pyass.Event) and event.text:
-            # We don't want to translate raw .ass tags.
-            # In a robust implementation, we'd strip {\\tags} before translating.
-            # Pyass has an event.text property which returns the raw text. Let's grab the raw string representation of parts.
-            raw_text = event.text
-
-            if raw_text.strip():
-                events_to_translate.append(event)
-                texts_to_translate.append(raw_text)
+    for cue in document.cues:
+        source_text = cue.normalized_source_text or cue.source_text
+        if source_text.strip():
+            cues_to_translate.append(cue)
+            texts_to_translate.append(source_text)
 
     if not texts_to_translate:
         logger.warning("No subtitle text found to translate. Exiting.")
+        translated_document = document.model_copy(deep=True)
+        translated_document.stage = "translated"
+        translated_document.chunk_boundaries = []
+        output_json_path.write_text(
+            translated_document.model_dump_json(indent=2), encoding="utf-8"
+        )
+        render_ass_document(
+            translated_document,
+            output_ass_path,
+            mode="bilingual" if bilingual else "translated",
+            speaker_map=speaker_map,
+        )
         return
 
     llm_trace_path: Path | None = None
@@ -165,15 +164,14 @@ def translate_subtitles(
     else:
         raise ValueError(f"Unknown translation engine: {engine}")
 
-    checkpoint_path = output_ass_path.with_suffix(".checkpoint.json")
-    error_path = output_ass_path.with_suffix(".error.txt")
+    checkpoint_path = output_json_path.with_suffix(".checkpoint.json")
+    error_path = output_json_path.with_suffix(".error.txt")
 
     if error_path.exists():
         error_path.unlink()
         logger.info("Removed previous translation error file.")
 
-    # Extract corner boundaries from Comment events placed by format-time extension
-    corner_boundaries = _extract_corner_boundaries(script.events, events_to_translate)
+    corner_boundaries = _extract_corner_boundaries_from_cues(document)
     if corner_boundaries:
         logger.info(
             f"Found {len(corner_boundaries)} corner boundaries at dialogue indices {corner_boundaries}"
@@ -184,7 +182,7 @@ def translate_subtitles(
         if chunk_size > 0:
             translated_texts, splits = _translate_chunked(
                 translator,
-                texts_to_translate,
+                cues_to_translate,
                 chunk_size,
                 checkpoint_path,
                 corner_boundaries=corner_boundaries or None,
@@ -192,7 +190,7 @@ def translate_subtitles(
                 log_dir=log_dir,
             )
         else:
-            translated_texts = translator.translate(texts_to_translate)
+            translated_texts = translator.translate_cues(cues_to_translate)
     except Exception as exc:
         _write_error_report(error_path, exc)
         logger.error(f"Wrote translation error details to {error_path}.")
@@ -203,15 +201,15 @@ def translate_subtitles(
         checkpoint_path.unlink()
         logger.info("Removed checkpoint file.")
 
-    if len(translated_texts) != len(events_to_translate):
+    if len(translated_texts) != len(cues_to_translate):
         raise ValueError(
-            f"Translation API expected {len(events_to_translate)} translations, but got {len(translated_texts)}"
+            f"Translation API expected {len(cues_to_translate)} translations, but got {len(translated_texts)}"
         )
 
     if reflow:
         translated_texts = _reflow_translations(
             translated_texts,
-            events_to_translate,
+            cues_to_translate,
             corner_boundaries,
             engine=reflow_engine,
             provider=provider,
@@ -219,7 +217,22 @@ def translate_subtitles(
             model=reflow_model,
         )
 
-    logger.info("Applying translations to subtitle events...")
+    logger.info("Applying translations to subtitle document...")
+    translated_document = document.model_copy(deep=True)
+    translated_document.stage = "translated"
+    # splits index into cues_to_translate (empty cues filtered out); the
+    # document stores boundaries as indices into the full cue list.
+    cue_index_by_id = {cue.id: index for index, cue in enumerate(document.cues)}
+    translated_document.chunk_boundaries = (
+        sorted(cue_index_by_id[cues_to_translate[split].id] for split in splits)
+        if debug
+        else []
+    )
+    cue_by_id = {cue.id: cue for cue in translated_document.cues}
+    for source_cue, translated_text in zip(
+        cues_to_translate, translated_texts, strict=True
+    ):
+        cue_by_id[source_cue.id].translated_text = translated_text
 
     new_events: list[pyass.Event] = []
     translated_event_set = set(id(e) for e in events_to_translate)
@@ -276,9 +289,21 @@ def translate_subtitles(
                 ("Video File", "radio_background_with_overlay.png")
             )
 
+    logger.info(f"Writing translated JSON to {output_json_path}...")
+    output_json_path.write_text(
+        translated_document.model_dump_json(indent=2), encoding="utf-8"
+    )
+
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
-    with open(output_ass_path, "w", encoding="utf-8") as f:
-        pyass.dump(script, f)
+    # Built rather than rendered directly: line breaking needs the per-style
+    # capacities, which only exist once the styles have been generated.
+    script = build_ass_script(
+        translated_document,
+        mode="bilingual" if bilingual else "translated",
+        speaker_map=speaker_map,
+    )
+    script.events = _apply_line_breaks(script.events, _line_capacities(script))
+    write_ass_script(script, output_ass_path)
 
     if llm_trace_path is not None and llm_trace_path.exists():
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")
@@ -288,7 +313,7 @@ def translate_subtitles(
 
 def _reflow_translations(
     translated_texts: list[str],
-    events_to_translate: list[pyass.Event],
+    cues_to_translate: list[SubtitleCue],
     corner_boundaries: list[int] | None,
     engine: str = "deterministic",
     provider: str = "google-vertex",
@@ -298,7 +323,7 @@ def _reflow_translations(
     """Re-split translated lines at natural English boundaries.
 
     Derives per-line display durations and hard group-break indices (speaker
-    change, corner boundary, long time gap) from the events, then delegates to
+    change, corner boundary, long time gap) from the cues, then delegates to
     the reflow. The ``llm`` engine uses a cheap model to choose break points
     (falling back to the deterministic engine per group); ``deterministic`` (the
     default) needs no API calls. Any failure is non-fatal: the original
@@ -309,14 +334,14 @@ def _reflow_translations(
     try:
         durations_s: list[float] = []
         boundaries: set[int] = set(corner_boundaries or [])
-        for i, event in enumerate(events_to_translate):
-            durations_s.append(max(0.0, (event.end - event.start).total_seconds()))
+        for i, cue in enumerate(cues_to_translate):
+            durations_s.append(max(0.0, cue.end_time - cue.start_time))
             if i == 0:
                 continue
-            prev = events_to_translate[i - 1]
-            if event.style != prev.style:
+            prev = cues_to_translate[i - 1]
+            if cue.speaker != prev.speaker:
                 boundaries.add(i)
-            elif (event.start - prev.end).total_seconds() > LONG_GAP_S:
+            elif cue.start_time - prev.end_time > LONG_GAP_S:
                 boundaries.add(i)
 
         resplitter = None
@@ -336,6 +361,30 @@ def _reflow_translations(
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(f"Line-break reflow skipped due to error: {exc}")
         return translated_texts
+
+
+def _extract_corner_boundaries_from_cues(document: SubtitleDocument) -> list[int]:
+    boundaries: list[int] = []
+    dialogue_idx = 0
+    # A corner on an empty cue attaches to the next translatable cue, matching
+    # the old behavior where corner Comments preceded their dialogue event.
+    pending_corner_cue_id: str | None = None
+    for cue in document.cues:
+        source_text = cue.normalized_source_text or cue.source_text
+        if not source_text.strip():
+            if cue.corner:
+                pending_corner_cue_id = cue.id
+            continue
+        if cue.corner or pending_corner_cue_id is not None:
+            boundaries.append(dialogue_idx)
+            pending_corner_cue_id = None
+        dialogue_idx += 1
+    if pending_corner_cue_id is not None:
+        logger.warning(
+            "Dropping corner boundary on empty cue %s: no later dialogue cue to attach it to.",
+            pending_corner_cue_id,
+        )
+    return boundaries
 
 
 def _write_error_report(error_path: Path, exc: Exception) -> None:
@@ -422,7 +471,7 @@ def _save_checkpoint(
 
 def _translate_chunked(
     translator,
-    texts: list[str],
+    cues: list[SubtitleCue],
     chunk_size: int,
     checkpoint_path: Path,
     corner_boundaries: list[int] | None = None,
@@ -430,8 +479,9 @@ def _translate_chunked(
     log_dir: Path | None = None,
 ) -> tuple[list[str], set[int]]:
     """Split texts into chunks, translate each once, and merge results."""
+    texts = [cue.normalized_source_text or cue.source_text for cue in cues]
     chunks, splits = make_chunks(texts, chunk_size, corner_boundaries=corner_boundaries)
-    fingerprint = _compute_fingerprint(texts, chunk_size, corner_boundaries)
+    fingerprint = _compute_cue_fingerprint(cues, chunk_size, corner_boundaries)
 
     # Set up structured log directory
     chunks_dir = None
@@ -473,6 +523,10 @@ def _translate_chunked(
 
     line_offset = 0
     for chunk_idx, chunk in enumerate(chunks):
+        cue_chunk = cues[line_offset : line_offset + len(chunk)]
+        if len(cue_chunk) != len(chunk):
+            raise ValueError("Cue chunking lost alignment with text chunks.")
+
         line_start = line_offset + 1
         line_end = line_offset + len(chunk)
 
@@ -489,7 +543,7 @@ def _translate_chunked(
         )
         logger.info(f"    first: {first}")
         logger.info(f"    last:  {last}")
-        results = translator.translate(chunk)
+        results = translator.translate_cues(cue_chunk)
         completed[chunk_idx] = results
         _save_checkpoint(checkpoint_path, completed, fingerprint)
 
@@ -579,10 +633,58 @@ def _wrap_long_line(text: str, max_len: int = 40) -> str:
     return full_text
 
 
-def _split_and_wrap_events(
-    events: list[pyass.Event], max_line_len: int = 40, max_event_len: int = 80
+_LEADING_TAGS_RE = re.compile(r"^((?:\{[^}]*\})+)")
+
+
+def _split_leading_tags(text: str) -> tuple[str, str]:
+    """Separate leading ASS override blocks from the visible text.
+
+    The format stage writes each line's slot position as a leading \\pos tag. The
+    translator only ever returns prose, so the tags have to be carried across by
+    hand or every line falls back to the style default and the slot layout is lost.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end() :]
+
+
+def _line_capacities(script: pyass.Script) -> dict[str, int]:
+    """Characters that fit on one line, per style, from the script's own layout.
+
+    A positioned line has whatever width its style's margins leave it, which for
+    an overlay slot is not the full-width figure Netflix's 42 assumes.
+    """
+    play_res_x = None
+    for key, value in script.scriptInfo:
+        if key == "PlayResX":
+            try:
+                play_res_x = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    capacities: dict[str, int] = {}
+    for style in getattr(script, "styles", []) or []:
+        capacities[style.name] = capacity_for_style(
+            play_res_x,
+            getattr(style, "marginL", None),
+            getattr(style, "marginR", None),
+            getattr(style, "fontSize", None),
+        )
+    return capacities
+
+
+def _apply_line_breaks(
+    events: list[pyass.Event], capacities: dict[str, int] | None = None
 ) -> list[pyass.Event]:
-    """Splits overlong events (> 80 chars) into multiple events and wraps text so max 2 lines per box and max 40 chars per line."""
+    """Lay every dialogue event out within its box, at most two lines.
+
+    Lines that cannot fit two lines become two consecutive events, cut at a
+    grammatical boundary. Empty events are dropped.
+    """
+    nlp = load_nlp()
+    capacities = capacities or {}
     processed: list[pyass.Event] = []
 
     for event in events:
@@ -593,79 +695,65 @@ def _split_and_wrap_events(
             processed.append(event)
             continue
 
-        clean_check = re.sub(r"\{\\[^}]*\}", "", event.text).strip()
-        if not clean_check:
+        if not strip_tags(event.text).strip():
             continue
-
-        split_events = _wrap_and_split_single_event(event, max_line_len, max_event_len)
-        for se in split_events:
-            se_clean = re.sub(r"\{\\[^}]*\}", "", se.text).strip()
-            if se_clean:
-                processed.append(se)
+        max_chars = capacities.get(event.style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_event(event, nlp, max_chars))
 
     return processed
 
 
-def _wrap_and_split_single_event(
-    event: pyass.Event, max_line_len: int = 40, max_event_len: int = 80
+def _lay_out_event(
+    event: pyass.Event, nlp, max_chars: int, depth: int = 0
 ) -> list[pyass.Event]:
-    pos_match = re.match(r"(\{\\pos\(\d+,\d+\)\})(.*)", event.text)
-    pos_tag = pos_match.group(1) if pos_match else ""
-    raw_text = pos_match.group(2) if pos_match else event.text
-    clean_text = " ".join(raw_text.replace("\\N", " ").split())
+    """Fit one event into two lines, splitting it into two events if it will not."""
+    tags, body = _split_leading_tags(event.text)
 
-    if len(clean_text) <= max_event_len:
-        if len(clean_text) <= max_line_len:
-            event.text = pos_tag + clean_text
-            return [event]
-        mid = len(clean_text) // 2
-        spaces = [i for i, c in enumerate(clean_text) if c == " "]
-        best = min(spaces, key=lambda s: abs(s - mid)) if spaces else mid
-        l1 = clean_text[:best].strip()
-        l2 = clean_text[best + 1 :].strip()
-        event.text = f"{pos_tag}{l1}\\N{l2}"
+    wrapped = wrap_line(body, nlp, max_chars)
+    if wrapped is not None:
+        event.text = tags + wrapped
         return [event]
 
-    mid_char = len(clean_text) // 2
-    spaces = [i for i, c in enumerate(clean_text) if c == " "]
-    best = min(spaces, key=lambda s: abs(s - mid_char)) if spaces else mid_char
-    part1 = clean_text[:best].strip()
-    part2 = clean_text[best + 1 :].strip()
+    parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    if parts is None:
+        # No grammatical break exists. Leaving the line long is better than
+        # breaking it mid-phrase; the QC pass flags it for rewording.
+        normalized = normalized_text(body)
+        logger.warning(
+            "No safe line break for %r; leaving it over length for review.",
+            strip_tags(normalized)[:60],
+        )
+        event.text = tags + normalized
+        return [event]
 
-    total_dur = (event.end - event.start).total_seconds()
-    if total_dur <= 0.1:
-        total_dur = 1.0
-    ratio = len(part1) / max(1, len(clean_text))
-    dur1 = total_dur * ratio
-    mid_time = event.start + pyass.timedelta(seconds=dur1)
+    part1, part2 = parts
 
-    e1 = pyass.Event(
+    # Divide the display time in proportion to how much text each piece carries.
+    # The QC pass can snap the cut to a real silence later; the transcript is not
+    # available here. Never let the cut leave the event's own span, or a piece
+    # would end before it starts and libass would drop it.
+    total = (event.end - event.start).total_seconds()
+    if total <= 0:
+        return [event]
+    seen1 = visible_length(part1)
+    share = seen1 / max(1, seen1 + visible_length(part2))
+    mid = event.start + pyass.timedelta(seconds=total * share)
+    mid = min(max(mid, event.start), event.end)
+
+    first = _clone_event(event, event.start, mid, tags + part1)
+    second = _clone_event(event, mid, event.end, tags + part2)
+    return _lay_out_event(first, nlp, max_chars, depth + 1) + _lay_out_event(
+        second, nlp, max_chars, depth + 1
+    )
+
+
+def _clone_event(event: pyass.Event, start, end, text: str) -> pyass.Event:
+    return pyass.Event(
         format=event.format,
         style=event.style,
-        start=event.start,
-        end=mid_time,
+        start=start,
+        end=end,
         effect=event.effect,
         name=event.name,
-        text=part1,
+        text=text,
     )
-    e2 = pyass.Event(
-        format=event.format,
-        style=event.style,
-        start=mid_time,
-        end=event.end,
-        effect=event.effect,
-        name=event.name,
-        text=part2,
-    )
-
-    res1 = _wrap_and_split_single_event(e1, max_line_len, max_event_len)
-    for r in res1:
-        clean_r = re.sub(r"\{\\pos\(\d+,\d+\)\}", "", r.text)
-        r.text = pos_tag + clean_r
-
-    res2 = _wrap_and_split_single_event(e2, max_line_len, max_event_len)
-    for r in res2:
-        clean_r = re.sub(r"\{\\pos\(\d+,\d+\)\}", "", r.text)
-        r.text = pos_tag + clean_r
-
-    return res1 + res2

@@ -447,3 +447,18 @@ def test_per_speaker_timing_rules_overlapping():
     assert a_line.start_time == 1.0
     assert b_line.start_time == 2.0
     assert b_line.start_time < a_line.end_time  # Overlapping dialogue preserved!
+
+
+def test_chirp2_diarization_rejected():
+    """chirp_2 + --speakers must fail fast with a clear error (API rejects it)."""
+    import pytest
+    from pathlib import Path
+    from autosub.pipeline.transcribe.main import transcribe
+
+    with pytest.raises(ValueError, match="not supported by the chirp_2"):
+        transcribe(
+            Path("nonexistent.mkv"),
+            Path("out.json"),
+            num_speakers=2,
+            transcription_backend="chirp_2",
+        )
