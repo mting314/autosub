@@ -1123,4 +1123,3 @@ def test_zero_duration_event_is_not_split():
     out = _lay_out_event(event, None, 20)
     assert len(out) == 1
     assert out[0].start <= out[0].end
->>>>>>> origin/dev
