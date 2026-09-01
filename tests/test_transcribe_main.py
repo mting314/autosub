@@ -71,7 +71,7 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
         language_code: str = "ja-JP",
         vocabulary: list[str] | None = None,
         num_speakers: int | None = None,
-        model: str = "chirp_2",
+        model: str = "chirp_3",
     ) -> SimpleNamespace:
         segment_id = audio_content.decode("utf-8")
         barrier.wait(timeout=2)
@@ -93,7 +93,7 @@ def test_transcribe_merges_multiple_ranges_concurrently(tmp_path, monkeypatch):
     assert [word.start_time for word in result.words] == [0.1, 15.1]
     assert len(result.segments) == 2
     assert result.metadata is not None
-    assert result.metadata.backend == "chirp_2"
+    assert result.metadata.backend == "chirp_3"
     assert output_path.exists()
     assert all(not path.exists() for path in created_audio_paths)
 
@@ -129,7 +129,7 @@ def test_transcribe_fails_if_any_segment_fails(tmp_path, monkeypatch):
         language_code: str = "ja-JP",
         vocabulary: list[str] | None = None,
         num_speakers: int | None = None,
-        model: str = "chirp_2",
+        model: str = "chirp_3",
     ) -> SimpleNamespace:
         segment_id = audio_content.decode("utf-8")
         barrier.wait(timeout=2)
@@ -349,7 +349,9 @@ def test_parse_words_clamps_bogus_timestamps():
             ]
         )
     ]
-    words = transcribe_main._parse_words(results, offset_seconds=1080.0, chunk_duration=1080.0)
+    words = transcribe_main._parse_words(
+        results, offset_seconds=1080.0, chunk_duration=1080.0
+    )
     # Bogus word: end clamped to start (100.0), then offset applied
     assert words[0].start_time == 1180.0
     assert words[0].end_time == 1180.0
@@ -378,3 +380,10 @@ def test_parse_words_clamps_without_chunk_duration():
     words = transcribe_main._parse_words(results, offset_seconds=0.0)
     assert words[0].start_time == 1853.28
     assert words[0].end_time == 1853.28  # clamped to start
+
+
+def test_chirp_2_is_a_supported_backend():
+    """DEFAULT_TRANSCRIPTION_BACKEND is chirp_3, so listing it left chirp_2 out."""
+    from autosub.pipeline.transcribe.main import SUPPORTED_TRANSCRIPTION_BACKENDS
+
+    assert SUPPORTED_TRANSCRIPTION_BACKENDS == {"chirp_2", "chirp_3", "whisperx"}

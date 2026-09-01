@@ -21,7 +21,7 @@ class CornerDecision(BaseModel):
 
 class VertexCornerClassifier(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-3.1-flash-lite-preview",
+        "google-vertex": "gemini-2.5-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
     }
@@ -42,7 +42,7 @@ class VertexCornerClassifier(BaseStructuredLLM):
         trace_path: Path | str | None = None,
     ):
         resolved_model = model or self.DEFAULT_MODELS.get(
-            provider, "gemini-3.1-flash-lite-preview"
+            provider, "gemini-2.5-flash-lite"
         )
         super().__init__(
             project_id=project_id,
@@ -62,9 +62,9 @@ class VertexCornerClassifier(BaseStructuredLLM):
     def _get_system_instruction(self, num_lines: int) -> str:
         segments_text = ""
         for seg in self._segments:
-            segments_text += f'- {seg["name"]}: {seg.get("description", "")}\n'
+            segments_text += f"- {seg['name']}: {seg.get('description', '')}\n"
             if seg.get("cues"):
-                segments_text += f'  Common cue phrases: {", ".join(seg["cues"])}\n'
+                segments_text += f"  Common cue phrases: {', '.join(seg['cues'])}\n"
 
         return (
             "You are analyzing a Japanese radio show or program transcript for segment transitions.\n"
@@ -146,9 +146,7 @@ def classify_corners_with_vertex(
     provider = config.get("provider", "google-vertex")
     project_id = config.get("project_id")
     if provider == "google-vertex" and not project_id:
-        raise ValueError(
-            "corners Vertex mode requires a Google Cloud project id."
-        )
+        raise ValueError("corners Vertex mode requires a Google Cloud project id.")
 
     classifier = VertexCornerClassifier(
         project_id=project_id,

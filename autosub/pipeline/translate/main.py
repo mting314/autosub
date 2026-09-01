@@ -1,16 +1,36 @@
 import hashlib
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
+
+import pyass
 
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 from autosub.core.schemas import SubtitleCue, SubtitleDocument
-from autosub.pipeline.format.generator import render_ass_document
+from autosub.pipeline.format.generator import (
+    build_ass_script,
+    render_ass_document,
+    write_ass_script,
+)
 from autosub.pipeline.translate.chunker import make_chunks
+from autosub.pipeline.translate.linebreak import (
+    MAX_CHARS_PER_LINE,
+    capacity_for_style,
+    load_nlp,
+    normalized_text,
+    split_text,
+    strip_tags,
+    visible_length,
+    wrap_line,
+)
 
 logger = logging.getLogger(__name__)
+
+# Guard against pathological recursion when a line keeps failing to fit.
+_MAX_SPLIT_DEPTH = 4
 
 
 def _compute_cue_fingerprint(
@@ -58,6 +78,10 @@ def translate_subtitles(
     debug: bool = False,
     retry_chunks: list[int] | None = None,
     log_dir: Path | None = None,
+    reflow: bool = True,
+    reflow_engine: str = "deterministic",
+    reflow_model: str | None = None,
+    speaker_map: dict[str, dict] | None = None,
 ) -> None:
     """
     Reads a formatted subtitle JSON document, translates cue source text, and
@@ -95,6 +119,7 @@ def translate_subtitles(
             translated_document,
             output_ass_path,
             mode="bilingual" if bilingual else "translated",
+            speaker_map=speaker_map,
         )
         return
 
@@ -181,6 +206,17 @@ def translate_subtitles(
             f"Translation API expected {len(cues_to_translate)} translations, but got {len(translated_texts)}"
         )
 
+    if reflow:
+        translated_texts = _reflow_translations(
+            translated_texts,
+            cues_to_translate,
+            corner_boundaries,
+            engine=reflow_engine,
+            provider=provider,
+            location=location,
+            model=reflow_model,
+        )
+
     logger.info("Applying translations to subtitle document...")
     translated_document = document.model_copy(deep=True)
     translated_document.stage = "translated"
@@ -204,16 +240,72 @@ def translate_subtitles(
     )
 
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
-    render_ass_document(
+    # Built rather than rendered directly: line breaking needs the per-style
+    # capacities, which only exist once the styles have been generated.
+    script = build_ass_script(
         translated_document,
-        output_ass_path,
         mode="bilingual" if bilingual else "translated",
+        speaker_map=speaker_map,
     )
+    script.events = _apply_line_breaks(script.events, _line_capacities(script))
+    write_ass_script(script, output_ass_path)
 
     if llm_trace_path is not None and llm_trace_path.exists():
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")
 
     logger.info("Translation complete!")
+
+
+def _reflow_translations(
+    translated_texts: list[str],
+    cues_to_translate: list[SubtitleCue],
+    corner_boundaries: list[int] | None,
+    engine: str = "deterministic",
+    provider: str = "google-vertex",
+    location: str = "global",
+    model: str | None = None,
+) -> list[str]:
+    """Re-split translated lines at natural English boundaries.
+
+    Derives per-line display durations and hard group-break indices (speaker
+    change, corner boundary, long time gap) from the cues, then delegates to
+    the reflow. The ``llm`` engine uses a cheap model to choose break points
+    (falling back to the deterministic engine per group); ``deterministic`` (the
+    default) needs no API calls. Any failure is non-fatal: the original
+    translations are returned unchanged.
+    """
+    from autosub.pipeline.translate.reflow import LONG_GAP_S, reflow_line_breaks
+
+    try:
+        durations_s: list[float] = []
+        boundaries: set[int] = set(corner_boundaries or [])
+        for i, cue in enumerate(cues_to_translate):
+            durations_s.append(max(0.0, cue.end_time - cue.start_time))
+            if i == 0:
+                continue
+            prev = cues_to_translate[i - 1]
+            if cue.speaker != prev.speaker:
+                boundaries.add(i)
+            elif cue.start_time - prev.end_time > LONG_GAP_S:
+                boundaries.add(i)
+
+        resplitter = None
+        if engine == "llm":
+            from autosub.pipeline.translate.reflow_llm import build_llm_resplitter
+
+            logger.info("Using LLM line-break reflow engine.")
+            resplitter = build_llm_resplitter(
+                project_id=PROJECT_ID,
+                model=model,  # None -> splitter's cheap flash-lite default
+                location=location,
+                provider=provider,
+            )
+        return reflow_line_breaks(
+            translated_texts, durations_s, boundaries, resplitter=resplitter
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(f"Line-break reflow skipped due to error: {exc}")
+        return translated_texts
 
 
 def _extract_corner_boundaries_from_cues(document: SubtitleDocument) -> list[int]:
@@ -444,3 +536,169 @@ def _translate_chunked(
         all_translated.extend(completed[chunk_idx])
 
     return all_translated, splits
+
+
+def _wrap_long_line(text: str, max_len: int = 40) -> str:
+    """Wraps lines so no sub-line exceeds max_len characters and at most two lines per box."""
+    existing_lines = text.split("\\N")
+    if len(existing_lines) <= 2 and all(
+        len(s.strip()) <= max_len for s in existing_lines
+    ):
+        return text
+
+    full_text = " ".join(text.replace("\\N", " ").split())
+    if len(full_text) <= max_len:
+        return full_text
+
+    words = full_text.split()
+    if not words:
+        return text
+
+    # Attempt a 2-line split at the space nearest the middle of full_text
+    mid = len(full_text) // 2
+    spaces = [i for i, c in enumerate(full_text) if c == " "]
+    if spaces:
+        best_space = min(spaces, key=lambda s: abs(s - mid))
+        l1 = full_text[:best_space].strip()
+        l2 = full_text[best_space + 1 :].strip()
+        if len(l1) <= max_len and len(l2) <= max_len:
+            return f"{l1}\\N{l2}"
+
+    # Fallback: greedy split into exactly 2 lines
+    l1_words: list[str] = []
+    l1_len = 0
+    for i, w in enumerate(words):
+        if l1_len + len(w) + (1 if l1_words else 0) <= max_len:
+            l1_words.append(w)
+            l1_len += len(w) + (1 if len(l1_words) > 1 else 0)
+        else:
+            l2_words = words[i:]
+            return f"{' '.join(l1_words)}\\N{' '.join(l2_words)}"
+
+    return full_text
+
+
+_LEADING_TAGS_RE = re.compile(r"^((?:\{[^}]*\})+)")
+
+
+def _split_leading_tags(text: str) -> tuple[str, str]:
+    """Separate leading ASS override blocks from the visible text.
+
+    The format stage writes each line's slot position as a leading \\pos tag. The
+    translator only ever returns prose, so the tags have to be carried across by
+    hand or every line falls back to the style default and the slot layout is lost.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end() :]
+
+
+def _line_capacities(script: pyass.Script) -> dict[str, int]:
+    """Characters that fit on one line, per style, from the script's own layout.
+
+    A positioned line has whatever width its style's margins leave it, which for
+    an overlay slot is not the full-width figure Netflix's 42 assumes.
+    """
+    play_res_x = None
+    for key, value in script.scriptInfo:
+        if key == "PlayResX":
+            try:
+                play_res_x = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    capacities: dict[str, int] = {}
+    for style in getattr(script, "styles", []) or []:
+        capacities[style.name] = capacity_for_style(
+            play_res_x,
+            getattr(style, "marginL", None),
+            getattr(style, "marginR", None),
+            getattr(style, "fontSize", None),
+        )
+    return capacities
+
+
+def _apply_line_breaks(
+    events: list[pyass.Event], capacities: dict[str, int] | None = None
+) -> list[pyass.Event]:
+    """Lay every dialogue event out within its box, at most two lines.
+
+    Lines that cannot fit two lines become two consecutive events, cut at a
+    grammatical boundary. Empty events are dropped.
+    """
+    nlp = load_nlp()
+    capacities = capacities or {}
+    processed: list[pyass.Event] = []
+
+    for event in events:
+        if (
+            not isinstance(event, pyass.Event)
+            or event.format != pyass.EventFormat.DIALOGUE
+        ):
+            processed.append(event)
+            continue
+
+        if not strip_tags(event.text).strip():
+            continue
+        max_chars = capacities.get(event.style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_event(event, nlp, max_chars))
+
+    return processed
+
+
+def _lay_out_event(
+    event: pyass.Event, nlp, max_chars: int, depth: int = 0
+) -> list[pyass.Event]:
+    """Fit one event into two lines, splitting it into two events if it will not."""
+    tags, body = _split_leading_tags(event.text)
+
+    wrapped = wrap_line(body, nlp, max_chars)
+    if wrapped is not None:
+        event.text = tags + wrapped
+        return [event]
+
+    parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    if parts is None:
+        # No grammatical break exists. Leaving the line long is better than
+        # breaking it mid-phrase; the QC pass flags it for rewording.
+        normalized = normalized_text(body)
+        logger.warning(
+            "No safe line break for %r; leaving it over length for review.",
+            strip_tags(normalized)[:60],
+        )
+        event.text = tags + normalized
+        return [event]
+
+    part1, part2 = parts
+
+    # Divide the display time in proportion to how much text each piece carries.
+    # The QC pass can snap the cut to a real silence later; the transcript is not
+    # available here. Never let the cut leave the event's own span, or a piece
+    # would end before it starts and libass would drop it.
+    total = (event.end - event.start).total_seconds()
+    if total <= 0:
+        return [event]
+    seen1 = visible_length(part1)
+    share = seen1 / max(1, seen1 + visible_length(part2))
+    mid = event.start + pyass.timedelta(seconds=total * share)
+    mid = min(max(mid, event.start), event.end)
+
+    first = _clone_event(event, event.start, mid, tags + part1)
+    second = _clone_event(event, mid, event.end, tags + part2)
+    return _lay_out_event(first, nlp, max_chars, depth + 1) + _lay_out_event(
+        second, nlp, max_chars, depth + 1
+    )
+
+
+def _clone_event(event: pyass.Event, start, end, text: str) -> pyass.Event:
+    return pyass.Event(
+        format=event.format,
+        style=event.style,
+        start=start,
+        end=end,
+        effect=event.effect,
+        name=event.name,
+        text=text,
+    )

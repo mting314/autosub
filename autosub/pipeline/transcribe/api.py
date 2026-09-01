@@ -55,7 +55,20 @@ def _wait_for_batch_operation(
         poll_interval_seconds,
     )
 
-    while not bool(getattr(operation, "done")()):
+    while True:
+        try:
+            if bool(getattr(operation, "done")()):
+                break
+        except Exception as exc:
+            if "ResourceExhausted" in str(type(exc).__name__) or "429" in str(exc):
+                logger.warning(
+                    "Rate limit quota encountered while checking batch operation (%s). Backing off 20s...",
+                    exc,
+                )
+                time.sleep(20)
+                continue
+            raise
+
         time.sleep(poll_interval_seconds)
         current_time = time.monotonic()
         if current_time - last_heartbeat_at >= heartbeat_seconds:
@@ -97,6 +110,16 @@ _CHIRP_LOCATIONS = {
 }
 
 
+_CHIRP_ENDPOINTS = {
+    "chirp_2": "us-central1-speech.googleapis.com",
+    "chirp_3": "us-speech.googleapis.com",
+}
+_CHIRP_LOCATIONS = {
+    "chirp_2": "us-central1",
+    "chirp_3": "us",
+}
+
+
 def transcribe_uri(
     gcs_uri: str,
     project_id: str,
@@ -111,14 +134,18 @@ def transcribe_uri(
     """
     endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
     location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
-    client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint=endpoint)
-    )
+    client = speech_v2.SpeechClient(client_options=ClientOptions(api_endpoint=endpoint))
 
     features = speech_v2.RecognitionFeatures(
         enable_word_time_offsets=True,
         enable_automatic_punctuation=True,
     )
+    if num_speakers is not None and num_speakers > 0:
+        features.diarization_config = cloud_speech.SpeakerDiarizationConfig(
+            min_speaker_count=num_speakers,
+            max_speaker_count=num_speakers,
+        )
+        logger.info(f"Speaker diarization enabled with {num_speakers} speaker(s)")
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),
@@ -177,14 +204,18 @@ def transcribe_local_file(
     """
     endpoint = _CHIRP_ENDPOINTS.get(model, _CHIRP_ENDPOINTS["chirp_2"])
     location = _CHIRP_LOCATIONS.get(model, _CHIRP_LOCATIONS["chirp_2"])
-    client = speech_v2.SpeechClient(
-        client_options=ClientOptions(api_endpoint=endpoint)
-    )
+    client = speech_v2.SpeechClient(client_options=ClientOptions(api_endpoint=endpoint))
 
     features = speech_v2.RecognitionFeatures(
         enable_word_time_offsets=True,
         enable_automatic_punctuation=True,
     )
+    if num_speakers is not None and num_speakers > 0:
+        features.diarization_config = cloud_speech.SpeakerDiarizationConfig(
+            min_speaker_count=num_speakers,
+            max_speaker_count=num_speakers,
+        )
+        logger.info(f"Speaker diarization enabled with {num_speakers} speaker(s)")
 
     config = speech_v2.RecognitionConfig(
         auto_decoding_config=speech_v2.AutoDetectDecodingConfig(),

@@ -347,6 +347,74 @@ def _apply_micro_snapping(
     return segments
 
 
+def _apply_interjection_merging(
+    segments: List[SegmentMS],
+    interjection_max_duration_ms: int,
+    interjection_merge_threshold_ms: int,
+    interjection_gap_threshold_ms: int,
+) -> List[SegmentMS]:
+    """Pass 0: Speaker-aware interjection handling.
+
+    Detects the pattern [A] [B_short] [A] where B is a brief interjection
+    (e.g. "yeah", "mmhmm") interrupting speaker A's continuous thought.
+    Merges or extends A's lines across the interjection so there's no visual gap.
+    B's interjection is left untouched (overlaps in .ass output).
+    """
+    i = 0
+    while i < len(segments) - 2:
+        prev_seg = segments[i]
+        mid_seg = segments[i + 1]
+        next_seg = segments[i + 2]
+
+        # Check the A-B-A pattern
+        if (
+            prev_seg.speaker
+            and prev_seg.speaker == next_seg.speaker
+            and prev_seg.speaker != mid_seg.speaker
+        ):
+            mid_duration = mid_seg.end_ms - mid_seg.start_ms
+            span_gap = next_seg.start_ms - prev_seg.end_ms
+
+            if (
+                mid_duration <= interjection_max_duration_ms
+                and span_gap > 0
+                and span_gap <= interjection_gap_threshold_ms
+            ):
+                if span_gap <= interjection_merge_threshold_ms:
+                    # MERGE: combine A's lines into one
+                    prev_seg.text = f"{prev_seg.text} {next_seg.text}".strip()
+                    prev_seg.end_ms = next_seg.end_ms
+                    segments.pop(i + 2)
+                    # Don't advance i — check if another interjection follows
+                    continue
+                else:
+                    # EXTEND: close the gap between A's lines (meet in middle)
+                    gap = next_seg.start_ms - prev_seg.end_ms
+                    half_gap = gap // 2
+                    prev_seg.end_ms += half_gap
+                    next_seg.start_ms -= gap - half_gap
+        i += 1
+
+    return segments
+
+
+def _prevent_same_speaker_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
+    """Ensure no two segments for the same speaker overlap on screen."""
+    for i in range(len(segments)):
+        seg1 = segments[i]
+        for j in range(i + 1, len(segments)):
+            seg2 = segments[j]
+            if seg1.speaker and seg1.speaker == seg2.speaker:
+                if seg2.start_ms < seg1.end_ms:
+                    max_allowed_end = seg2.start_ms - 50
+                    if max_allowed_end > seg1.start_ms:
+                        seg1.end_ms = max_allowed_end
+                    else:
+                        seg1.end_ms = seg1.start_ms + 500
+                break
+    return segments
+
+
 def apply_timing_rules(
     lines: List[SubtitleLine],
     keyframes_ms: Optional[List[int]] = None,
@@ -354,24 +422,74 @@ def apply_timing_rules(
     min_duration_ms: int = 500,
     snap_threshold_ms: int = 250,
     conditional_snap_threshold_ms: int = 500,
+    interjection_max_duration_ms: int = 1000,
+    interjection_merge_threshold_ms: int = 1500,
+    interjection_gap_threshold_ms: int = 2000,
+    per_speaker: bool = False,
 ) -> List[SubtitleLine]:
-    """Applies advanced timing rules to subtitle lines."""
+    """Applies advanced timing rules to subtitle lines.
+
+    When per_speaker is True or multiple distinct speakers are present,
+    timing rules run independently per speaker to allow concurrent overlapping dialogue.
+    """
 
     if not lines:
         return []
 
     keyframes = sorted(keyframes_ms) if keyframes_ms else []
-    segments = [SegmentMS(line) for line in lines]
 
-    segments = _apply_min_duration_padding(
-        segments, keyframes, video_duration_ms, min_duration_ms
-    )
-    segments = _apply_gap_snapping(
-        segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
-    )
-    segments = _apply_micro_snapping(
-        segments, keyframes, snap_threshold_ms, video_duration_ms
-    )
+    # Check if multi-speaker timing is needed
+    unique_speakers = {line.speaker for line in lines if line.speaker}
+    if per_speaker or len(unique_speakers) > 1:
+        # Group lines by speaker
+        speaker_groups: dict[Optional[str], List[SubtitleLine]] = {}
+        for line in lines:
+            speaker_groups.setdefault(line.speaker, []).append(line)
+
+        all_processed: List[SegmentMS] = []
+        for spk, spk_lines in speaker_groups.items():
+            spk_segments = [SegmentMS(line) for line in spk_lines]
+            spk_segments = _apply_interjection_merging(
+                spk_segments,
+                interjection_max_duration_ms,
+                interjection_merge_threshold_ms,
+                interjection_gap_threshold_ms,
+            )
+            spk_segments = _apply_min_duration_padding(
+                spk_segments, keyframes, video_duration_ms, min_duration_ms
+            )
+            spk_segments = _apply_gap_snapping(
+                spk_segments,
+                keyframes,
+                snap_threshold_ms,
+                conditional_snap_threshold_ms,
+            )
+            spk_segments = _apply_micro_snapping(
+                spk_segments, keyframes, snap_threshold_ms, video_duration_ms
+            )
+            spk_segments = _prevent_same_speaker_overlaps(spk_segments)
+            all_processed.extend(spk_segments)
+
+        all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
+        segments = all_processed
+    else:
+        segments = [SegmentMS(line) for line in lines]
+        segments = _apply_interjection_merging(
+            segments,
+            interjection_max_duration_ms,
+            interjection_merge_threshold_ms,
+            interjection_gap_threshold_ms,
+        )
+        segments = _apply_min_duration_padding(
+            segments, keyframes, video_duration_ms, min_duration_ms
+        )
+        segments = _apply_gap_snapping(
+            segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
+        )
+        segments = _apply_micro_snapping(
+            segments, keyframes, snap_threshold_ms, video_duration_ms
+        )
+        segments = _prevent_same_speaker_overlaps(segments)
 
     # Final Bounds Check
     for seg in segments:

@@ -40,10 +40,11 @@ class TestDockerfile:
         content = DOCKERFILE.read_text()
         lines = content.splitlines()
         first_sync = next(
-            (i for i, l in enumerate(lines) if "uv sync" in l), None
+            (i for i, line_item in enumerate(lines) if "uv sync" in line_item), None
         )
         copy_all = next(
-            (i for i, l in enumerate(lines) if l.strip() == "COPY . ."), None
+            (i for i, line_item in enumerate(lines) if line_item.strip() == "COPY . ."),
+            None,
         )
         assert first_sync is not None, "no 'uv sync' line found"
         assert copy_all is not None, "no 'COPY . .' line found"
@@ -51,21 +52,27 @@ class TestDockerfile:
 
     def test_no_dev_deps_in_entrypoint(self):
         content = DOCKERFILE.read_text()
-        entrypoint_lines = [l for l in content.splitlines() if "ENTRYPOINT" in l]
+        entrypoint_lines = [
+            line_item for line_item in content.splitlines() if "ENTRYPOINT" in line_item
+        ]
         assert entrypoint_lines
         assert "--no-dev" in entrypoint_lines[0]
 
     def test_frozen_in_entrypoint(self):
         """Entrypoint should pin the lockfile so `uv run` doesn't re-resolve."""
         content = DOCKERFILE.read_text()
-        entrypoint_lines = [l for l in content.splitlines() if "ENTRYPOINT" in l]
+        entrypoint_lines = [
+            line_item for line_item in content.splitlines() if "ENTRYPOINT" in line_item
+        ]
         assert entrypoint_lines
         assert "--frozen" in entrypoint_lines[0]
 
     def test_no_dev_deps_in_sync(self):
         content = DOCKERFILE.read_text()
-        sync_lines = [l for l in content.splitlines() if "uv sync" in l]
-        assert all("--no-dev" in l for l in sync_lines)
+        sync_lines = [
+            line_item for line_item in content.splitlines() if "uv sync" in line_item
+        ]
+        assert all("--no-dev" in line_item for line_item in sync_lines)
 
     def test_no_editable_install(self):
         """--no-editable is redundant in containers — should not be present."""

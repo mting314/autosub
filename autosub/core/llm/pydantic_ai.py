@@ -249,12 +249,20 @@ class BaseStructuredLLM:
 
         raise ValueError(f"Unsupported LLM provider: {config.provider}")
 
+    # Lite gemini models reject the 65536 default max-output-tokens; cap them at
+    # a value that still clears a MEDIUM thinking budget (8192) plus a large
+    # answer. Callers can override via provider_options["max_tokens"].
+    _GOOGLE_LITE_MAX_TOKENS = 32768
+
     def _build_google_model_settings(
         self, config: LLMModelConfig
     ) -> GoogleModelSettings:
+        max_output = self._ANTHROPIC_DEFAULT_MAX_TOKENS
+        if "flash-lite" in (config.model or ""):
+            max_output = self._GOOGLE_LITE_MAX_TOKENS
         settings: dict[str, Any] = {
             "temperature": config.temperature,
-            "max_tokens": self._ANTHROPIC_DEFAULT_MAX_TOKENS,
+            "max_tokens": max_output,
         }
         thinking_config = self._build_google_thinking_config(config)
         if self.trace_path is not None:

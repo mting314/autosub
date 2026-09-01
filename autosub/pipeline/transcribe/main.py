@@ -17,9 +17,9 @@ from autosub.pipeline.transcribe import api, audio, gcs, whisperx_backend
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TRANSCRIPTION_BACKEND = "chirp_2"
+DEFAULT_TRANSCRIPTION_BACKEND = "chirp_3"
 SUPPORTED_TRANSCRIPTION_BACKENDS = {
-    DEFAULT_TRANSCRIPTION_BACKEND,
+    "chirp_2",
     "chirp_3",
     "whisperx",
 }
@@ -74,6 +74,8 @@ def _clamp_word_timestamps(
 
     if end <= 0 or end < start:
         end = start
+    elif end - start > 3.0:
+        end = start + 1.0
 
     return start, end
 
@@ -109,6 +111,8 @@ def _parse_words(
                 raw_start = _duration_seconds(word_info.start_offset)
                 raw_end = _duration_seconds(word_info.end_offset)
                 start, end = _clamp_word_timestamps(raw_start, raw_end, chunk_duration)
+                if (start, end) != (raw_start, raw_end):
+                    clamped_count += 1
                 if (start, end) != (raw_start, raw_end):
                     clamped_count += 1
                 words_data.append(
@@ -311,6 +315,16 @@ def _transcribe_time_range(
             )
 
             if needs_chunking:
+                if num_speakers:
+                    logger.warning(
+                        "Diarization (--speakers) with Chirp 3 on audio longer than "
+                        "%d min: the audio is split into independent chunks that are "
+                        "diarized separately, so speaker labels are NOT consistent "
+                        "across chunk boundaries (label '0' in one chunk is unrelated "
+                        "to '0' in the next). Reconcile labels afterward with "
+                        "`assign-speakers`, or transcribe shorter --start/--end ranges.",
+                        audio.MAX_CHUNK_MINUTES,
+                    )
                 # Split into chunks for Chirp 3's word-timestamp limit
                 with tempfile.TemporaryDirectory() as tmp_dir:
                     chunks = audio.split_audio(
@@ -473,6 +487,7 @@ def transcribe(
     whisper_batch_size: int = 16,
     whisper_diarize: bool = False,
     whisper_hf_token: str | None = None,
+    replacements: dict[str, str] | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -483,6 +498,13 @@ def transcribe(
     5. Merges results and saves to disk
     """
     resolved_backend = _validate_transcription_backend(transcription_backend)
+    if num_speakers and resolved_backend == "chirp_2":
+        # The chirp_2 recognizer rejects diarization_config at the API with a
+        # cryptic 400; fail fast with a clear message instead.
+        raise ValueError(
+            "Speaker diarization (--speakers) is not supported by the chirp_2 "
+            "recognizer. Use --backend chirp_3 (or whisperx) for diarization."
+        )
     project_id = PROJECT_ID if resolved_backend in CHIRP_BACKENDS else None
     if resolved_backend == "whisperx" and vocabulary:
         logger.warning(
@@ -605,3 +627,24 @@ def transcribe(
         handle.write(final_result.model_dump_json(indent=2))
 
     return final_result
+
+
+def _parse_batch_response(
+    response, gcs_uri: str, time_offset: float = 0.0
+) -> list[TranscribedWord]:
+    """Parse a BatchRecognizeResponse into TranscribedWord objects."""
+    words = []
+    for result in response.results[gcs_uri].inline_result.transcript.results:
+        for alt in result.alternatives:
+            for w in alt.words:
+                words.append(
+                    TranscribedWord(
+                        word=w.word,
+                        start_time=_duration_seconds(w.start_offset) + time_offset,
+                        end_time=_duration_seconds(w.end_offset) + time_offset,
+                        speaker=w.speaker_label
+                        if hasattr(w, "speaker_label")
+                        else None,
+                    )
+                )
+    return words

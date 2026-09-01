@@ -1,0 +1,59 @@
+extends = ["liella"]
+
+prompt = "prompts/lieraji.md"
+vocab = [
+    # --- Program-specific (リエラジ inherited from liella) ---
+    "リエラのRadio Japan",
+    "結女ランチタイム放送局",
+    "投書箱",
+    "ランチタイムリクエスト",
+    "リエラジチャレンジ",
+    "ヒトコト",
+    "ラジオネーム",
+    "Liellaネーム",
+]
+
+[glossary]
+"リエラジ" = "Lieraji"
+"投書箱" = "Suggestion Box"
+"ランチタイムリクエスト" = "Lunchtime Request"
+"ラジオネーム" = "Radio name:"
+"Liellaネーム" = "Liella name:"
+
+[extensions.radio_discourse]
+enabled = true
+engine = "hybrid"
+model = "gemini-3-flash-preview"
+scope = "full_script"
+split_framing_phrases = true
+label_roles = true
+
+[[corners]]
+name = "Opening Skit"
+description = "In-character comedy skit at the very start of the episode. Hosts speak as their Love Live! characters, not as themselves. Ends when they break character for self-introductions (みなさん、こんにちは)."
+cues = []
+
+[[corners]]
+name = "Self-Introductions"
+description = "Hosts introduce themselves by VA name and character role. Follows the opening skit. Transitions into the show kickoff call (由宇女ランチタイム放送局)."
+cues = ["みなさん、こんにちは", "渋谷かのん役", "鬼塚"]
+
+[[corners]]
+name = "Suggestion Box"
+description = "Main listener mail segment (投書箱 / Toushoubako). Hosts read and discuss fan letters. Introduced with the call '結ヶ丘女子高等学校投書箱のコーナー' followed by a group shout of '投書箱!'"
+cues = ["投書箱のコーナー", "投書箱", "おたよりを紹介する"]
+
+[[corners]]
+name = "Lunchtime Request"
+description = "Music request segment (ランチタイムリクエスト). A listener requests a song and the hosts introduce it before it plays. Not present in every episode."
+cues = ["ランチタイムリクエスト", "お聞きください"]
+
+[[corners]]
+name = "News from Love Live! Superstar!!"
+description = "Announcements segment with news from the franchise. Covers music releases (音楽情報), appearance info (出演情報), card game news, and other product announcements. Introduced with 'Love Live! Superstarからのお知らせ' and ends with '以上、お知らせでした'."
+cues = ["Superstarからのお知らせ", "音楽情報です", "お知らせでした"]
+
+[[corners]]
+name = "Closing"
+description = "Next episode preview, final greetings, and sign-off. Begins after the announcements when hosts preview next week's episode and say goodbye."
+cues = ["お別れのお時間", "次回以降の放送情報", "ここまで", "また来週"]
