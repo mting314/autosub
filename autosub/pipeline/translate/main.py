@@ -234,61 +234,6 @@ def translate_subtitles(
     ):
         cue_by_id[source_cue.id].translated_text = translated_text
 
-    new_events: list[pyass.Event] = []
-    translated_event_set = set(id(e) for e in events_to_translate)
-
-    # Walk all events in order, preserving non-translated events (e.g. corner Comments)
-    # in place while applying translations.
-    event_idx = 0
-    for event in script.events:
-        if id(event) not in translated_event_set:
-            # Non-dialogue event (Comment, etc.) — keep as-is
-            new_events.append(event)
-            continue
-
-        # Match this event to its translation by index
-        original_text = texts_to_translate[event_idx]
-        translated_text = translated_texts[event_idx]
-
-        # Insert debug comment at artificial chunk boundaries
-        if debug and event_idx in splits:
-            debug_comment = pyass.Event(
-                format=pyass.EventFormat.COMMENT,
-                start=event.start,
-                end=event.end,
-                style=event.style,
-                effect="",
-                text="[autosub] Chunk boundary — review translation around this line",
-            )
-            new_events.append(debug_comment)
-
-        event_idx += 1
-
-        # Auto-wrap single lines that exceed max_len (40 chars) to prevent overlay margin overflow
-        wrapped_translation = _wrap_long_line(translated_text, max_len=40)
-
-        # Update the event with the new text
-        if bilingual:
-            event.text = f"{{\\\\fs24\\\\a6}}{original_text}{{\\\\N}}{{\\\\fs48\\\\a2}}{wrapped_translation}"
-        else:
-            event.text = wrapped_translation
-
-        new_events.append(event)
-
-    script.events = _split_and_wrap_events(
-        new_events, max_line_len=40, max_event_len=80
-    )
-
-    # Auto-link project background overlay for Aegisub if present
-    has_video = any(k == "Video File" for k, _ in script.scriptInfo)
-    if not has_video:
-        output_dir = Path(output_ass_path).parent
-        bg_overlay = output_dir / "radio_background_with_overlay.png"
-        if bg_overlay.exists():
-            script.scriptInfo.append(
-                ("Video File", "radio_background_with_overlay.png")
-            )
-
     logger.info(f"Writing translated JSON to {output_json_path}...")
     output_json_path.write_text(
         translated_document.model_dump_json(indent=2), encoding="utf-8"
