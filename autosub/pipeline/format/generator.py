@@ -5,6 +5,7 @@ import pyass
 from autosub.core.schemas import SubtitleCue, SubtitleDocument, SubtitleLine
 from autosub.core.speaker_map import (
     build_slot_lookup,
+    build_style_name_lookup,
     hex_to_pyass_color,
     remap_speaker_labels,
 )
@@ -128,7 +129,16 @@ def _cue_text_for_mode(cue: SubtitleCue, mode: AssRenderMode) -> str:
     if mode == "final":
         return final
     if mode == "bilingual":
-        return rf"{{\fs24\a6}}{source}{{\N}}{{\fs48\a2}}{final}"
+        # \N has to sit outside the override block. Inside one it is not a line
+        # break but an unknown tag, so libass drops it and the two languages run
+        # together on a single line (verified by render). The legacy \a alignment
+        # overrides are gone with it: they fought the per-slot alignment the
+        # speaker styles set, dragging bilingual overlay lines out of their box.
+        if not source:
+            # A cue whose translation was split carries the source on the first
+            # half only; the rest would otherwise render a blank top row.
+            return rf"{{\fs48}}{final}"
+        return rf"{{\fs24}}{source}\N{{\fs48}}{final}"
     raise ValueError(f"Unknown ASS render mode: {mode}")
 
 
@@ -164,13 +174,11 @@ def _script_from_entries(
     # Build lookups from speaker_map (raw label / name → slot, color, mapped name)
     map_colors: dict[str, pyass.Color] = {}
     map_slots: dict[str, int] = {}
-    raw_to_name: dict[str, str] = {}
+    raw_to_name: dict[str, str] = build_style_name_lookup(speaker_map)
 
     if speaker_map:
         for label, entry in speaker_map.items():
             spk_name = entry.get("name", label)
-            raw_to_name[label] = spk_name
-            raw_to_name[spk_name] = spk_name
             if entry.get("color"):
                 color_val = hex_to_pyass_color(entry["color"])
                 map_colors[label] = color_val

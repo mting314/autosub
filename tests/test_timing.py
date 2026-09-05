@@ -1,10 +1,17 @@
-from autosub.core.schemas import ReplacementSpan, SubtitleLine, TranscribedWord
+from autosub.core.schemas import (
+    ReplacementSpan,
+    SubtitleCue,
+    SubtitleLine,
+    TranscribedWord,
+)
 from autosub.pipeline.format.timing import (
     apply_timing_rules,
+    enforce_display_invariants,
     _apply_min_duration_padding,
     _apply_gap_snapping,
     _apply_micro_snapping,
     _apply_interjection_merging,
+    _prevent_slot_overlaps,
     SegmentMS,
 )
 
@@ -511,3 +518,113 @@ def test_interjection_no_speakers():
         interjection_gap_threshold_ms=2000,
     )
     assert len(result) == 3
+
+
+# --- Display invariants re-checked after translation ---
+
+
+def test_overlap_truncation_never_leaves_a_flash():
+    """Cutting the earlier line short to clear the later one must not flash it."""
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=3.0, speaker="A"),
+        SubtitleLine(text="Second", start_time=0.3, end_time=4.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+
+    # Truncating "First" to clear "Second" would leave it 250ms on screen, so the
+    # later line is delayed instead.
+    resolved = _prevent_slot_overlaps(segments, min_duration_ms=500)
+
+    assert len(resolved) == 2
+    for segment in resolved:
+        assert segment.end_ms - segment.start_ms >= 500
+    assert resolved[0].end_ms <= resolved[1].start_ms
+
+
+def test_overlap_merges_when_neither_line_can_give_way():
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=0.6, speaker="A"),
+        SubtitleLine(text="Second", start_time=0.1, end_time=0.7, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+
+    resolved = _prevent_slot_overlaps(segments, min_duration_ms=500)
+
+    assert len(resolved) == 1
+    assert resolved[0].text == "First Second"
+
+
+def _cue(cue_id, start, end, speaker, text="line"):
+    return SubtitleCue(
+        id=cue_id,
+        start_time=start,
+        end_time=end,
+        speaker=speaker,
+        source_text="ソース",
+        final_text=text,
+    )
+
+
+_SLOT_MAP = {
+    "0": {"name": "Sayuri", "slot": 1},
+    "1": {"name": "Liyuu", "slot": 2},
+}
+
+
+def test_invariants_separate_two_cues_sharing_a_slot():
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+    ]
+
+    settled = enforce_display_invariants(
+        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
+    )
+
+    assert len(settled) == 2
+    assert settled[0].end_time <= settled[1].start_time
+    for cue in settled:
+        assert (cue.end_time - cue.start_time) * 1000 >= 500
+
+
+def test_invariants_keep_different_slots_concurrent():
+    """Two speakers talking at once is the point of the overlay, not a defect."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Liyuu"),
+    ]
+
+    settled = enforce_display_invariants(
+        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
+    )
+
+    assert [(c.start_time, c.end_time) for c in settled] == [(0.0, 3.0), (1.0, 4.0)]
+
+
+def test_invariants_grow_a_short_cue_into_the_gap_after_it():
+    cues = [
+        _cue("cue-00000001", 0.0, 0.1, "Sayuri"),
+        _cue("cue-00000002", 5.0, 6.0, "Sayuri"),
+    ]
+
+    settled = enforce_display_invariants(
+        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
+    )
+
+    assert settled[0].start_time == 0.0
+    assert (settled[0].end_time - settled[0].start_time) * 1000 >= 500
+    assert settled[0].end_time <= settled[1].start_time
+
+
+def test_invariants_route_many_labels_for_one_person_to_one_slot():
+    """A speaker map is many-to-one; two labels for one person share a box."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "0"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+    ]
+
+    settled = enforce_display_invariants(
+        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
+    )
+
+    assert settled[0].end_time <= settled[1].start_time

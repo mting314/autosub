@@ -6,6 +6,7 @@ from pathlib import Path
 
 from autosub.core.schemas import SubtitleDocument
 from autosub.pipeline.format.generator import render_ass_document
+from autosub.pipeline.format.timing import enforce_display_invariants
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,8 @@ def postprocess_subtitles(
     output_ass_path: Path | None = None,
     extensions_config: dict | None = None,
     bilingual: bool = True,
+    speaker_map: dict[str, dict] | None = None,
+    min_duration_ms: int = 500,
 ) -> None:
     if output_json_path is None:
         output_json_path = input_json_path.with_name("postprocessed.json")
@@ -43,12 +46,38 @@ def postprocess_subtitles(
         if _apply_radio_discourse_postprocess(processed):
             logger.info("Postprocessing modified subtitle document.")
 
+    if speaker_map:
+        # Only for overlay projects. Translation reflows and splits cues after the
+        # format stage set the timing, so the slot rules have to be re-checked
+        # against the cues that actually ship.
+        settled = enforce_display_invariants(
+            processed.cues,
+            speaker_map=speaker_map,
+            min_duration_ms=min_duration_ms,
+        )
+        changed = sum(
+            1
+            for before, after in zip(processed.cues, settled, strict=False)
+            if (before.start_time, before.end_time)
+            != (after.start_time, after.end_time)
+        )
+        if changed or len(settled) != len(processed.cues):
+            logger.info(
+                "Display invariants retimed %d cue(s) and merged %d.",
+                changed,
+                len(processed.cues) - len(settled),
+            )
+        processed.cues = settled
+
     logger.info(f"Writing postprocessed JSON to {output_json_path}...")
     output_json_path.write_text(processed.model_dump_json(indent=2), encoding="utf-8")
 
     logger.info(f"Writing postprocessed subtitles to {output_ass_path}...")
     render_ass_document(
-        processed, output_ass_path, mode="bilingual" if bilingual else "final"
+        processed,
+        output_ass_path,
+        mode="bilingual" if bilingual else "final",
+        speaker_map=speaker_map,
     )
 
 

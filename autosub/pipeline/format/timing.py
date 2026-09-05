@@ -1,6 +1,11 @@
 from typing import List, Optional
 
-from autosub.core.schemas import ReplacementSpan, SubtitleLine, TranscribedWord
+from autosub.core.schemas import (
+    ReplacementSpan,
+    SubtitleCue,
+    SubtitleLine,
+    TranscribedWord,
+)
 from autosub.core.speaker_map import build_slot_lookup
 
 # Breathing room left between two lines that share the same on-screen slot.
@@ -402,14 +407,30 @@ def _apply_interjection_merging(
     return segments
 
 
-def _prevent_slot_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
+def slot_key_for_speaker(
+    speaker: Optional[str], slot_lookup: dict[str, int]
+) -> Optional[str]:
+    """Identify the box a line renders in, falling back to the raw label."""
+    if speaker is None:
+        return None
+    slot = slot_lookup.get(str(speaker))
+    return f"slot:{slot}" if slot is not None else speaker
+
+
+def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
     """Ensure no two segments that share an on-screen slot are visible at once.
 
     Callers must pass a group of segments that all render in the same box. Two
     events at the same position do not stack, they draw on top of each other, so
     the earlier one is truncated to clear the later one.
+
+    Truncating is preferred, but not at the cost of a flash. Cutting a line below
+    min_duration_ms is worse than starting the next one slightly late, so the
+    later line is delayed instead, and only when neither will fit are the two
+    merged. Accepts anything exposing text/start_ms/end_ms, so cue timing can be
+    re-checked after translation through the same rules.
     """
-    resolved: List[SegmentMS] = []
+    resolved = []
     for segment in sorted(segments, key=lambda seg: (seg.start_ms, seg.end_ms)):
         if not resolved:
             resolved.append(segment)
@@ -421,15 +442,101 @@ def _prevent_slot_overlaps(segments: List[SegmentMS]) -> List[SegmentMS]:
             continue
 
         truncated_end = segment.start_ms - SLOT_OVERLAP_GAP_MS
-        if truncated_end > previous.start_ms:
+        if (
+            truncated_end > previous.start_ms
+            and truncated_end - previous.start_ms >= min_duration_ms
+        ):
             previous.end_ms = truncated_end
             resolved.append(segment)
-        else:
-            # Starts land on top of each other, so there is nothing to truncate
-            # to. Merging keeps both texts readable instead of stacking glyphs.
-            previous.text = f"{previous.text} {segment.text}".strip()
-            previous.end_ms = max(previous.end_ms, segment.end_ms)
+            continue
+
+        if min_duration_ms:
+            delayed_start = previous.end_ms + SLOT_OVERLAP_GAP_MS
+            if segment.end_ms - delayed_start >= min_duration_ms:
+                segment.start_ms = delayed_start
+                resolved.append(segment)
+                continue
+
+        # Neither line can give way without becoming a flash. Merging keeps both
+        # texts readable instead of stacking glyphs.
+        previous.text = f"{previous.text} {segment.text}".strip()
+        previous.end_ms = max(previous.end_ms, segment.end_ms)
     return resolved
+
+
+class _CueSpan:
+    """Adapter letting cue timing run through the same passes as render lines.
+
+    _prevent_slot_overlaps only needs text/start_ms/end_ms, so cues borrow it
+    rather than growing a second copy of the precedence rules.
+    """
+
+    def __init__(self, cue: SubtitleCue, text_field: str):
+        self.cue = cue
+        self.text_field = text_field
+        self.text = getattr(cue, text_field) or ""
+        self.start_ms = int(round(cue.start_time * 1000))
+        self.end_ms = int(round(cue.end_time * 1000))
+
+    def to_cue(self) -> SubtitleCue:
+        return self.cue.model_copy(
+            update={
+                "start_time": self.start_ms / 1000.0,
+                "end_time": self.end_ms / 1000.0,
+                self.text_field: self.text,
+            }
+        )
+
+
+def _pad_to_min_duration(spans: List[_CueSpan], min_duration_ms: int) -> List[_CueSpan]:
+    """Grow short lines forward into the empty space that follows them.
+
+    Only forward: the spans are already free of overlap within their slot, and
+    pulling a start earlier could reopen one against a line this pass has already
+    settled.
+    """
+    for index, span in enumerate(spans):
+        shortfall = min_duration_ms - (span.end_ms - span.start_ms)
+        if shortfall <= 0:
+            continue
+        wanted = span.end_ms + shortfall
+        if index + 1 < len(spans):
+            wanted = min(wanted, spans[index + 1].start_ms - SLOT_OVERLAP_GAP_MS)
+        span.end_ms = max(span.end_ms, wanted)
+    return spans
+
+
+def enforce_display_invariants(
+    cues: List[SubtitleCue],
+    *,
+    speaker_map: Optional[dict[str, dict]] = None,
+    min_duration_ms: int = 500,
+    text_field: str = "final_text",
+) -> List[SubtitleCue]:
+    """Re-assert the on-screen timing rules over a finished document.
+
+    apply_timing_rules runs at format time against the Japanese lines. Translation
+    reflows those lines and splits the ones that will not fit their box, so by the
+    time the document reaches the file that ships, neither guarantee it made — no
+    line under min_duration_ms, and never two lines sharing a slot at once — still
+    holds. Checking again here is what makes them true of the output.
+    """
+    if not cues:
+        return []
+
+    slot_lookup = build_slot_lookup(speaker_map)
+    groups: dict[Optional[str], List[_CueSpan]] = {}
+    for cue in cues:
+        key = slot_key_for_speaker(cue.speaker, slot_lookup)
+        groups.setdefault(key, []).append(_CueSpan(cue, text_field))
+
+    resolved: List[_CueSpan] = []
+    for spans in groups.values():
+        spans = _prevent_slot_overlaps(spans, min_duration_ms)
+        resolved.extend(_pad_to_min_duration(spans, min_duration_ms))
+
+    resolved.sort(key=lambda span: (span.start_ms, span.end_ms))
+    return [span.to_cue() for span in resolved]
 
 
 def apply_timing_rules(
@@ -463,11 +570,7 @@ def apply_timing_rules(
     slot_lookup = build_slot_lookup(speaker_map)
 
     def slot_key(speaker: Optional[str]) -> Optional[str]:
-        """Identify the box a line renders in, falling back to the raw label."""
-        if speaker is None:
-            return None
-        slot = slot_lookup.get(str(speaker))
-        return f"slot:{slot}" if slot is not None else speaker
+        return slot_key_for_speaker(speaker, slot_lookup)
 
     # Check if multi-speaker timing is needed
     unique_slots = {slot_key(line.speaker) for line in lines if line.speaker}
@@ -498,7 +601,7 @@ def apply_timing_rules(
             spk_segments = _apply_micro_snapping(
                 spk_segments, keyframes, snap_threshold_ms, video_duration_ms
             )
-            spk_segments = _prevent_slot_overlaps(spk_segments)
+            spk_segments = _prevent_slot_overlaps(spk_segments, min_duration_ms)
             all_processed.extend(spk_segments)
 
         all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
@@ -520,7 +623,7 @@ def apply_timing_rules(
         segments = _apply_micro_snapping(
             segments, keyframes, snap_threshold_ms, video_duration_ms
         )
-        segments = _prevent_slot_overlaps(segments)
+        segments = _prevent_slot_overlaps(segments, min_duration_ms)
 
     # Final Bounds Check
     for seg in segments:

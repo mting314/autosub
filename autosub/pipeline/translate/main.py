@@ -10,10 +10,10 @@ import pyass
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 from autosub.core.schemas import SubtitleCue, SubtitleDocument
+from autosub.core.speaker_map import build_style_name_lookup, style_name_for_speaker
 from autosub.pipeline.format.generator import (
     build_ass_script,
     render_ass_document,
-    write_ass_script,
 )
 from autosub.pipeline.translate.chunker import make_chunks
 from autosub.pipeline.translate.linebreak import (
@@ -82,6 +82,7 @@ def translate_subtitles(
     reflow_engine: str = "deterministic",
     reflow_model: str | None = None,
     speaker_map: dict[str, dict] | None = None,
+    min_duration_ms: int = 500,
 ) -> None:
     """
     Reads a formatted subtitle JSON document, translates cue source text, and
@@ -220,19 +221,43 @@ def translate_subtitles(
     logger.info("Applying translations to subtitle document...")
     translated_document = document.model_copy(deep=True)
     translated_document.stage = "translated"
-    # splits index into cues_to_translate (empty cues filtered out); the
-    # document stores boundaries as indices into the full cue list.
-    cue_index_by_id = {cue.id: index for index, cue in enumerate(document.cues)}
-    translated_document.chunk_boundaries = (
-        sorted(cue_index_by_id[cues_to_translate[split].id] for split in splits)
-        if debug
-        else []
-    )
     cue_by_id = {cue.id: cue for cue in translated_document.cues}
     for source_cue, translated_text in zip(
         cues_to_translate, translated_texts, strict=True
     ):
         cue_by_id[source_cue.id].translated_text = translated_text
+
+    # Lay the translation out inside each speaker's box before serialising, so the
+    # document carries the wraps and splits rather than only the .ass. A script is
+    # built first purely for its per-style capacities, which do not exist until the
+    # styles have been generated.
+    # splits index into cues_to_translate, which has the empty cues filtered out,
+    # so record the boundaries by cue id and resolve them to indices afterwards.
+    boundary_cue_ids = (
+        {cues_to_translate[split].id for split in splits} if debug else set()
+    )
+    capacities = _line_capacities(
+        build_ass_script(
+            translated_document,
+            mode="bilingual" if bilingual else "translated",
+            speaker_map=speaker_map,
+        )
+    )
+    cue_count = len(translated_document.cues)
+    translated_document.cues = _apply_line_breaks_to_cues(
+        translated_document.cues,
+        capacities,
+        style_names=build_style_name_lookup(speaker_map),
+        min_duration_ms=min_duration_ms,
+    )
+    if len(translated_document.cues) != cue_count:
+        logger.info(
+            "Line breaking split %d cue(s) that could not fit two lines.",
+            len(translated_document.cues) - cue_count,
+        )
+    translated_document.chunk_boundaries = _chunk_boundary_indices(
+        translated_document.cues, boundary_cue_ids
+    )
 
     logger.info(f"Writing translated JSON to {output_json_path}...")
     output_json_path.write_text(
@@ -240,15 +265,12 @@ def translate_subtitles(
     )
 
     logger.info(f"Writing translated .ass file to {output_ass_path}...")
-    # Built rather than rendered directly: line breaking needs the per-style
-    # capacities, which only exist once the styles have been generated.
-    script = build_ass_script(
+    render_ass_document(
         translated_document,
+        output_ass_path,
         mode="bilingual" if bilingual else "translated",
         speaker_map=speaker_map,
     )
-    script.events = _apply_line_breaks(script.events, _line_capacities(script))
-    write_ass_script(script, output_ass_path)
 
     if llm_trace_path is not None and llm_trace_path.exists():
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")
@@ -581,84 +603,143 @@ def _line_capacities(script: pyass.Script) -> dict[str, int]:
     return capacities
 
 
-def _apply_line_breaks(
-    events: list[pyass.Event], capacities: dict[str, int] | None = None
-) -> list[pyass.Event]:
-    """Lay every dialogue event out within its box, at most two lines.
+def _chunk_boundary_indices(
+    cues: list[SubtitleCue], boundary_cue_ids: set[str]
+) -> list[int]:
+    """Locate each chunk boundary after line breaking may have inserted cues.
 
-    Lines that cannot fit two lines become two consecutive events, cut at a
-    grammatical boundary. Empty events are dropped.
+    Boundaries are stored as indices into the cue list, so a split anywhere ahead
+    of one shifts it. Match on the originating cue id instead and take the first
+    piece it produced. Cue ids are fixed-width, so no id is a prefix of another
+    and the child-id check cannot match the wrong cue.
+    """
+    indices: list[int] = []
+    for boundary_id in boundary_cue_ids:
+        prefix = f"{boundary_id}-"
+        for index, cue in enumerate(cues):
+            if cue.id == boundary_id or cue.id.startswith(prefix):
+                indices.append(index)
+                break
+    return sorted(indices)
+
+
+def _apply_line_breaks_to_cues(
+    cues: list[SubtitleCue],
+    capacities: dict[str, int] | None = None,
+    style_names: dict[str, str] | None = None,
+    min_duration_ms: int = 0,
+) -> list[SubtitleCue]:
+    """Lay every cue out within its box, at most two lines.
+
+    A cue that will not fit two lines becomes two consecutive cues, cut at a
+    grammatical boundary.
+
+    This runs before the document is serialised, so the JSON carries the layout.
+    Doing it to the rendered events instead would strand the result in the
+    translated .ass: postprocess re-renders from the JSON and would silently drop
+    every wrap and split back out of the file that actually ships.
     """
     nlp = load_nlp()
     capacities = capacities or {}
-    processed: list[pyass.Event] = []
+    processed: list[SubtitleCue] = []
 
-    for event in events:
-        if (
-            not isinstance(event, pyass.Event)
-            or event.format != pyass.EventFormat.DIALOGUE
-        ):
-            processed.append(event)
+    for cue in cues:
+        if not strip_tags(cue.translated_text or "").strip():
+            # Nothing to lay out. Keep the cue so document indices stay meaningful;
+            # the renderer already leaves textless cues out of the .ass.
+            processed.append(cue)
             continue
-        if not strip_tags(event.text).strip():
-            continue
-        max_chars = capacities.get(event.style, MAX_CHARS_PER_LINE)
-        processed.extend(_lay_out_event(event, nlp, max_chars))
+        style = style_name_for_speaker(cue.speaker, style_names)
+        max_chars = capacities.get(style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_cue(cue, nlp, max_chars, min_duration_ms))
 
     return processed
 
 
-def _lay_out_event(
-    event: pyass.Event, nlp, max_chars: int, depth: int = 0
-) -> list[pyass.Event]:
-    """Fit one event into two lines, splitting it into two events if it will not."""
-    tags, body = _split_leading_tags(event.text)
+def _lay_out_cue(
+    cue: SubtitleCue,
+    nlp,
+    max_chars: int,
+    min_duration_ms: int = 0,
+    depth: int = 0,
+) -> list[SubtitleCue]:
+    """Fit one cue into two lines, splitting it into two cues if it will not."""
+    tags, body = _split_leading_tags(cue.translated_text or "")
 
     wrapped = wrap_line(body, nlp, max_chars)
     if wrapped is not None:
-        event.text = tags + wrapped
-        return [event]
+        return [cue.model_copy(update={"translated_text": tags + wrapped})]
+
+    def leave_over_length(reason: str) -> list[SubtitleCue]:
+        # Leaving the line long is better than breaking it badly; the QC pass
+        # flags it for rewording.
+        normalized = normalized_text(body)
+        logger.warning("%s: %r", reason, strip_tags(normalized)[:60])
+        return [cue.model_copy(update={"translated_text": tags + normalized})]
 
     parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
     if parts is None:
-        # No grammatical break exists. Leaving the line long is better than
-        # breaking it mid-phrase; the QC pass flags it for rewording.
-        normalized = normalized_text(body)
-        logger.warning(
-            "No safe line break for %r; leaving it over length for review.",
-            strip_tags(normalized)[:60],
-        )
-        event.text = tags + normalized
-        return [event]
+        return leave_over_length("No safe line break, leaving it over length")
 
     part1, part2 = parts
 
     # Divide the display time in proportion to how much text each piece carries.
     # The QC pass can snap the cut to a real silence later; the transcript is not
-    # available here. Never let the cut leave the event's own span, or a piece
-    # would end before it starts and libass would drop it.
-    total = (event.end - event.start).total_seconds()
-    if total <= 0:
-        return [event]
+    # available here. Never let the cut leave the cue's own span, or a piece would
+    # end before it starts and libass would drop it.
+    total_ms = round((cue.end_time - cue.start_time) * 1000)
+    if total_ms <= 0:
+        return [cue]
+
     seen1 = visible_length(part1)
     share = seen1 / max(1, seen1 + visible_length(part2))
-    mid = event.start + pyass.timedelta(seconds=total * share)
-    mid = min(max(mid, event.start), event.end)
+    mid_ms = min(max(round(total_ms * share), 0), total_ms)
 
-    first = _clone_event(event, event.start, mid, tags + part1)
-    second = _clone_event(event, mid, event.end, tags + part2)
-    return _lay_out_event(first, nlp, max_chars, depth + 1) + _lay_out_event(
-        second, nlp, max_chars, depth + 1
+    # A split that puts either half on screen for less than the minimum duration
+    # trades one over-long line for two flashes, which is the worse of the two.
+    if min_duration_ms and min(mid_ms, total_ms - mid_ms) < min_duration_ms:
+        return leave_over_length(
+            f"Splitting would leave a line under {min_duration_ms}ms, "
+            "leaving it over length"
+        )
+
+    first, second = _split_cue(
+        cue, cue.start_time + mid_ms / 1000.0, tags + part1, tags + part2
+    )
+    return _lay_out_cue(first, nlp, max_chars, min_duration_ms, depth + 1) + _lay_out_cue(
+        second, nlp, max_chars, min_duration_ms, depth + 1
     )
 
 
-def _clone_event(event: pyass.Event, start, end, text: str) -> pyass.Event:
-    return pyass.Event(
-        format=event.format,
-        style=event.style,
-        start=start,
-        end=end,
-        effect=event.effect,
-        name=event.name,
-        text=text,
+def _split_cue(
+    cue: SubtitleCue, mid: float, first_text: str, second_text: str
+) -> tuple[SubtitleCue, SubtitleCue]:
+    """Cut one cue in two at mid, giving each half its share of the translation.
+
+    Only the translation was split. The source stays whole on the first half
+    rather than being cut at a guessed offset, so a bilingual render shows the
+    Japanese once, over the opening half of the line it belongs to.
+
+    Child ids extend the parent's, which keeps an unsplit cue's id identical to
+    the one the format stage assigned and makes a split traceable back to it.
+    """
+    first = cue.model_copy(
+        update={
+            "id": f"{cue.id}-1",
+            "end_time": mid,
+            "translated_text": first_text,
+            "words": [word for word in cue.words if word.end_time <= mid],
+        }
     )
+    second = cue.model_copy(
+        update={
+            "id": f"{cue.id}-2",
+            "start_time": mid,
+            "translated_text": second_text,
+            "source_text": "",
+            "normalized_source_text": None,
+            "replacement_spans": [],
+            "words": [word for word in cue.words if word.end_time > mid],
+        }
+    )
+    return first, second

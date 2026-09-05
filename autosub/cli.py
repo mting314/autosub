@@ -857,6 +857,7 @@ def translate(
             reflow=reflow,
             reflow_engine=reflow_engine,
             reflow_model=reflow_model,
+            speaker_map=loaded_speaker_map,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -892,6 +893,11 @@ def postprocess(
         "--bilingual/--replace",
         help="Treat the input as bilingual stacked subtitles, or translated-only subtitles.",
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.toml mapping API speaker labels to character names and colors.",
+    ),
 ):
     """
     Step 4: Applies optional post-translation subtitle cleanup and editorial transforms.
@@ -911,6 +917,12 @@ def postprocess(
     profile = resolved["profile"]
     bilingual = resolved["bilingual"]
 
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+
+        loaded_speaker_map = load_speaker_map(speaker_map)
+
     if not out:
         out = input_json.with_name("postprocessed.json")
     if not ass_out:
@@ -928,6 +940,7 @@ def postprocess(
             output_ass_path=ass_out,
             extensions_config=final_extensions,
             bilingual=bilingual,
+            speaker_map=loaded_speaker_map,
         )
     except Exception as e:
         logger.error(f"Error during postprocessing: {e}")
@@ -1654,6 +1667,8 @@ def run(
             reflow=reflow,
             reflow_engine=reflow_engine,
             reflow_model=reflow_model,
+            speaker_map=loaded_speaker_map,
+            min_duration_ms=final_timing.get("min_duration_ms", 500),
         )
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
@@ -1668,6 +1683,8 @@ def run(
             output_ass_path=final_ass_out,
             extensions_config=final_postprocess_extensions,
             bilingual=bilingual,
+            speaker_map=loaded_speaker_map,
+            min_duration_ms=final_timing.get("min_duration_ms", 500),
         )
     except Exception as e:
         logger.error(f"Failed during postprocessing: {e}")

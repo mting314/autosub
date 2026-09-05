@@ -79,6 +79,36 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
     return result
 
 
+def build_style_name_lookup(speaker_map: dict[str, dict] | None) -> dict[str, str]:
+    """Map every raw diarization label and speaker name to its ASS style name.
+
+    A cue's style name is the mapped speaker's name, reachable from either the raw
+    label the diarizer emitted or the name it was already remapped to — the format
+    stage rewrites labels in place, so both spellings turn up depending on how far
+    down the pipeline a document has travelled.
+    """
+    lookup: dict[str, str] = {}
+    if not speaker_map:
+        return lookup
+    for label, entry in speaker_map.items():
+        name = entry.get("name", label)
+        if not name:
+            continue
+        lookup[str(label)] = name
+        lookup[str(name)] = name
+    return lookup
+
+
+def style_name_for_speaker(
+    speaker: str | None, style_names: dict[str, str] | None
+) -> str:
+    """Resolve the ASS style a cue renders with, mirroring the generator."""
+    name = speaker or "Default"
+    if style_names:
+        name = style_names.get(name, name)
+    return name or "Default"
+
+
 def build_slot_lookup(speaker_map: dict[str, dict] | None) -> dict[str, int]:
     """Map every raw diarization label and speaker name to its on-screen slot.
 

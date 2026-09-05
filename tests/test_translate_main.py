@@ -1069,18 +1069,139 @@ def test_split_text_keeps_tags_and_splits_on_visible_text():
     assert r"{\i1}" in parts[0] + parts[1]
 
 
-def test_zero_duration_event_is_not_split():
-    """Splitting a zero-length event would put the cut past its own end."""
-    import pyass
-    from autosub.pipeline.translate.main import _lay_out_event
+def test_zero_duration_cue_is_not_split():
+    """Splitting a zero-length cue would put the cut past its own end."""
+    from autosub.pipeline.translate.main import _lay_out_cue
 
-    event = pyass.Event(
-        format=pyass.EventFormat.DIALOGUE,
-        style="S",
-        start=pyass.timedelta(seconds=5),
-        end=pyass.timedelta(seconds=5),
-        text="This sentence is far too long to fit, and it needs a split.",
+    cue = SubtitleCue(
+        id="cue-00000001",
+        start_time=5.0,
+        end_time=5.0,
+        source_text="",
+        translated_text="This sentence is far too long to fit, and it needs a split.",
     )
-    out = _lay_out_event(event, None, 20)
+    out = _lay_out_cue(cue, None, 20)
     assert len(out) == 1
-    assert out[0].start <= out[0].end
+    assert out[0].start_time <= out[0].end_time
+
+
+# --- Line breaking is persisted into the document, not just the .ass ---
+
+
+_TOO_LONG_FOR_TWO_LINES = (
+    "Well then, let's start the radio show wearing our matching brooches, "
+    "and after that we should read out every single message that came in, "
+    "because there were honestly far too many of them this week."
+)
+
+
+def _lay_out(cue, max_chars=42, min_duration_ms=0):
+    from autosub.pipeline.translate.main import _lay_out_cue
+
+    return _lay_out_cue(cue, None, max_chars, min_duration_ms)
+
+
+def _cue(translated, start=0.0, end=10.0, cue_id="cue-00000001"):
+    return SubtitleCue(
+        id=cue_id,
+        start_time=start,
+        end_time=end,
+        source_text="ソース",
+        translated_text=translated,
+    )
+
+
+def test_wrapping_is_written_back_to_the_cue():
+    out = _lay_out(_cue("Tomorrow is Shiki-san's birthday, isn't it?"))
+
+    assert len(out) == 1
+    assert out[0].translated_text == "Tomorrow is Shiki-san's birthday,\\Nisn't it?"
+
+
+def test_unfittable_cue_becomes_two_cues_with_traceable_ids():
+    out = _lay_out(_cue(_TOO_LONG_FOR_TWO_LINES))
+
+    assert len(out) > 1
+    assert [c.id for c in out] == sorted(c.id for c in out)
+    assert all(c.id.startswith("cue-00000001-") for c in out)
+    # The pieces tile the parent's span without gaps or overlap.
+    assert out[0].start_time == 0.0
+    assert out[-1].end_time == 10.0
+    for earlier, later in zip(out, out[1:]):
+        assert earlier.end_time == later.start_time
+    # The source is not duplicated across the halves.
+    assert out[0].source_text == "ソース"
+    assert all(c.source_text == "" for c in out[1:])
+
+
+def test_split_is_refused_when_it_would_create_a_flash():
+    """One over-long line beats two lines that blink past the reader."""
+    long_cue = _cue(_TOO_LONG_FOR_TWO_LINES, start=0.0, end=0.6)
+
+    assert len(_lay_out(long_cue, min_duration_ms=0)) > 1
+    assert len(_lay_out(long_cue, min_duration_ms=500)) == 1
+
+
+def test_line_breaking_survives_into_the_final_ass(tmp_path, monkeypatch):
+    """The wrap must reach the file that ships, not just the translated .ass.
+
+    Line breaking used to run on the rendered events after the JSON was written,
+    so postprocess re-rendering from that JSON silently dropped every wrap.
+    """
+    from autosub.pipeline.postprocess.main import postprocess_subtitles
+
+    input_json_path = tmp_path / "formatted.json"
+    translated_json_path = tmp_path / "translated.json"
+    final_ass_path = tmp_path / "final.ass"
+
+    document = SubtitleDocument(
+        stage="formatted",
+        cues=[
+            SubtitleCue(
+                id="cue-00000001",
+                start_time=0.0,
+                end_time=10.0,
+                source_text="ソース",
+                normalized_source_text="ソース",
+            )
+        ],
+    )
+    input_json_path.write_text(document.model_dump_json(indent=2), encoding="utf-8")
+
+    class FakeVertexTranslator:
+        def __init__(self, **kwargs):
+            pass
+
+        def translate(self, texts: list[str]) -> list[str]:
+            # Long enough to need two lines even in the full-width Default style.
+            return [
+                "Tomorrow is Shiki-san's birthday, and we still have not "
+                "decided what we are actually going to give her this year."
+            ]
+
+        translate_cues = _fake_translate_cues
+
+    monkeypatch.setattr(translate_main_module, "PROJECT_ID", "test-project")
+    monkeypatch.setattr(translator_module, "VertexTranslator", FakeVertexTranslator)
+
+    translate_subtitles(
+        input_json_path,
+        translated_json_path,
+        output_ass_path=tmp_path / "translated.ass",
+        engine="vertex",
+        bilingual=False,
+    )
+
+    translated = SubtitleDocument.model_validate_json(
+        translated_json_path.read_text(encoding="utf-8")
+    )
+    assert r"\N" in translated.cues[0].translated_text
+
+    postprocess_subtitles(
+        translated_json_path,
+        output_json_path=tmp_path / "postprocessed.json",
+        output_ass_path=final_ass_path,
+        bilingual=False,
+    )
+
+    assert r"\N" in final_ass_path.read_text(encoding="utf-8")

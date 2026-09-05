@@ -93,8 +93,31 @@ def test_render_bilingual_ass_uses_single_backslash_override_tags(tmp_path):
     render_ass_document(document, output_path, mode="bilingual")
 
     ass_text = output_path.read_text(encoding="utf-8")
-    assert r"{\fs24\a6}こんにちは{\N}{\fs48\a2}Hello." in ass_text
-    assert r"{\\fs24\\a6}" not in ass_text
+    assert r"{\fs24}こんにちは\N{\fs48}Hello." in ass_text
+    assert r"{\\fs24}" not in ass_text
+
+
+def test_render_bilingual_ass_omits_the_source_row_when_there_is_no_source(tmp_path):
+    """The trailing half of a split cue has no source; it must not get a blank row."""
+    output_path = tmp_path / "translated.ass"
+    document = SubtitleDocument(
+        stage="translated",
+        cues=[
+            SubtitleCue(
+                id="cue-00000001-2",
+                start_time=0,
+                end_time=1,
+                source_text="",
+                translated_text="the rest of the sentence.",
+            )
+        ],
+    )
+
+    render_ass_document(document, output_path, mode="bilingual")
+
+    ass_text = output_path.read_text(encoding="utf-8")
+    assert r"{\fs48}the rest of the sentence." in ass_text
+    assert r"\N" not in ass_text
 
 
 def test_render_ass_document_uses_document_chunk_boundaries(tmp_path):

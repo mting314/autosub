@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from autosub.core.schemas import SubtitleCue, SubtitleDocument, TranscribedWord
@@ -237,6 +239,115 @@ def test_postprocess_collapses_double_outer_quotes_on_bilingual_translation(tmp_
         output_path.read_text(encoding="utf-8")
     )
     assert document.cues[0].final_text == '"This is my first message."'
+
+
+def _slot_speaker_map() -> dict[str, dict]:
+    return {
+        "0": {
+            "name": "Date Sayuri",
+            "character": "Shibuya Kanon",
+            "color": "#FF9E00",
+            "slot": 1,
+        },
+        "1": {
+            "name": "Liyuu",
+            "character": "Tang Keke",
+            "color": "#00A3E0",
+            "slot": 2,
+        },
+    }
+
+
+def _two_speaker_document(path) -> None:
+    _write_translated_document(
+        path,
+        [
+            SubtitleCue(
+                id="cue-00001",
+                start_time=0,
+                end_time=2,
+                source_text="こんばんは。",
+                translated_text="Good evening.",
+                speaker="Date Sayuri",
+            ),
+            SubtitleCue(
+                id="cue-00002",
+                start_time=1,
+                end_time=3,
+                source_text="よろしくね。",
+                translated_text="Nice to meet you.",
+                speaker="Liyuu",
+            ),
+        ],
+    )
+
+
+def test_postprocess_renders_slot_styles_when_speaker_map_supplied(tmp_path):
+    """The final .ass must carry the overlay layout, not just original.ass.
+
+    speaker_map used to stop at the format stage, so the file that actually gets
+    hardsubbed fell back to bottom-centred Arial and every slot piled into one box.
+    """
+    import pyass
+
+    input_path = tmp_path / "translated.json"
+    output_path = tmp_path / "postprocessed.json"
+    ass_path = tmp_path / "final.ass"
+    _two_speaker_document(input_path)
+
+    postprocess_subtitles(
+        input_path,
+        output_json_path=output_path,
+        output_ass_path=ass_path,
+        bilingual=False,
+        speaker_map=_slot_speaker_map(),
+    )
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    styles = {style.name: style for style in script.styles}
+    assert set(styles) == {"Date Sayuri", "Liyuu"}
+
+    # Slot geometry: text clears the avatar card column, and the character colour
+    # sits in the outline with a white fill.
+    for style in styles.values():
+        assert style.alignment == pyass.Alignment.CENTER_LEFT
+        assert style.marginL == 330
+        assert style.primaryColor == pyass.Color(r=255, g=255, b=255, a=0)
+    assert styles["Date Sayuri"].outlineColor == pyass.Color(r=255, g=158, b=0, a=0)
+    assert styles["Liyuu"].outlineColor == pyass.Color(r=0, g=163, b=224, a=0)
+
+    # Each slot is positioned, and the two slots land at different heights.
+    positions = [
+        re.search(r"\\pos\((\d+),(\d+)\)", event.text) for event in script.events
+    ]
+    assert all(match is not None for match in positions)
+    assert positions[0].group(2) != positions[1].group(2)
+
+
+def test_postprocess_without_speaker_map_keeps_flat_layout(tmp_path):
+    """No speaker map means no overlay - the plain bottom-centred styling."""
+    import pyass
+
+    input_path = tmp_path / "translated.json"
+    ass_path = tmp_path / "final.ass"
+    _two_speaker_document(input_path)
+
+    postprocess_subtitles(
+        input_path,
+        output_json_path=tmp_path / "postprocessed.json",
+        output_ass_path=ass_path,
+        bilingual=False,
+    )
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    assert all(
+        style.alignment == pyass.Alignment.BOTTOM for style in script.styles
+    )
+    assert all(r"\pos(" not in event.text for event in script.events)
 
 
 def test_ensure_quoted_collapses_duplicate_quotes_on_first_and_last_visual_lines():
