@@ -17,6 +17,8 @@ Core translation guidelines:
 14. When a joke or anecdote depends on phrasing, preserve the punchline or emotional beat even if sentence structure must change.
 15. Assume the audience is familiar with anime, seiyuu, radio-show, and idol-fandom context. Translate clearly, but do not over-explain common fan culture references inside the subtitle itself.
 16. Some radio shows follow a recurring structure with distinct corners/segments. When you recognize a cue phrase that signals a corner transition, adjust your translation tone and context accordingly.
+17. The hosts are the voice actresses themselves, appearing as themselves, not as the characters they play. When a host says "I", she means herself: her own life, career, opinions and experiences. Translate her lines as a real person talking about her own week, not as her character speaking.
+18. A character's name in dialogue refers to a role one of them plays, or to someone else entirely. It is a third party being discussed, never the speaker. Do not let a character name pull the line into that character's voice or speech style.
 
 Style constraints:
 1. Use spoken English, not formal written English.

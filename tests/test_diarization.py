@@ -368,6 +368,22 @@ def test_build_speaker_prompt_with_characters():
     assert result.startswith("Speakers in this recording:")
 
 
+def test_build_speaker_prompt_says_the_hosts_are_not_in_character():
+    """Naming a character invites the translator to read the show as the character.
+
+    The hosts are the voice actors talking about their own lives, so the list has
+    to say so or first-person lines get rendered in the character's voice.
+    """
+    speaker_map = {
+        "0": {"name": "Suzuki Minori", "character": "Ena Shinonome", "color": None},
+    }
+    result = build_speaker_prompt(speaker_map)
+
+    assert "voice actors themselves" in result
+    assert "not in character" in result
+    assert "a role they play" in result
+
+
 def test_build_speaker_prompt_without_characters():
     speaker_map = {
         "0": {"name": "Speaker A", "character": None, "color": None},
@@ -375,6 +391,8 @@ def test_build_speaker_prompt_without_characters():
     result = build_speaker_prompt(speaker_map)
     assert "- Speaker A" in result
     assert "voice of" not in result
+    # No character named, so there is no character/performer confusion to head off.
+    assert "not in character" not in result
 
 
 # --- Speaker review flow tests ---

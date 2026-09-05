@@ -266,15 +266,34 @@ def slot_styles_for_map(speaker_map: dict[str, dict]) -> dict[str, "pyass.Style"
 
 
 def build_speaker_prompt(speaker_map: dict[str, dict]) -> str:
-    """Build a prompt fragment describing the speakers in this recording."""
+    """Build a prompt fragment describing the speakers in this recording.
+
+    The framing matters as much as the list. Given only "Name (voice of
+    Character)", translators drift into reading the show as the characters
+    talking, and render first-person lines as if the role were speaking.
+    """
     lines = ["Speakers in this recording:"]
+    has_characters = False
     for entry in speaker_map.values():
         name = entry["name"]
         character = entry.get("character")
         if character:
+            has_characters = True
             lines.append(f"- {name} (voice of {character})")
         else:
             lines.append(f"- {name}")
+
+    if has_characters:
+        lines.append("")
+        # Kept free of gendered pronouns: this runs for whatever cast the speaker
+        # map names, unlike the per-show prompt files which know theirs.
+        lines.append(
+            "These hosts are the voice actors themselves, appearing as themselves. "
+            "They are not in character. When a host says 'I', they mean themselves: "
+            "their own life, work, opinions and experiences, not their character's. "
+            "A character name refers to a role they play, so treat it as a third "
+            "party being talked about, never as the speaker."
+        )
     return "\n".join(lines)
 
 

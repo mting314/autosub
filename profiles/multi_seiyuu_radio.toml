@@ -7,3 +7,6 @@ model = "gemini-3-flash-preview"
 scope = "full_script"
 split_framing_phrases = true
 label_roles = true
+# Correct diarization from the conversation, on the classifier's existing call.
+# Multi-host shows need it: acoustic diarization slips at every turn boundary.
+correct_speakers = true
