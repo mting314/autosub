@@ -1,0 +1,213 @@
+extends = ["multi_seiyuu_radio", "proseka/base"]
+
+prompt = [
+    """
+セカラジ / Sekaraji ("Project SEKAI RADIO") is a biweekly pre-recorded web radio show for the mobile rhythm game Project Sekai: Colorful Stage! feat. Hatsune Miku, released on YouTube on Friday evenings. Two voice actors host together, talk about the game, run recurring corners, and read listener mail sent to sekairadio@pjsekai.jp.
+
+This is radio, not a livestream: there is no chat to react to, no story or MV playing on screen, and no event to recap. The hosts are talking to each other and to listeners. Keep the register warm and conversational, and let the two hosts play off each other — banter, interruptions, and agreement noises are the substance of the show, not noise to clean up.
+
+The host pair rotates every episode and can be drawn from any unit, so do not assume who is speaking from the show alone. Who hosts THIS episode is supplied separately, in the "Speakers in this recording" list.
+""",
+    """
+Sekaraji conventions:
+- "セカラジ" → "Sekaraji". Never "Sekarazi" or "SekaRadi".
+- "連絡ノート" → "the contact notebook". This is the show's running relay: each episode's hosts answer a question the previous episode's hosts left them, then leave a new question for the next pair. Keep the term consistent — it is a segment name, not a literal notebook.
+- "ユニットシャッフル" → "unit shuffle", the show's word for rotating which units the hosts come from.
+- The listener mail address is read aloud as "sekairadio@pjsekai.jp" — render it as the literal address, not a transliteration.
+- Hosts introduce themselves as "[CHARACTER]役の[VA NAME]です" → "I'm [VA NAME], the voice of [CHARACTER]." Keep this phrasing consistent across episodes.
+- Listener mail is read in the sender's voice, then the hosts respond. Keep the letter and the hosts' reaction to it functionally separate in English, the way multi_seiyuu_radio describes.
+- Radio names / pen names (ラジオネーム, ペンネーム) are introduced as "Radio name:" followed by the handle. Leave the handle itself as written.
+""",
+]
+
+vocab = [
+    # --- Program ---
+    "セカラジ",
+    "sekairadio@pjsekai.jp",
+    "お便り",
+    "お便り募集",
+    "連絡ノート",
+    "ユニットシャッフル",
+    "ラジオネーム",
+
+    # --- Characters (any unit may be discussed) ---
+    "星乃一歌",
+    "天馬咲希",
+    "望月穂波",
+    "日野森志歩",
+    "花里みのり",
+    "桐谷遥",
+    "桃井愛莉",
+    "日野森雫",
+    "小豆沢こはね",
+    "白石杏",
+    "東雲彰人",
+    "青柳冬弥",
+    "天馬司",
+    "鳳えむ",
+    "草薙寧々",
+    "神代類",
+    "宵崎奏",
+    "朝比奈まふゆ",
+    "東雲絵名",
+    "暁山瑞希",
+
+    # --- Voice Actors (any may host) ---
+    "野口瑠璃子",
+    "磯部花凛",
+    "上田麗奈",
+    "中島由貴",
+    "小倉唯",
+    "吉岡真優",
+    "降幡愛",
+    "本泉莉奈",
+    "秋奈",
+    "澄利冴那",
+    "今井文也",
+    "伊東健人",
+    "廣瀬大介",
+    "木野日菜",
+    "Machico",
+    "土岐隼一",
+    "楠木ともり",
+    "田辺留依",
+    "鈴木みのり",
+    "佐藤日向",
+
+    # --- Greetings ---
+    "コンニード",
+    "コンモア",
+    "コンニーゴ",
+    "ワンダーホイ",
+]
+
+[glossary]
+"セカラジ" = "Sekaraji"
+"お便り" = "listener mail"
+"連絡ノート" = "contact notebook"
+"ユニットシャッフル" = "unit shuffle"
+"ラジオネーム" = "Radio name:"
+"星乃一歌" = "Ichika Hoshino"
+"天馬咲希" = "Saki Tenma"
+"望月穂波" = "Honami Mochizuki"
+"日野森志歩" = "Shiho Hinomori"
+"花里みのり" = "Minori Hanasato"
+"桐谷遥" = "Haruka Kiritani"
+"桃井愛莉" = "Airi Momoi"
+"日野森雫" = "Shizuku Hinomori"
+"小豆沢こはね" = "Kohane Azusawa"
+"白石杏" = "An Shiraishi"
+"東雲彰人" = "Akito Shinonome"
+"青柳冬弥" = "Toya Aoyagi"
+"天馬司" = "Tsukasa Tenma"
+"鳳えむ" = "Emu Otori"
+"草薙寧々" = "Nene Kusanagi"
+"神代類" = "Rui Kamishiro"
+"宵崎奏" = "Kanade Yoisaki"
+"朝比奈まふゆ" = "Mafuyu Asahina"
+"東雲絵名" = "Ena Shinonome"
+"暁山瑞希" = "Mizuki Akiyama"
+
+[[format.normalizer.terms]]
+value = "セカラジ"
+explanation = "Show name (Project SEKAI RADIO). ASR variants to correct: セカラジオ, せかラジ, セカ・ラジ."
+
+[[format.normalizer.terms]]
+value = "コンモア"
+explanation = "Fan greeting portmanteau of こんばんは + モア (MORE MORE JUMP!). ASR may drop the ン, producing コモア."
+
+[[format.normalizer.terms]]
+value = "コンニーゴ"
+explanation = "Fan greeting portmanteau of こんばんは + ニーゴ. ASR often drops the ン, producing コニーゴ."
+
+# ---------------------------------------------------------------------------
+# No [[speakers.cast]] here on purpose. The host pair rotates every episode
+# (the show calls it ユニットシャッフル), so who is on mic is per-episode data
+# and belongs in the project's speaker_map.toml — which is also what drives the
+# subtitle colours and the radio overlay cards. build_speaker_prompt() turns
+# that map into a "Speakers in this recording" fragment, so the translator gets
+# the hosts from there. This matches how Lieraji is set up: no cast in the
+# profile, one speaker_map.toml per episode folder.
+#
+# Corners below were recovered from episode 72's YouTube auto-captions. Verify
+# and extend them against a second episode before treating them as settled.
+# ---------------------------------------------------------------------------
+
+[[corners]]
+name = "Opening Talk"
+description = "Unstructured chat at the very top of the episode, before the show formally starts. Opens with both hosts greeting listeners and introducing themselves by character and VA name, then drifts into whatever the two of them feel like talking about. Ends when a host calls the show to order with a よろしくお願いします and the sponsor credit is read."
+cues = [
+    "皆さんこんばんは",
+    "役の",
+    "キャストがお届けするラジオ番組セカラジ",
+    "今回はこの2人でお届けします",
+]
+
+[[corners]]
+name = "Contact Notebook"
+description = "連絡ノート. The show's relay segment: the previous episode's hosts left a question in the notebook, and this episode's hosts read it out and answer it at length. Comes right after the sponsor credit and the hosts' second self-introduction. A matching bookend appears in the Ending, where the hosts leave a question for the NEXT pair — that later half is part of the Ending, not this corner."
+# Bare "連絡ノート" is deliberately not a cue: the hosts refer to the notebook in
+# passing during other corners, and it pulled a false Contact Notebook boundary at
+# 08:52 of episode 72.
+# The sponsor credit used to be a cue here. It is not: across episodes 69-72 it
+# reads at the very END of every episode, and only sometimes also at the notebook,
+# so it pulled a false Contact Notebook boundary onto the sign-off every time.
+# Episode 69 says 連絡ノート"の"質問, episode 70/72 say 連絡ノート"に"質問, so both
+# particles are matched and the trailing conjugation is left off.
+cues = [
+    "連絡ノートに質問が届",
+    "連絡ノートの質問が届",
+]
+
+[[corners]]
+name = "Listener Mail"
+description = "General listener mail (お便り) with no set theme, read early in the show. Hosts announce they are moving on to mail, then read letters one at a time, each introduced by the sender's radio name. Distinct from Theme Mail, which is announced with an explicit theme for the episode."
+# Bare "ラジオネーム" is deliberately not a cue. Every letter in Theme Mail is also
+# introduced by a radio name, and the Ending says "ラジオネームもお忘れなく" — between
+# them they pulled three false Listener Mail boundaries in episode 72.
+# Each episode announces this corner differently, so all four observed openings
+# are listed; only one fires per episode. The closing solicitation is included as
+# a boundary too — it is the most reliable marker of the corner, appearing in
+# three of the four episodes surveyed.
+cues = [
+    "お便りもご紹介していきたい",
+    "お便りを紹介していきます",
+    "お便りも届いています",
+    "お便りは以上",
+    "プロセカキャストに聞いてみたい質問やテーマ",
+]
+
+[[corners]]
+name = "Song"
+description = "One song is played in full, mid-episode. A host introduces it — often noting which character it belongs to — and hands off with an お聞きください, after which the audio is entirely music. There is no talking over it. Lines inside this span are sung lyrics, not dialogue."
+cues = [
+    "ここで1曲お届けします",
+    "1曲お届けします",
+    "それではお聞きください",
+    "この曲は",
+]
+
+[[corners]]
+name = "Theme Mail"
+description = "The main mail corner, built around a theme announced for this episode. The hosts state the theme, work through submissions, and close by thanking listeners and naming the theme again. Distinct from Listener Mail by the explicit テーマ framing. Observed themes: 私の宝物 (ep69), 暑い夏の対策 (ep70), お家時間の過ごし方 (ep71), 秋に楽しみなこと (ep72) — the theme is always restated at the close as ...というテーマでお届けしました."
+cues = [
+    "今回はこんなテーマでメールを募集しました",
+    "というテーマでお届けしました",
+    "早速メールを紹介していきます",
+    "今回のご紹介は以上です",
+    "今回の紹介は以上です",
+]
+
+[[corners]]
+name = "Ending"
+description = "Sign-off block. Announces the ending, gives the submission address and where to find details, previews the next episode's unit shuffle, and has the hosts record a new question in the contact notebook for the next pair of hosts. Closes with the hosts naming themselves one last time and a バイバイ, then the sponsor credit."
+cues = [
+    "セカラジエンディングです",
+    "番組では皆さんからの投稿をお待ちしています",
+    "ラジオネームもお忘れなく",
+    "次回のキャストさんに向けて連絡ノートにコメントを残していきたい",
+    "ここまでのお相手は",
+    "お別れです",
+    "お別れのお時間",
+    "バイバイ",
+]

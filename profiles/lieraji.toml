@@ -20,6 +20,18 @@ vocab = [
 "ラジオネーム" = "Radio name:"
 "Liellaネーム" = "Liella name:"
 
+[[format.normalizer.terms]]
+value = "リエラジ"
+explanation = "Show name (Liella no Radio Japan). ASR sometimes outputs リエラじ with lowercase じ."
+
+[[format.normalizer.terms]]
+value = "投書箱"
+explanation = "Suggestion Box corner name. ASR often outputs 投稿箱."
+
+[[format.normalizer.terms]]
+value = "結ヶ丘"
+explanation = "School name (Yuigaoka). ASR variants: ゆう友情, ゆいつは, 結ば結び."
+
 [extensions.radio_discourse]
 enabled = true
 engine = "hybrid"

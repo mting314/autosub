@@ -1,6 +1,23 @@
 extends = ["proseka/aftertalk"]
 
-prompt = "prompts/proseka/leoneed.md"
+prompt = """
+Unit context for Leo/need (レオニード):
+A band of four childhood friends at Miyamasuzaka. Their SEKAI is the School SEKAI.
+
+Members and their voice actors:
+- Ichika Hoshino (星乃一歌) — Ruriko Noguchi (野口瑠璃子): Kind and caring but struggles with self-expression. Overthinks situations, deeply considerate.
+- Saki Tenma (天馬咲希) — Karin Isobe (磯部花凛): Cheerful mood-maker, energetic and mischievous. Optimistic exterior masking deeper anxieties.
+- Honami Mochizuki (望月穂波) — Reina Ueda (上田麗奈): Kind, smart, empathetic honor student. Becoming more assertive over time.
+- Shiho Hinomori (日野森志歩) — Yuki Nakashima (中島由貴): Blunt and introverted, speaks harshly but genuinely. Easily embarrassed about cute things.
+
+Cross-unit relationships:
+- Shiho and Shizuku Hinomori are sisters (Shiho is Leo/need, Shizuku is MMJ).
+- Tsukasa and Saki Tenma are siblings (Tsukasa is WxS, Saki is Leo/need).
+
+Unit-specific notes:
+- Fan greeting: こんニー (kon + nēdo, ASR may render as コンニード or こんニード) → "kon-needo". Same portmanteau pattern as N25's kon-niigo.
+- Kanji disambiguation: 咲子 in any Leo/need context refers to MEIKO (Vocaloid), NOT to 咲希 Saki Tenma. The Leo/need members frequently appear alongside MEIKO in Virtual Singer pairings, so this collision is common.
+"""
 vocab = [
     # --- Characters ---
     "星乃一歌",
@@ -14,6 +31,10 @@ vocab = [
     "上田麗奈",
     "中島由貴",
 
+    # --- Nicknames ---
+    "ホナちゃん",
+    "穂波ちゃん",
+
     # --- Greetings ---
     "コンニード",
 ]
@@ -23,4 +44,36 @@ vocab = [
 "天馬咲希" = "Saki Tenma"
 "望月穂波" = "Honami Mochizuki"
 "日野森志歩" = "Shiho Hinomori"
-"コンニード" = "Kon-needo"
+"ホナちゃん" = "Hona-chan"
+"穂波ちゃん" = "Honami-chan"
+"コンニード" = "kon-needo"
+"こんニード" = "kon-needo"
+"コンニー" = "kon-needo"
+"こんニー" = "kon-needo"
+"コニード" = "kon-needo"
+
+[[format.normalizer.terms]]
+value = "コンニード"
+explanation = "Fan greeting portmanteau of こんばんは + ニード (Leo/need). ASR commonly drops syllables, producing コニード, コンニー, or こんニー — all should be normalized to コンニード."
+
+# Default cast for Leo/need AfterTalk events. Override per-event via
+# project.toml [[speakers.cast]] when guests join.
+[[speakers.cast]]
+name = "Ruriko Noguchi"
+character = "Ichika Hoshino"
+color = "#33AAEE"
+
+[[speakers.cast]]
+name = "Karin Isobe"
+character = "Saki Tenma"
+color = "#FF8800"
+
+[[speakers.cast]]
+name = "Reina Ueda"
+character = "Honami Mochizuki"
+color = "#FF6699"
+
+[[speakers.cast]]
+name = "Yuki Nakashima"
+character = "Shiho Hinomori"
+color = "#22DDBB"

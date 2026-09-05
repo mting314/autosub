@@ -1,79 +1,44 @@
-extends = ["solo_seiyuu_radio"]
+extends = ["solo_seiyuu_radio", "proseka/base"]
 
-prompt = "prompts/proseka/aftertalk.md"
+prompt = [
+    """
+ProSeka AfterTalk (プロセカアフタートーク) is a recurring livestream for the mobile rhythm game Project Sekai: Colorful Stage! feat. Hatsune Miku. Each edition covers one in-game event story: a single voice actor hosts, reads fan letters, and discusses the story while watching key scenes live. Streams air on YouTube after each event ends.
+
+Tone: relaxed YouTube livestream, not a formal presentation. Use casual register — "Here we go!" not "Please, take a look"; "if you think I'm yapping too much" not "If you find me too noisy."
+""",
+    """
+Recurring scripted lines — these appear in every AfterTalk episode. Use these EXACT translations:
+- "プロセカアフタートーク" opening → "Welcome to ProSeka AfterTalk: [EVENT NAME] edition!"
+- "[UNIT]の[CHARACTER]役の[VA NAME]です" → "I'm [VA NAME], the voice of [CHARACTER] from [UNIT]."
+- "イベントを振り返りながら" / "振り返っていく番組" → "a program where we look back on the event"
+- "アフターライブを一緒に楽しんでいく" → "enjoy the AfterLive together with everyone watching"
+- "#プロセカアフタートーク" → "the hashtag #ProSekaAfterTalk"
+- "YouTubeのチャットも見れるようになっています" → "The staff have set up the YouTube chat so I can see it right here"
+- "ディスコードの投稿チャンネル / メール" → "the official ProSeka Discord channel or via email"
+- "おたよりを募集しています" → "We're always looking for messages for our AfterTalks."
+- "次のアフタートークのイベントが始まったら送ってください" → "Please send one in when the next AfterTalk event starts."
+- "イベントに関係のあるものでお願いします" → "Just make sure your messages are related to the event."
+- "次のイベントが始まったらイベントストーリーから読めます" → "you can read it all in the Event Stories menu once the next event starts."
+- "おたよりはディスコード / メールで" → "You can submit them through the official ProSeka Discord channel or via email."
+- Short sign-off: "それではまた次回" → "See you next time." / "See you again next time!"
+- "バイバイ" → "Bye bye!"
+
+AfterTalk-specific style rules (the game-wide ProSeka rules are in proseka/base):
+1. Specific times like 5分 usually refer to clock times in the livestream schedule (e.g., 10:05 PM), not durations.
+2. Brand capitalization: AfterTalk (capital T), AfterLive (capital L).
+""",
+]
+# Game-wide vocabulary, glossary, and the transcript normalizer live in proseka/base.
+# Only AfterTalk's own program terms belong here.
 vocab = [
-    # --- Game & Program ---
-    "プロセカ",
-    "プロジェクトセカイ",
-    "カラフルステージ",
+    # --- Program ---
     "アフタートーク",
     "アフターライブ",
-    "初音ミク",
-
-    # --- Units ---
-    "レオニード",
-    "Leo/need",
-    "モア・モア・ジャンプ！",
-    "MORE MORE JUMP!",
-    "ビビッドバッドスクワッド",
-    "Vivid BAD SQUAD",
-    "ワンダーランズ×ショウタイム",
-    "Wonderlands x Showtime",
-    "25時、ナイトコードで。",
-    "Nightcord at 25:00",
-
-    # --- Unit Abbreviations ---
-    "レオニ",
-    "モモジャン",
-    "ビビバス",
-    "ワンダショ",
-    "ニーゴ",
-
-    # --- Virtual Singers ---
-    "初音ミク",
-    "鏡音リン",
-    "鏡音レン",
-    "巡音ルカ",
-    "MEIKO",
-    "KAITO",
-
-    # --- Game Terms ---
-    "セカイ",
-    "断片セカイ",
-    "イベントストーリー",
-    "書き下ろし楽曲",
-    "バーチャルシンガー",
-    "ファンフェスタ",
-
-    # --- School ---
-    "宮益坂女子学園",
-
-    # --- Livestream Terms ---
-    "おたより",
-    "ラジオネーム",
-    "ペンネーム",
-    "メッセージ",
 ]
 
 [glossary]
-"プロセカ" = "ProSeka"
 "アフタートーク" = "AfterTalk"
 "アフターライブ" = "AfterLive"
-"セカイ" = "SEKAI"
-"断片セカイ" = "Fragment SEKAI"
-"バーチャルシンガー" = "Virtual Singer"
-"ファンフェスタ" = "fan festa"
-"ワンダーホイ" = "Wonderhoi!"
-"レオニ" = "Leoni"
-"ニーゴ" = "Niigo"
-"ビビバス" = "Vivibasu"
-"ワンダショ" = "Wandasho"
-"モモジャン" = "Momojan"
-"宮益坂女子学園" = "Miyamasuzaka Girls Academy"
-"初音ミク" = "Hatsune Miku"
-"鏡音リン" = "Kagamine Rin"
-"鏡音レン" = "Kagamine Len"
-"巡音ルカ" = "Megurine Luka"
 
 [[corners]]
 name = "Story Watchalong"

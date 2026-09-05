@@ -652,6 +652,25 @@ To create a local profile from a tracked example:
 Copy-Item .\profiles\examples\solo_seiyuu_radio.toml .\profiles\local\my_profile.toml
 ```
 
+### Do not shadow a tracked profile
+
+Because `local\` is searched first *and* is gitignored, a local file with the same name as
+a tracked one hides it silently: the tracked file still looks current, while every run
+uses the local copy, and none of the changes are in version control.
+
+That is exactly what happened to the `proseka` set and to `lieraji`. By the time it was
+caught the tracked copies had drifted far behind their local shadows — `n25` was 22 lines
+against 69, `leoneed` 26 against 79.
+
+**Give a local profile a name no tracked profile uses.** `local\` is for things that
+should never be tracked: a one-off override for a single re-processing job, or an A/B
+experiment. `proseka\n25_gapfill` and `proseka\n25_trimmed` are the intended shape — each
+`extends` a tracked profile, adds a narrow override, and carries a comment saying why it
+is not a production profile.
+
+If you are editing a local file that shadows a tracked one, the edit belongs in the
+tracked file.
+
 If a profile prompt entry points at `prompts\<name>.md` or `prompts\<name>.txt`, autosub searches in this order:
 
 - `prompts\local\<name>.md`
