@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Literal, NamedTuple
 import pyass
@@ -6,8 +7,10 @@ from autosub.core.schemas import SubtitleCue, SubtitleDocument, SubtitleLine
 from autosub.core.speaker_map import (
     build_slot_lookup,
     build_style_name_lookup,
+    calculate_speaker_slot_layout,
     hex_to_pyass_color,
     remap_speaker_labels,
+    slot_style,
 )
 
 # Script resolution the styles are authored against (1080p). Must be written into the
@@ -107,6 +110,28 @@ def render_ass_document(
     )
 
 
+_POS_TAG_RE = re.compile(r"\\pos\(\s*-?[\d.]+\s*,\s*-?[\d.]+\s*\)")
+_EMPTY_OVERRIDE_BLOCK_RE = re.compile(r"\{\s*\}")
+
+
+def strip_pos_tags(script: pyass.Script) -> int:
+    """Remove baked-in \\pos overrides, returning how many were dropped.
+
+    Earlier versions wrote the slot position into the event text. That position
+    came from the cue's speaker rather than the Style the event references, so
+    retagging a speaker in Aegisub recoloured the line and left it in the old
+    speaker's box. The slot lives in the style's margins now, and a leftover
+    \\pos would override them.
+    """
+    removed = 0
+    for event in script.events:
+        text, count = _POS_TAG_RE.subn("", event.text)
+        if count:
+            event.text = _EMPTY_OVERRIDE_BLOCK_RE.sub("", text)
+            removed += count
+    return removed
+
+
 def write_ass_script(script: pyass.Script, output_path: Path) -> None:
     # Auto-link project background overlay for Aegisub if present.
     output_dir = Path(output_path).parent
@@ -203,28 +228,10 @@ def _script_from_entries(
 
         slot = map_slots.get(speaker_name, map_slots.get(resolved_name))
         if slot is not None:
-            from autosub.core.speaker_map import calculate_speaker_slot_layout
-
-            layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
-            # White fill with the character's colour in the outline, matching the
-            # convention these projects already use. Putting the colour in the
-            # fill instead leaves dark characters unreadable on the slot's dark
-            # backdrop: navy #172B80 scores 1.17:1 against it, well under the 3.0
-            # WCAG floor for large text, and its black outline does not rescue it.
-            st = pyass.Style(
-                name=style_name,
-                fontName="Lato ExtraBold",
-                fontSize=70,
-                isBold=True,
-                primaryColor=pyass.Color(r=255, g=255, b=255, a=0),
-                outlineColor=c,
-                backColor=pyass.Color(r=0, g=0, b=0, a=0),
-                outline=2.5,
-                shadow=1.5,
-                alignment=pyass.Alignment.CENTER_LEFT,
-                marginL=layout["text_x"],
-                marginR=80,
-                marginV=0,
+            st = slot_style(
+                style_name,
+                c,
+                calculate_speaker_slot_layout(slot=slot, total_slots=total_slots),
             )
         else:
             st = pyass.Style(
@@ -256,14 +263,11 @@ def _script_from_entries(
         )
         event_name = entry.role or (resolved_name if resolved_name else "")
 
-        slot = map_slots.get(assigned_speaker, map_slots.get(resolved_name))
-        if slot is not None:
-            from autosub.core.speaker_map import calculate_speaker_slot_layout
-
-            layout = calculate_speaker_slot_layout(slot=slot, total_slots=total_slots)
-            event_text = f"{{\\pos({layout['text_x']},{layout['text_y']})}}{entry.text}"
-        else:
-            event_text = entry.text
+        # No \pos: the slot lives in the style's margins. A \pos here would be
+        # derived from the cue's speaker rather than the event's Style, so
+        # retagging a line in Aegisub would recolour it and leave it in the old
+        # speaker's box.
+        event_text = entry.text
 
         if entry.corner:
             pyass_events.append(

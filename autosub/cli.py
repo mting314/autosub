@@ -1055,6 +1055,77 @@ def report(
         raise typer.Exit(code=1)
 
 
+@app.command(name="relayout")
+def relayout(
+    ass_file: Path = typer.Argument(
+        ...,
+        help="Path to the .ass subtitle file to re-lay out, updated in place.",
+        exists=True,
+        dir_okay=False,
+    ),
+    speaker_map_path: Path = typer.Option(
+        ...,
+        "--speaker-map",
+        "-s",
+        help="Path to speaker_map.toml defining speaker slots, colors, and avatars.",
+        exists=True,
+        dir_okay=False,
+    ),
+):
+    """
+    Rebuild the slot styles in a .ass file and drop any baked-in \\pos overrides.
+
+    Older renders wrote each line's slot position into the event text. That
+    position came from the cue's speaker rather than the Style the event
+    references, so retagging a speaker in Aegisub recoloured the line but left it
+    in the previous speaker's box. Position now lives in the style's margins.
+
+    Run this once over an episode produced before that change. Each event keeps
+    the Style it is already assigned to, so any speaker corrections made by hand
+    survive.
+    """
+    import pyass
+
+    from autosub.core.speaker_map import load_speaker_map, slot_styles_for_map
+    from autosub.pipeline.format.generator import strip_pos_tags
+
+    speaker_map = load_speaker_map(speaker_map_path)
+    positioned = slot_styles_for_map(speaker_map)
+    if not positioned:
+        # load_speaker_map numbers slots for you, so this only happens when the
+        # map has no speakers in it at all.
+        logger.error("Speaker map defines no speakers, so there is no layout to apply.")
+        raise typer.Exit(code=1)
+
+    with open(ass_file, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    used_styles = {event.style for event in script.events}
+    unknown = sorted(used_styles - set(positioned))
+    if unknown:
+        logger.warning(
+            "Leaving %d style(s) untouched, absent from the speaker map: %s",
+            len(unknown),
+            ", ".join(unknown),
+        )
+
+    script.styles = [
+        style for style in script.styles if style.name not in positioned
+    ] + list(positioned.values())
+
+    dropped = strip_pos_tags(script)
+
+    with open(ass_file, "w", encoding="utf-8") as handle:
+        pyass.dump(script, handle)
+
+    logger.info(
+        "Re-laid out %s: %d slot style(s) rebuilt, %d \\pos override(s) removed.",
+        ass_file,
+        len(positioned),
+        dropped,
+    )
+
+
 @app.command(name="assign-speakers")
 def assign_speakers(
     ass_file: Path = typer.Argument(
@@ -1190,29 +1261,39 @@ def assign_speakers(
         logger.info("No assignments made.")
         raise typer.Exit()
 
-    # Build new styles and remap events
-    # Track which speaker names we've already created styles for
-    new_styles: dict[str, pyass.Style] = {}
+    # Build new styles and remap events. Slot styles come from the shared builder
+    # so a reassigned line lands in the right box as well as the right colour;
+    # this command used to write its own flat bottom-centred style, which undid
+    # the overlay layout for every line it touched.
+    from autosub.core.speaker_map import slot_styles_for_map
+    from autosub.pipeline.format.generator import strip_pos_tags
 
-    for old_label, speaker_entry in assignments.items():
+    positioned = slot_styles_for_map(speaker_map)
+
+    new_styles: dict[str, pyass.Style] = {}
+    for speaker_entry in assignments.values():
         name = speaker_entry["name"]
-        if name not in new_styles:
-            color = pyass.Color(r=255, g=255, b=255, a=0)  # default white
-            if speaker_entry.get("color"):
-                color = hex_to_pyass_color(speaker_entry["color"])
-            new_styles[name] = pyass.Style(
-                name=name,
-                fontName="Arial",
-                fontSize=48,
-                isBold=True,
-                primaryColor=color,
-                outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
-                backColor=pyass.Color(r=0, g=0, b=0, a=0),
-                outline=2.0,
-                shadow=2.0,
-                alignment=pyass.Alignment.BOTTOM,
-                marginV=20,
-            )
+        if name in new_styles:
+            continue
+        if name in positioned:
+            new_styles[name] = positioned[name]
+            continue
+        color = pyass.Color(r=255, g=255, b=255, a=0)  # default white
+        if speaker_entry.get("color"):
+            color = hex_to_pyass_color(speaker_entry["color"])
+        new_styles[name] = pyass.Style(
+            name=name,
+            fontName="Arial",
+            fontSize=48,
+            isBold=True,
+            primaryColor=color,
+            outlineColor=pyass.Color(r=0, g=0, b=0, a=0),
+            backColor=pyass.Color(r=0, g=0, b=0, a=0),
+            outline=2.0,
+            shadow=2.0,
+            alignment=pyass.Alignment.BOTTOM,
+            marginV=20,
+        )
 
     # Keep styles for unassigned labels
     kept_styles = [s for s in script.styles if s.name not in assignments]
@@ -1224,6 +1305,12 @@ def assign_speakers(
             speaker_entry = assignments[event.style]
             event.style = speaker_entry["name"]
             event.name = speaker_entry["name"]
+
+    # A \pos left over from an older render would pin the line to its previous
+    # slot and quietly defeat the reassignment.
+    dropped = strip_pos_tags(script)
+    if dropped:
+        logger.info("Removed %d stale \\pos override(s).", dropped)
 
     # Write back
     with open(ass_file, "w", encoding="utf-8") as f:

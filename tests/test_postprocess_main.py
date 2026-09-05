@@ -1,5 +1,3 @@
-import re
-
 import pytest
 
 from autosub.core.schemas import SubtitleCue, SubtitleDocument, TranscribedWord
@@ -312,18 +310,16 @@ def test_postprocess_renders_slot_styles_when_speaker_map_supplied(tmp_path):
     # Slot geometry: text clears the avatar card column, and the character colour
     # sits in the outline with a white fill.
     for style in styles.values():
-        assert style.alignment == pyass.Alignment.CENTER_LEFT
+        assert style.alignment == pyass.Alignment.TOP_LEFT
         assert style.marginL == 330
         assert style.primaryColor == pyass.Color(r=255, g=255, b=255, a=0)
     assert styles["Date Sayuri"].outlineColor == pyass.Color(r=255, g=158, b=0, a=0)
     assert styles["Liyuu"].outlineColor == pyass.Color(r=0, g=163, b=224, a=0)
 
-    # Each slot is positioned, and the two slots land at different heights.
-    positions = [
-        re.search(r"\\pos\((\d+),(\d+)\)", event.text) for event in script.events
-    ]
-    assert all(match is not None for match in positions)
-    assert positions[0].group(2) != positions[1].group(2)
+    # The two slots land at different heights, and the position is carried by the
+    # style rather than a \pos tag glued to the text.
+    assert styles["Date Sayuri"].marginV < styles["Liyuu"].marginV
+    assert all(r"\pos(" not in event.text for event in script.events)
 
 
 def test_postprocess_without_speaker_map_keeps_flat_layout(tmp_path):

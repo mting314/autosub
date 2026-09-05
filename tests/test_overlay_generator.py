@@ -29,6 +29,43 @@ def test_calculate_speaker_slot_layout():
     assert layout3["text_y"] == 900  # 1080 / 3 * 2.5
 
 
+def test_subtitle_text_box_sits_inside_its_backdrop_bar():
+    """The PNG bar and the ASS style margins must come from one calculation.
+
+    They are drawn by different modules into different file formats; if they
+    drift, the subtitle renders outside the bar that is supposed to back it.
+    """
+    from autosub.core.speaker_map import (
+        SLOT_LINE_HEIGHT,
+        SLOT_MAX_LINES,
+        slot_style,
+    )
+
+    canvas_w, canvas_h = 1920, 1080
+    for slot in (1, 2, 3):
+        layout = calculate_speaker_slot_layout(
+            slot=slot, total_slots=3, canvas_width=canvas_w, canvas_height=canvas_h
+        )
+        style = slot_style(f"S{slot}", None, layout)
+
+        # Left and right edges of the text box fall inside the bar.
+        assert style.marginL >= layout["bar_x1"]
+        assert canvas_w - style.marginR <= layout["bar_x2"]
+
+        # Two full lines, growing down from the top-anchored margin, still fit.
+        text_bottom = style.marginV + SLOT_MAX_LINES * style.fontSize * SLOT_LINE_HEIGHT
+        assert style.marginV >= layout["bar_y1"]
+        assert text_bottom <= layout["bar_y2"]
+
+    # Slots do not collide with each other.
+    bars = [
+        calculate_speaker_slot_layout(slot=s, total_slots=3, canvas_height=canvas_h)
+        for s in (1, 2, 3)
+    ]
+    for upper, lower in zip(bars, bars[1:]):
+        assert upper["bar_y2"] < lower["bar_y1"]
+
+
 def test_generate_radio_overlay_image(tmp_path):
     toml_content = """\
 [speakers."0"]

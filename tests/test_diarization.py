@@ -458,7 +458,12 @@ def test_many_to_one_speaker_mapping():
 
 
 def test_generator_slot_ass_positions(tmp_path):
-    """Verify generate_ass_file includes ASS \\pos tags for slot-mapped speakers."""
+    """Slot position must live in the style, so retagging in Aegisub moves the line.
+
+    A \\pos in the event text is derived from the cue's speaker, not from the
+    Style the event actually references, so the two drift apart the moment a
+    human corrects a speaker.
+    """
     from autosub.pipeline.format.generator import generate_ass_file
 
     lines = [
@@ -482,10 +487,15 @@ def test_generator_slot_ass_positions(tmp_path):
 
     events = script.events
     assert len(events) == 2
-    assert r"\pos(" in events[0].text
-    assert r"\pos(" in events[1].text
     assert events[0].style == "Date Sayuri"
     assert events[1].style == "Liyuu"
+    assert all(r"\pos(" not in event.text for event in events)
+
+    styles = {style.name: style for style in script.styles}
+    assert styles["Date Sayuri"].alignment == pyass.Alignment.TOP_LEFT
+    # Slot 1 sits above slot 2, and both clear the avatar card column.
+    assert styles["Date Sayuri"].marginV < styles["Liyuu"].marginV
+    assert styles["Date Sayuri"].marginL == styles["Liyuu"].marginL > 0
 
 
 def test_per_speaker_timing_rules_overlapping():

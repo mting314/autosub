@@ -915,12 +915,11 @@ def test_cue_fingerprint_changes_with_translation_metadata():
     assert fp1 != fp2
 
 
-def test_translate_renders_slot_pos_tags(tmp_path, monkeypatch):
-    """A slotted speaker must get its \\pos in the translated .ass.
+def test_translate_renders_slot_styles(tmp_path, monkeypatch):
+    """A slotted speaker must reach the translated .ass as a positioned style.
 
-    The tag is no longer carried through the translation text — the renderer
-    derives it from the speaker's slot — so this pins the end result rather
-    than the mechanism.
+    The position lives in the style's margins rather than a \\pos tag in the
+    text, so that swapping a line's Style in Aegisub moves the line with it.
     """
     input_json_path = tmp_path / "formatted.json"
     output_json_path = tmp_path / "translated.json"
@@ -963,9 +962,18 @@ def test_translate_renders_slot_pos_tags(tmp_path, monkeypatch):
         speaker_map={"SPEAKER_1": {"name": "Kanon", "color": "#ff0000", "slot": 1}},
     )
 
+    import pyass
+
     written = output_ass_path.read_text(encoding="utf-8")
-    assert "\\pos(" in written
     assert "Hello there" in written
+    assert "\\pos(" not in written
+
+    with open(output_ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+    style = next(s for s in script.styles if s.name == "Kanon")
+    assert style.alignment == pyass.Alignment.TOP_LEFT
+    assert style.marginL > 0
+    assert script.events[0].style == "Kanon"
 
 
 def test_split_leading_tags_separates_override_blocks():
