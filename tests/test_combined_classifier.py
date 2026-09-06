@@ -472,3 +472,69 @@ def test_combined_extensions_leave_speakers_alone_without_the_flag(
         )
 
     assert [line.speaker for line in result] == ["0"]
+
+
+# --- Per-window resilience ---
+
+
+def test_a_failed_window_is_retried_before_the_pass_is_abandoned():
+    """One transient window failure used to discard every window already done."""
+    from autosub.core.errors import VertexRequestError
+    from autosub.extensions.combined_classifier import _classify_window_with_retry
+
+    calls = {"n": 0}
+
+    class Flaky:
+        def classify_window(self, window):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise VertexRequestError("connection cut")
+            return {line_id: ("host", None, None) for line_id, _ in window}
+
+    with patch("autosub.extensions.combined_classifier.time.sleep"):
+        result = _classify_window_with_retry(Flaky(), [(0, _line("x"))], 0, 1)
+
+    assert calls["n"] == 2
+    assert result == {0: ("host", None, None)}
+
+
+def test_a_window_that_never_succeeds_still_raises():
+    from autosub.core.errors import VertexRequestError
+    from autosub.extensions.combined_classifier import _classify_window_with_retry
+
+    class Broken:
+        def classify_window(self, window):
+            raise VertexRequestError("connection cut")
+
+    with patch("autosub.extensions.combined_classifier.time.sleep"):
+        with pytest.raises(VertexRequestError):
+            _classify_window_with_retry(Broken(), [(0, _line("x"))], 0, 1)
+
+
+def test_completed_windows_survive_a_later_retry():
+    """A retry mid-pass must not lose the windows already classified."""
+    from autosub.core.errors import VertexRequestError
+    from autosub.extensions.combined_classifier import classify_combined
+
+    lines = [_line(f"line {i}", i, i + 1, speaker="Liyuu") for i in range(6)]
+    seen = {"n": 0}
+
+    def flaky_window(self, window):
+        seen["n"] += 1
+        if seen["n"] == 2:  # second window fails once, then succeeds
+            raise VertexRequestError("connection cut")
+        return {line_id: ("host", None, None) for line_id, _ in window}
+
+    with patch(
+        "autosub.extensions.combined_classifier.CombinedClassifier.classify_window",
+        flaky_window,
+    ), patch("autosub.extensions.combined_classifier.time.sleep"):
+        roles, _, _ = classify_combined(
+            lines,
+            [None] * len(lines),
+            [],
+            {"project_id": "p", "scope": "windowed", "window_size": 3,
+             "window_overlap": 0},
+        )
+
+    assert roles == ["host"] * 6

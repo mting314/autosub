@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
-from autosub.core.errors import VertexResponseShapeError
+from autosub.core.errors import VertexError, VertexResponseShapeError
 from autosub.core.llm import BaseStructuredLLM, ReasoningEffort
 from autosub.core.schemas import SubtitleLine
 from autosub.extensions.radio_discourse.classifier import ROLE_VALUES
@@ -244,8 +245,8 @@ def classify_combined(
     corner_votes: dict[int, list[str | None]] = {i: [] for i in range(len(lines))}
     speaker_votes: dict[int, list[str]] = {i: [] for i in range(len(lines))}
 
-    for window in windows:
-        decisions = classifier.classify_window(window)
+    for index, window in enumerate(windows):
+        decisions = _classify_window_with_retry(classifier, window, index, len(windows))
         for line_id, (role, corner, speaker) in decisions.items():
             if 0 <= line_id < len(lines):
                 if role in ROLE_VALUES:
@@ -292,6 +293,49 @@ def classify_combined(
         )
 
     return resolved_roles, resolved_corners, resolved_speakers
+
+
+_WINDOW_RETRY_ATTEMPTS = 3
+_WINDOW_RETRY_BACKOFF_S = 2.0
+
+
+def _classify_window_with_retry(
+    classifier: CombinedClassifier,
+    window: list[tuple[int, SubtitleLine]],
+    index: int,
+    total: int,
+) -> dict[int, tuple[str, str | None, str | None]]:
+    """Classify one window, retrying a failed request before giving up.
+
+    One window failing used to abort the whole pass and throw away every window
+    already classified. These failures are usually transient — a connection cut
+    partway through a long generation — and the same window lands well inside the
+    budget on a second attempt, so a retry recovers the pass rather than losing
+    all the completed work with it.
+    """
+    for attempt in range(1, _WINDOW_RETRY_ATTEMPTS + 1):
+        try:
+            return classifier.classify_window(window)
+        except VertexError as exc:
+            if attempt == _WINDOW_RETRY_ATTEMPTS:
+                logger.error(
+                    "Window %d/%d failed on all %d attempts.",
+                    index + 1,
+                    total,
+                    _WINDOW_RETRY_ATTEMPTS,
+                )
+                raise
+            logger.warning(
+                "Window %d/%d failed (attempt %d/%d), retrying in %.0fs: %s",
+                index + 1,
+                total,
+                attempt,
+                _WINDOW_RETRY_ATTEMPTS,
+                _WINDOW_RETRY_BACKOFF_S * attempt,
+                exc,
+            )
+            time.sleep(_WINDOW_RETRY_BACKOFF_S * attempt)
+    raise AssertionError("unreachable: the loop either returns or raises")
 
 
 def _build_windows(

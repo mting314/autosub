@@ -108,6 +108,20 @@ vocab = [
 "東雲絵名" = "Ena Shinonome"
 "暁山瑞希" = "Mizuki Akiyama"
 
+# Sekaraji episodes run 30+ minutes, which puts a full-script classification call
+# over the 60s ceiling the local network imposes on a single request — Ep 71 (815
+# lines) died at exactly 60.0s on two consecutive attempts, while Ep 72 (786 lines)
+# squeaked under it. Window the call so each request finishes well inside that.
+# Corner detection stays correct across windows: overlapping windows are resolved
+# by vote in classify_combined, and dedup_sticky collapses a transition that gets
+# reported in more than one window.
+# Kept small deliberately: per-window generation time varies a lot (measured 8s to
+# over 60s at window_size 60), and a window that runs long is a window that dies.
+[extensions.radio_discourse]
+scope = "windowed"
+window_size = 30
+window_overlap = 8
+
 [[format.normalizer.terms]]
 value = "セカラジ"
 explanation = "Show name (Project SEKAI RADIO). ASR variants to correct: セカラジオ, せかラジ, セカ・ラジ."
@@ -119,6 +133,19 @@ explanation = "Fan greeting portmanteau of こんばんは + モア (MORE MORE J
 [[format.normalizer.terms]]
 value = "コンニーゴ"
 explanation = "Fan greeting portmanteau of こんばんは + ニーゴ. ASR often drops the ン, producing コニーゴ."
+
+[[format.normalizer.terms]]
+value = "コンワンダホイ"
+explanation = """Fan greeting portmanteau of こんばんは + ワンダーホイ (Wonderlands×Showtime). \
+Apply ONLY when the ワンダホイ / わんだほい / ダホイ tail is actually present. ASR variants \
+seen: こんにどワンダホイ, こんにわんだほい, こんにどワンダ, こんばんはだほい. \
+A bare こんにちは, こんばんは or こんにど with no unit tail is an ordinary greeting — leave it \
+exactly as transcribed and do not shorten it to コン or extend it into a portmanteau."""
+
+# The greeting portmanteaus above are unit-specific, and the host pair rotates
+# every episode, so which ones can appear changes with it. When a new pair comes
+# from a unit that is not covered here, add its greeting rather than letting the
+# normalizer force listeners' greetings into one of the existing terms.
 
 # ---------------------------------------------------------------------------
 # No [[speakers.cast]] here on purpose. The host pair rotates every episode
