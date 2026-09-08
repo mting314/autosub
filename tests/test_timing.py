@@ -287,9 +287,14 @@ def test_pass2_small_gap_with_single_keyframe():
     assert result[1].start_time == 1.05
 
 
-def test_pass2_gap_with_multiple_keyframes():
-    # Gap 1.0 to 1.4 (400ms). Between 250 and 500 threshold.
-    # Keyframes at 1.1 and 1.3.
+def test_pass2_gap_with_multiple_keyframes_collapses_below_the_flash_floor():
+    """Spreading across two cuts is only allowed when the blank is legible.
+
+    Holding until the first cut and resuming at the last makes the blank line up
+    with a visual interlude, which is the point of the branch. But here the cuts
+    are 200ms apart, and a 200ms blank does not read as a deliberate pause — it
+    reads as the subtitle flashing. So both sides snap to the same cut instead.
+    """
     lines = [
         SubtitleLine(text="One", start_time=0.0, end_time=1.0, speaker=None),
         SubtitleLine(text="Two", start_time=1.4, end_time=2.4, speaker=None),
@@ -297,6 +302,22 @@ def test_pass2_gap_with_multiple_keyframes():
     keyframes = [1100, 1300]
     result = apply_timing_rules(
         lines, keyframes_ms=keyframes, conditional_snap_threshold_ms=500
+    )
+    assert result[0].end_time == 1.1
+    assert result[1].start_time == 1.1
+
+
+def test_pass2_multiple_keyframes_may_spread_when_the_floor_allows_it():
+    """The scene-aware spread survives where the resulting blank is readable."""
+    lines = [
+        SubtitleLine(text="One", start_time=0.0, end_time=1.0, speaker=None),
+        SubtitleLine(text="Two", start_time=1.4, end_time=2.4, speaker=None),
+    ]
+    result = apply_timing_rules(
+        lines,
+        keyframes_ms=[1100, 1300],
+        conditional_snap_threshold_ms=500,
+        min_gap_ms=150,
     )
     assert result[0].end_time == 1.1
     assert result[1].start_time == 1.3

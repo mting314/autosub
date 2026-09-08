@@ -288,6 +288,7 @@ def _apply_gap_snapping(
     keyframes: List[int],
     snap_threshold_ms: int,
     conditional_snap_threshold_ms: int,
+    min_gap_ms: int = 0,
 ) -> List[SegmentMS]:
     """Pass 2: Gaps"""
     for i in range(len(segments) - 1):
@@ -316,9 +317,16 @@ def _apply_gap_snapping(
                 k for k in keyframes if prev_seg.end_ms < k < next_seg.start_ms
             ]
             if kfs_in_gap:
-                # Multiple Keyframes in Gap
-                prev_seg.end_ms = kfs_in_gap[0]
-                next_seg.start_ms = kfs_in_gap[-1]
+                # Multiple Keyframes in Gap: hold until the first cut and resume
+                # at the last, so the blank lines up with the visual interlude —
+                # but only when that blank is long enough to read as deliberate.
+                # Otherwise it is just a flash, and both sides snap to one cut.
+                if kfs_in_gap[-1] - kfs_in_gap[0] >= min_gap_ms:
+                    prev_seg.end_ms = kfs_in_gap[0]
+                    next_seg.start_ms = kfs_in_gap[-1]
+                else:
+                    prev_seg.end_ms = kfs_in_gap[0]
+                    next_seg.start_ms = kfs_in_gap[0]
             else:
                 # Conditional Gap (no keyframes) - snap standard
                 half_gap = gap // 2
@@ -468,6 +476,47 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
     return resolved
 
 
+def _screen_gaps(spans) -> List[tuple]:
+    """Periods with no text anywhere, as (gap_ms, ends_at, resumes_at).
+
+    Slots are independent boxes, so two lines in different slots can be on
+    screen at once and a gap only exists where the merged coverage of every
+    line has a hole. Comparing consecutive lines pairwise would invent gaps
+    wherever concurrent speech happens to be ordered awkwardly.
+    """
+    order = sorted(spans, key=lambda item: (item.start_ms, item.end_ms))
+    merged: List[List[int]] = []
+    for span in order:
+        if merged and span.start_ms <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], span.end_ms)
+        else:
+            merged.append([span.start_ms, span.end_ms])
+    return [
+        (later[0] - earlier[1], earlier[1], later[0])
+        for earlier, later in zip(merged, merged[1:])
+    ]
+
+
+def _close_screen_gaps(segments, min_gap_ms: int):
+    """Close screen-empty gaps too short to read as a pause.
+
+    Across slots as well as within one: the viewer sees text vanish and return
+    a few frames later whichever box it came from.
+
+    Extending only ever reaches the start of the next line anywhere on screen,
+    and the next line in the same slot can only be at or after that, so this
+    cannot reopen a same-slot overlap.
+    """
+    if min_gap_ms <= 0 or len(segments) < 2:
+        return segments
+    for gap, ends_at, resumes_at in _screen_gaps(segments):
+        if 0 < gap < min_gap_ms:
+            for segment in segments:
+                if segment.end_ms == ends_at:
+                    segment.end_ms = resumes_at
+    return segments
+
+
 class DisplayViolation(NamedTuple):
     """One way the finished document breaks an on-screen timing rule."""
 
@@ -540,6 +589,8 @@ def check_display_invariants(
                     )
                 )
 
+        # Overlap stays per-slot: two lines in different boxes at once is the
+        # point of the overlay, not a defect.
         for earlier, later in zip(group, group[1:]):
             gap = round((later.start_time - earlier.end_time) * 1000)
             if gap < 0:
@@ -551,16 +602,32 @@ def check_display_invariants(
                         f"overlaps {later.id} by {-gap}ms in the same slot",
                     )
                 )
-            elif 0 < gap < gap_floor:
-                violations.append(
-                    DisplayViolation(
-                        "gap",
-                        earlier.id,
-                        earlier.start_time,
-                        f"{gap}ms gap before {later.id} — too short to read as a "
-                        f"pause, so the box blinks empty",
-                    )
+
+    # Gaps are global. A hand-off between speakers leaves the screen textless
+    # just as a same-slot gap does, so the rule is measured over the merged
+    # coverage of every rendering cue rather than slot by slot.
+    class _Span(NamedTuple):
+        start_ms: int
+        end_ms: int
+
+    spans = [
+        _Span(round(c.start_time * 1000), round(c.end_time * 1000))
+        for group in groups.values()
+        for c in group
+    ]
+    ends_at_cue = {round(c.end_time * 1000): c for group in groups.values() for c in group}
+    for gap, ends_at, resumes_at in _screen_gaps(spans):
+        if 0 < gap < gap_floor:
+            cue = ends_at_cue.get(ends_at)
+            violations.append(
+                DisplayViolation(
+                    "gap",
+                    cue.id if cue else "?",
+                    ends_at / 1000.0,
+                    f"{gap}ms with no text on screen before the next line — too "
+                    f"short to read as a pause",
                 )
+            )
 
     violations.sort(key=lambda item: (item.start_time, item.kind))
     return violations
@@ -576,6 +643,7 @@ def apply_timing_rules(
     interjection_max_duration_ms: int = 1000,
     interjection_merge_threshold_ms: int = 1500,
     interjection_gap_threshold_ms: int = 2000,
+    min_gap_ms: Optional[int] = None,
     per_speaker: bool = False,
     speaker_map: Optional[dict[str, dict]] = None,
 ) -> List[SubtitleLine]:
@@ -624,6 +692,7 @@ def apply_timing_rules(
                 keyframes,
                 snap_threshold_ms,
                 conditional_snap_threshold_ms,
+                min_duration_ms if min_gap_ms is None else min_gap_ms,
             )
             spk_segments = _apply_micro_snapping(
                 spk_segments, keyframes, snap_threshold_ms, video_duration_ms
@@ -645,12 +714,22 @@ def apply_timing_rules(
             segments, keyframes, video_duration_ms, min_duration_ms
         )
         segments = _apply_gap_snapping(
-            segments, keyframes, snap_threshold_ms, conditional_snap_threshold_ms
+            segments,
+            keyframes,
+            snap_threshold_ms,
+            conditional_snap_threshold_ms,
+            min_duration_ms if min_gap_ms is None else min_gap_ms,
         )
         segments = _apply_micro_snapping(
             segments, keyframes, snap_threshold_ms, video_duration_ms
         )
         segments = _prevent_slot_overlaps(segments, min_duration_ms)
+
+    # Across every slot, once each slot's own timing has settled. Per-slot passes
+    # cannot see a hole that opens when one speaker hands off to the other.
+    segments = _close_screen_gaps(
+        segments, min_duration_ms if min_gap_ms is None else min_gap_ms
+    )
 
     # Final Bounds Check
     for seg in segments:
