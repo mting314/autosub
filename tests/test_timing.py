@@ -6,7 +6,7 @@ from autosub.core.schemas import (
 )
 from autosub.pipeline.format.timing import (
     apply_timing_rules,
-    enforce_display_invariants,
+    check_display_invariants,
     _apply_min_duration_padding,
     _apply_gap_snapping,
     _apply_micro_snapping,
@@ -571,60 +571,103 @@ _SLOT_MAP = {
 }
 
 
-def test_invariants_separate_two_cues_sharing_a_slot():
+
+
+def test_check_reports_two_cues_sharing_a_slot():
     cues = [
         _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
         _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
     ]
 
-    settled = enforce_display_invariants(
-        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
-    )
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
 
-    assert len(settled) == 2
-    assert settled[0].end_time <= settled[1].start_time
-    for cue in settled:
-        assert (cue.end_time - cue.start_time) * 1000 >= 500
+    assert [v.kind for v in found] == ["overlap"]
+    assert "cue-00000002" in found[0].detail
 
 
-def test_invariants_keep_different_slots_concurrent():
-    """Two speakers talking at once is the point of the overlay, not a defect."""
+def test_check_allows_different_slots_to_be_concurrent():
+    """Two hosts talking at once is the point of the overlay, not a defect."""
     cues = [
         _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
         _cue("cue-00000002", 1.0, 4.0, "Liyuu"),
     ]
 
-    settled = enforce_display_invariants(
-        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
-    )
-
-    assert [(c.start_time, c.end_time) for c in settled] == [(0.0, 3.0), (1.0, 4.0)]
+    assert check_display_invariants(cues, speaker_map=_SLOT_MAP) == []
 
 
-def test_invariants_grow_a_short_cue_into_the_gap_after_it():
-    cues = [
-        _cue("cue-00000001", 0.0, 0.1, "Sayuri"),
-        _cue("cue-00000002", 5.0, 6.0, "Sayuri"),
+def test_check_reports_a_line_under_the_duration_floor():
+    cues = [_cue("cue-00000001", 0.0, 0.2, "Sayuri")]
+
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+
+    assert [v.kind for v in found] == ["duration"]
+    assert "200ms" in found[0].detail
+
+
+def test_check_reports_a_flash_gap_but_not_a_real_pause():
+    flash = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 2.05, 4.0, "Sayuri"),
+    ]
+    pause = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 3.0, 5.0, "Sayuri"),
+    ]
+    chained = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 2.0, 4.0, "Sayuri"),
     ]
 
-    settled = enforce_display_invariants(
-        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
-    )
-
-    assert settled[0].start_time == 0.0
-    assert (settled[0].end_time - settled[0].start_time) * 1000 >= 500
-    assert settled[0].end_time <= settled[1].start_time
+    assert [v.kind for v in check_display_invariants(flash, speaker_map=_SLOT_MAP)] == [
+        "gap"
+    ]
+    assert check_display_invariants(pause, speaker_map=_SLOT_MAP) == []
+    assert check_display_invariants(chained, speaker_map=_SLOT_MAP) == []
 
 
-def test_invariants_route_many_labels_for_one_person_to_one_slot():
+def test_check_treats_many_labels_for_one_person_as_one_slot():
     """A speaker map is many-to-one; two labels for one person share a box."""
     cues = [
         _cue("cue-00000001", 0.0, 3.0, "0"),
         _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
     ]
 
-    settled = enforce_display_invariants(
-        cues, speaker_map=_SLOT_MAP, min_duration_ms=500
-    )
+    assert [v.kind for v in check_display_invariants(cues, speaker_map=_SLOT_MAP)] == [
+        "overlap"
+    ]
 
-    assert settled[0].end_time <= settled[1].start_time
+
+def test_check_ignores_cues_that_render_nothing():
+    """A textless cue cannot flash, overlap or be too brief."""
+    cues = [
+        _cue("cue-00000001", 0.0, 0.1, "Sayuri", text=""),
+        _cue("cue-00000002", 0.05, 0.2, "Sayuri", text=""),
+    ]
+
+    assert check_display_invariants(cues, speaker_map=_SLOT_MAP) == []
+
+
+def test_check_never_mutates_the_document():
+    """The whole point: format owns the rules, this only reports."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+        _cue("cue-00000003", 4.05, 4.2, "Sayuri"),
+    ]
+    before = [(c.start_time, c.end_time, c.final_text) for c in cues]
+
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+
+    assert found  # it did find problems
+    assert [(c.start_time, c.end_time, c.final_text) for c in cues] == before
+    assert len(cues) == 3
+def test_overlap_resolution_chains_rather_than_leaving_a_sliver():
+    """Truncating the earlier line must land exactly on the later line's start."""
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=3.0, speaker="A"),
+        SubtitleLine(text="Second", start_time=2.0, end_time=4.0, speaker="A"),
+    ]
+    resolved = _prevent_slot_overlaps([SegmentMS(x) for x in lines], min_duration_ms=500)
+
+    assert len(resolved) == 2
+    assert resolved[0].end_ms == resolved[1].start_ms

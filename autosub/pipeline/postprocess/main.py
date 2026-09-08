@@ -6,9 +6,12 @@ from pathlib import Path
 
 from autosub.core.schemas import SubtitleDocument
 from autosub.pipeline.format.generator import render_ass_document
-from autosub.pipeline.format.timing import enforce_display_invariants
+from autosub.pipeline.format.timing import check_display_invariants
 
 logger = logging.getLogger(__name__)
+
+# Enough to see the shape of a regression without burying the rest of the log.
+_MAX_LOGGED_VIOLATIONS = 20
 
 QUOTE_CHARS = {'"', "“", "”"}
 LINE_BREAK_RE = re.compile(r"(\\N|\\n|\r\n|\n|\r)")
@@ -46,28 +49,27 @@ def postprocess_subtitles(
         if _apply_radio_discourse_postprocess(processed):
             logger.info("Postprocessing modified subtitle document.")
 
-    if speaker_map:
-        # Only for overlay projects. Translation reflows and splits cues after the
-        # format stage set the timing, so the slot rules have to be re-checked
-        # against the cues that actually ship.
-        settled = enforce_display_invariants(
-            processed.cues,
-            speaker_map=speaker_map,
-            min_duration_ms=min_duration_ms,
+    # Read-only. apply_timing_rules owns these rules; this only reports when the
+    # document that ships no longer satisfies them, which means something between
+    # format and here regressed. Repairing it silently here would duplicate the
+    # decision and hide the upstream cause.
+    violations = check_display_invariants(
+        processed.cues,
+        speaker_map=speaker_map,
+        min_duration_ms=min_duration_ms,
+    )
+    if violations:
+        logger.warning(
+            "%d display invariant violation(s) in the finished document — these "
+            "will be visible on screen and want fixing upstream, not here:",
+            len(violations),
         )
-        changed = sum(
-            1
-            for before, after in zip(processed.cues, settled, strict=False)
-            if (before.start_time, before.end_time)
-            != (after.start_time, after.end_time)
-        )
-        if changed or len(settled) != len(processed.cues):
-            logger.info(
-                "Display invariants retimed %d cue(s) and merged %d.",
-                changed,
-                len(processed.cues) - len(settled),
+        for violation in violations[:_MAX_LOGGED_VIOLATIONS]:
+            logger.warning("  %s", violation)
+        if len(violations) > _MAX_LOGGED_VIOLATIONS:
+            logger.warning(
+                "  ... and %d more.", len(violations) - _MAX_LOGGED_VIOLATIONS
             )
-        processed.cues = settled
 
     logger.info(f"Writing postprocessed JSON to {output_json_path}...")
     output_json_path.write_text(processed.model_dump_json(indent=2), encoding="utf-8")

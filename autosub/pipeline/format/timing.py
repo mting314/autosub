@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from autosub.core.schemas import (
     ReplacementSpan,
@@ -8,8 +8,9 @@ from autosub.core.schemas import (
 )
 from autosub.core.speaker_map import build_slot_lookup
 
-# Breathing room left between two lines that share the same on-screen slot.
-SLOT_OVERLAP_GAP_MS = 50
+# There is deliberately no "breathing room" constant for two lines sharing a slot.
+# A short gap blinks the box empty for a few frames and reads as a flash, so a
+# same-slot pair either chains exactly or is far enough apart to be a real pause.
 
 
 def _original_text_length(text: str, spans: list[ReplacementSpan]) -> int:
@@ -441,7 +442,10 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
             resolved.append(segment)
             continue
 
-        truncated_end = segment.start_ms - SLOT_OVERLAP_GAP_MS
+        # Chain exactly: the earlier line ends on the frame the later one starts.
+        # Leaving a small gap here would blink the box empty for a few frames,
+        # which reads as a flash — worse than either a clean swap or a real pause.
+        truncated_end = segment.start_ms
         if (
             truncated_end > previous.start_ms
             and truncated_end - previous.start_ms >= min_duration_ms
@@ -451,7 +455,7 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
             continue
 
         if min_duration_ms:
-            delayed_start = previous.end_ms + SLOT_OVERLAP_GAP_MS
+            delayed_start = previous.end_ms
             if segment.end_ms - delayed_start >= min_duration_ms:
                 segment.start_ms = delayed_start
                 resolved.append(segment)
@@ -464,79 +468,102 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
     return resolved
 
 
-class _CueSpan:
-    """Adapter letting cue timing run through the same passes as render lines.
+class DisplayViolation(NamedTuple):
+    """One way the finished document breaks an on-screen timing rule."""
 
-    _prevent_slot_overlaps only needs text/start_ms/end_ms, so cues borrow it
-    rather than growing a second copy of the precedence rules.
-    """
+    kind: str  # "duration" | "overlap" | "gap"
+    cue_id: str
+    start_time: float
+    detail: str
 
-    def __init__(self, cue: SubtitleCue, text_field: str):
-        self.cue = cue
-        self.text_field = text_field
-        self.text = getattr(cue, text_field) or ""
-        self.start_ms = int(round(cue.start_time * 1000))
-        self.end_ms = int(round(cue.end_time * 1000))
-
-    def to_cue(self) -> SubtitleCue:
-        return self.cue.model_copy(
-            update={
-                "start_time": self.start_ms / 1000.0,
-                "end_time": self.end_ms / 1000.0,
-                self.text_field: self.text,
-            }
-        )
+    def __str__(self) -> str:
+        stamp = f"{int(self.start_time // 60):02d}:{self.start_time % 60:05.2f}"
+        return f"{stamp} [{self.kind}] {self.cue_id}: {self.detail}"
 
 
-def _pad_to_min_duration(spans: List[_CueSpan], min_duration_ms: int) -> List[_CueSpan]:
-    """Grow short lines forward into the empty space that follows them.
-
-    Only forward: the spans are already free of overlap within their slot, and
-    pulling a start earlier could reopen one against a line this pass has already
-    settled.
-    """
-    for index, span in enumerate(spans):
-        shortfall = min_duration_ms - (span.end_ms - span.start_ms)
-        if shortfall <= 0:
-            continue
-        wanted = span.end_ms + shortfall
-        if index + 1 < len(spans):
-            wanted = min(wanted, spans[index + 1].start_ms - SLOT_OVERLAP_GAP_MS)
-        span.end_ms = max(span.end_ms, wanted)
-    return spans
-
-
-def enforce_display_invariants(
+def check_display_invariants(
     cues: List[SubtitleCue],
     *,
     speaker_map: Optional[dict[str, dict]] = None,
     min_duration_ms: int = 500,
+    min_gap_ms: Optional[int] = None,
     text_field: str = "final_text",
-) -> List[SubtitleCue]:
-    """Re-assert the on-screen timing rules over a finished document.
+) -> List[DisplayViolation]:
+    """Report where a finished document breaks the on-screen timing rules.
 
-    apply_timing_rules runs at format time against the Japanese lines. Translation
-    reflows those lines and splits the ones that will not fit their box, so by the
-    time the document reaches the file that ships, neither guarantee it made — no
-    line under min_duration_ms, and never two lines sharing a slot at once — still
-    holds. Checking again here is what makes them true of the output.
+    1. no line on screen for less than min_duration_ms,
+    2. never two lines sharing a slot at once,
+    3. no gap within a slot short enough to read as a flash — a same-slot pair
+       either chains exactly or is at least min_gap_ms apart, never in between.
+
+    This deliberately reports rather than repairs. apply_timing_rules already owns
+    these rules and enforces them with far more context — keyframes, video
+    duration, the whole timing model — so a second pass that quietly re-times cues
+    would duplicate the decision and could override a considered one with a
+    blunter version of itself. Worse, it would absorb upstream bugs silently: the
+    50ms gap this module used to insert after an overlap fix went unnoticed
+    precisely because it looked like something a repair pass would tidy up.
+
+    A violation here means something upstream regressed, which is worth surfacing
+    rather than papering over.
+
+    min_gap_ms defaults to min_duration_ms: a gap too short to have been a
+    readable line is also too short to register as a deliberate pause.
     """
     if not cues:
         return []
 
+    gap_floor = min_duration_ms if min_gap_ms is None else min_gap_ms
     slot_lookup = build_slot_lookup(speaker_map)
-    groups: dict[Optional[str], List[_CueSpan]] = {}
+
+    groups: dict[Optional[str], List[SubtitleCue]] = {}
     for cue in cues:
+        # A cue that renders nothing cannot flash, overlap or be too brief.
+        if not (getattr(cue, text_field, None) or "").strip():
+            continue
         key = slot_key_for_speaker(cue.speaker, slot_lookup)
-        groups.setdefault(key, []).append(_CueSpan(cue, text_field))
+        groups.setdefault(key, []).append(cue)
 
-    resolved: List[_CueSpan] = []
-    for spans in groups.values():
-        spans = _prevent_slot_overlaps(spans, min_duration_ms)
-        resolved.extend(_pad_to_min_duration(spans, min_duration_ms))
+    violations: List[DisplayViolation] = []
+    for group in groups.values():
+        group.sort(key=lambda cue: (cue.start_time, cue.end_time))
 
-    resolved.sort(key=lambda span: (span.start_ms, span.end_ms))
-    return [span.to_cue() for span in resolved]
+        for cue in group:
+            shown_ms = round((cue.end_time - cue.start_time) * 1000)
+            if shown_ms < min_duration_ms:
+                violations.append(
+                    DisplayViolation(
+                        "duration",
+                        cue.id,
+                        cue.start_time,
+                        f"on screen {shown_ms}ms, under the {min_duration_ms}ms floor",
+                    )
+                )
+
+        for earlier, later in zip(group, group[1:]):
+            gap = round((later.start_time - earlier.end_time) * 1000)
+            if gap < 0:
+                violations.append(
+                    DisplayViolation(
+                        "overlap",
+                        earlier.id,
+                        earlier.start_time,
+                        f"overlaps {later.id} by {-gap}ms in the same slot",
+                    )
+                )
+            elif 0 < gap < gap_floor:
+                violations.append(
+                    DisplayViolation(
+                        "gap",
+                        earlier.id,
+                        earlier.start_time,
+                        f"{gap}ms gap before {later.id} — too short to read as a "
+                        f"pause, so the box blinks empty",
+                    )
+                )
+
+    violations.sort(key=lambda item: (item.start_time, item.kind))
+    return violations
 
 
 def apply_timing_rules(
