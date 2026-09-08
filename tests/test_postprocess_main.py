@@ -365,7 +365,12 @@ def test_ensure_quoted_preserves_duplicate_quotes_at_interior_visual_line_edges(
 
 
 def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
-    """Postprocess owns the finished file, so it makes it satisfy the rules."""
+    """Postprocess owns the finished file, so it makes it satisfy the rules.
+
+    Gaps are closed within a box only. A hand-off to the other box leaves no
+    visible hole, and closing it would just hold the previous speaker's line
+    past where they stopped talking.
+    """
     input_path = tmp_path / "translated.json"
     output_path = tmp_path / "postprocessed.json"
     _write_translated_document(
@@ -376,14 +381,20 @@ def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
                 speaker="Date Sayuri", source_text="ソース",
                 translated_text="[CORNER: Opening] Good evening.",
             ),
-            # 120ms hand-off to the other slot: a flash, must close
+            # 120ms gap in the SAME box: the box blinks, must close
             SubtitleCue(
                 id="cue-00000002", start_time=2.12, end_time=4.0,
+                speaker="Date Sayuri", source_text="ソース",
+                translated_text="Still me.",
+            ),
+            # 150ms hand-off to the OTHER box: left alone
+            SubtitleCue(
+                id="cue-00000003", start_time=4.15, end_time=6.0,
                 speaker="Liyuu", source_text="ソース", translated_text="Hello there.",
             ),
             # a real pause, must survive
             SubtitleCue(
-                id="cue-00000003", start_time=6.0, end_time=8.0,
+                id="cue-00000004", start_time=8.0, end_time=10.0,
                 speaker="Liyuu", source_text="ソース", translated_text="Later on.",
             ),
         ],
@@ -401,9 +412,11 @@ def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
         output_path.read_text(encoding="utf-8")
     )
     assert doc.cues[0].final_text == "Good evening."
-    assert doc.cues[0].end_time == doc.cues[1].start_time   # flash closed
-    assert doc.cues[1].end_time == 4.0                       # real pause kept
-    assert doc.cues[2].start_time == 6.0
+    assert doc.cues[0].end_time == doc.cues[1].start_time   # same-slot blink closed
+    assert doc.cues[1].end_time == 4.0                       # hand-off left precise
+    assert doc.cues[2].start_time == 4.15
+    assert doc.cues[2].end_time == 6.0                       # real pause kept
+    assert doc.cues[3].start_time == 8.0
 
 
 def test_postprocess_rerun_brings_an_older_document_up_to_date(tmp_path):
