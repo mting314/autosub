@@ -4,9 +4,12 @@ import logging
 import re
 from pathlib import Path
 
-from autosub.core.schemas import SubtitleDocument
+from autosub.core.schemas import SubtitleCue, SubtitleDocument
 from autosub.pipeline.format.generator import render_ass_document
-from autosub.pipeline.format.timing import check_display_invariants
+from autosub.pipeline.format.timing import (
+    _close_screen_gaps,
+    check_display_invariants,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,34 @@ _MAX_LOGGED_VIOLATIONS = 20
 
 QUOTE_CHARS = {'"', "“", "”"}
 LINE_BREAK_RE = re.compile(r"(\\N|\\n|\r\n|\n|\r)")
+# Written into the line by the translator, which is asked to prepend it so segment
+# boundaries are visible while translating. Translate strips it before measuring
+# line widths; repeated here so a document from an older run can be fixed by
+# re-running this stage rather than the whole pipeline.
+CORNER_MARKER_RE = re.compile(r"^((?:\{[^}]*\})*)\s*\[CORNER:[^\]]*\]\s*")
+
+
+class _CueSpan:
+    """Adapter exposing the start_ms/end_ms that the timing passes work in."""
+
+    def __init__(self, cue: SubtitleCue):
+        self.cue = cue
+        self.start_ms = round(cue.start_time * 1000)
+        self.end_ms = round(cue.end_time * 1000)
+
+
+def _strip_corner_markers(document: SubtitleDocument) -> int:
+    stripped = 0
+    for cue in document.cues:
+        for field in ("translated_text", "final_text"):
+            value = getattr(cue, field, None)
+            if not value:
+                continue
+            cleaned = CORNER_MARKER_RE.sub(r"\1", value)
+            if cleaned != value:
+                setattr(cue, field, cleaned)
+                stripped += 1
+    return stripped
 
 
 def postprocess_subtitles(
@@ -25,7 +56,14 @@ def postprocess_subtitles(
     bilingual: bool = True,
     speaker_map: dict[str, dict] | None = None,
     min_duration_ms: int = 500,
+    min_gap_ms: int | None = None,
 ) -> None:
+    """Produce the file that ships, and make it satisfy the on-screen rules.
+
+    This is the stage that owns the finished output, so re-running it on an older
+    document is also how such a document is brought up to date — no
+    re-transcribing, no re-translating, and any manual QC in the text survives.
+    """
     if output_json_path is None:
         output_json_path = input_json_path.with_name("postprocessed.json")
     if output_ass_path is None:
@@ -43,25 +81,50 @@ def postprocess_subtitles(
     for cue in processed.cues:
         cue.final_text = cue.final_text or cue.translated_text
 
+    stripped = _strip_corner_markers(processed)
+    if stripped:
+        logger.info(
+            "Removed the [CORNER: ...] prefix from %d line(s); the boundary is "
+            "carried by cue.corner and the rendered corner comments.",
+            stripped,
+        )
+
     extensions_config = extensions_config or {}
     radio_discourse_config = extensions_config.get("radio_discourse", {})
     if radio_discourse_config.get("enabled"):
         if _apply_radio_discourse_postprocess(processed):
             logger.info("Postprocessing modified subtitle document.")
 
-    # Read-only. apply_timing_rules owns these rules; this only reports when the
-    # document that ships no longer satisfies them, which means something between
-    # format and here regressed. Repairing it silently here would duplicate the
-    # decision and hide the upstream cause.
+    # Close gaps too short to read as a pause, measured across every slot. This
+    # only settles once translation has finished splitting and reflowing cues,
+    # which is why it lives here rather than in apply_timing_rules.
+    gap_floor = min_duration_ms if min_gap_ms is None else min_gap_ms
+    spans = [
+        _CueSpan(cue)
+        for cue in processed.cues
+        if (cue.final_text or "").strip()
+    ]
+    before = [span.end_ms for span in spans]
+    _close_screen_gaps(spans, gap_floor)
+    extended = 0
+    for span, was in zip(spans, before):
+        if span.end_ms != was:
+            span.cue.end_time = span.end_ms / 1000.0
+            extended += 1
+    if extended:
+        logger.info("Extended %d line(s) to close sub-%dms gaps.", extended, gap_floor)
+
+    # Whatever the repairs could not settle is a regression upstream, so say so
+    # rather than leaving it silent.
     violations = check_display_invariants(
         processed.cues,
         speaker_map=speaker_map,
         min_duration_ms=min_duration_ms,
+        min_gap_ms=gap_floor,
     )
     if violations:
         logger.warning(
-            "%d display invariant violation(s) in the finished document — these "
-            "will be visible on screen and want fixing upstream, not here:",
+            "%d display invariant violation(s) remain in the finished document:",
             len(violations),
         )
         for violation in violations[:_MAX_LOGGED_VIOLATIONS]:

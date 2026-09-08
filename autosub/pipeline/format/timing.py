@@ -725,11 +725,9 @@ def apply_timing_rules(
         )
         segments = _prevent_slot_overlaps(segments, min_duration_ms)
 
-    # Across every slot, once each slot's own timing has settled. Per-slot passes
-    # cannot see a hole that opens when one speaker hands off to the other.
-    segments = _close_screen_gaps(
-        segments, min_duration_ms if min_gap_ms is None else min_gap_ms
-    )
+    # Screen-level gaps are deliberately not closed here. They can only be settled
+    # once translation has finished reshaping the cues, so postprocess owns that
+    # rule; closing it here too would mean the same decision in two places.
 
     # Final Bounds Check
     for seg in segments:

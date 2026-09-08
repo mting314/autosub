@@ -362,3 +362,88 @@ def test_ensure_quoted_preserves_duplicate_quotes_at_interior_visual_line_edges(
     text = r'"aaaa"\N""bbbb""\N"cccc"'
 
     assert _ensure_quoted(text) == r'"aaaa"\N""bbbb""\N"cccc"'
+
+
+def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
+    """Postprocess owns the finished file, so it makes it satisfy the rules."""
+    input_path = tmp_path / "translated.json"
+    output_path = tmp_path / "postprocessed.json"
+    _write_translated_document(
+        input_path,
+        [
+            SubtitleCue(
+                id="cue-00000001", start_time=0.0, end_time=2.0,
+                speaker="Date Sayuri", source_text="ソース",
+                translated_text="[CORNER: Opening] Good evening.",
+            ),
+            # 120ms hand-off to the other slot: a flash, must close
+            SubtitleCue(
+                id="cue-00000002", start_time=2.12, end_time=4.0,
+                speaker="Liyuu", source_text="ソース", translated_text="Hello there.",
+            ),
+            # a real pause, must survive
+            SubtitleCue(
+                id="cue-00000003", start_time=6.0, end_time=8.0,
+                speaker="Liyuu", source_text="ソース", translated_text="Later on.",
+            ),
+        ],
+    )
+
+    postprocess_subtitles(
+        input_path,
+        output_json_path=output_path,
+        output_ass_path=tmp_path / "final.ass",
+        bilingual=False,
+        speaker_map=_slot_speaker_map(),
+    )
+
+    doc = SubtitleDocument.model_validate_json(
+        output_path.read_text(encoding="utf-8")
+    )
+    assert doc.cues[0].final_text == "Good evening."
+    assert doc.cues[0].end_time == doc.cues[1].start_time   # flash closed
+    assert doc.cues[1].end_time == 4.0                       # real pause kept
+    assert doc.cues[2].start_time == 6.0
+
+
+def test_postprocess_rerun_brings_an_older_document_up_to_date(tmp_path):
+    """Re-running this stage is how a pre-rule episode is migrated.
+
+    No new command for it: the stage that owns the finished file is the one that
+    can bring an old one up to current output rules.
+    """
+    first = tmp_path / "translated.json"
+    _write_translated_document(
+        first,
+        [
+            SubtitleCue(
+                id="cue-00000001", start_time=0.0, end_time=2.0,
+                speaker="Date Sayuri", source_text="ソース",
+                translated_text="[CORNER: Song] Stale output.",
+            ),
+            SubtitleCue(
+                id="cue-00000002", start_time=2.2, end_time=4.0,
+                speaker="Liyuu", source_text="ソース", translated_text="Next line.",
+            ),
+        ],
+    )
+    once = tmp_path / "pass1.json"
+    postprocess_subtitles(first, output_json_path=once,
+                          output_ass_path=tmp_path / "a.ass", bilingual=False,
+                          speaker_map=_slot_speaker_map())
+
+    # Feed the result back in, as a migration of an old episode would.
+    doc = SubtitleDocument.model_validate_json(once.read_text(encoding="utf-8"))
+    doc.stage = "translated"
+    again_in = tmp_path / "again.json"
+    again_in.write_text(doc.model_dump_json(indent=2), encoding="utf-8")
+    twice = tmp_path / "pass2.json"
+    postprocess_subtitles(again_in, output_json_path=twice,
+                          output_ass_path=tmp_path / "b.ass", bilingual=False,
+                          speaker_map=_slot_speaker_map())
+
+    a = SubtitleDocument.model_validate_json(once.read_text(encoding="utf-8"))
+    b = SubtitleDocument.model_validate_json(twice.read_text(encoding="utf-8"))
+    assert [(c.start_time, c.end_time, c.final_text) for c in a.cues] == \
+           [(c.start_time, c.end_time, c.final_text) for c in b.cues]
+    assert a.cues[0].final_text == "Stale output."
