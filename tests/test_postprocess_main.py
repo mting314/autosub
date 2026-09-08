@@ -367,9 +367,9 @@ def test_ensure_quoted_preserves_duplicate_quotes_at_interior_visual_line_edges(
 def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
     """Postprocess owns the finished file, so it makes it satisfy the rules.
 
-    Gaps are closed within a box only. A hand-off to the other box leaves no
-    visible hole, and closing it would just hold the previous speaker's line
-    past where they stopped talking.
+    Gaps close across slots as well as within one, but only ever by moving an
+    END. A start has to land on the speech or the subtitle reads as out of sync;
+    an end does not.
     """
     input_path = tmp_path / "translated.json"
     output_path = tmp_path / "postprocessed.json"
@@ -413,10 +413,12 @@ def test_postprocess_strips_corner_markers_and_closes_short_gaps(tmp_path):
     )
     assert doc.cues[0].final_text == "Good evening."
     assert doc.cues[0].end_time == doc.cues[1].start_time   # same-slot blink closed
-    assert doc.cues[1].end_time == 4.0                       # hand-off left precise
-    assert doc.cues[2].start_time == 4.15
+    assert doc.cues[1].end_time == doc.cues[2].start_time   # hand-off closed too
     assert doc.cues[2].end_time == 6.0                       # real pause kept
     assert doc.cues[3].start_time == 8.0
+
+    # The rule is only safe because it never moves a start.
+    assert [c.start_time for c in doc.cues] == [0.0, 2.12, 4.15, 8.0]
 
 
 def test_postprocess_rerun_brings_an_older_document_up_to_date(tmp_path):

@@ -6,11 +6,9 @@ from pathlib import Path
 
 from autosub.core.schemas import SubtitleCue, SubtitleDocument
 from autosub.pipeline.format.generator import render_ass_document
-from autosub.core.speaker_map import build_slot_lookup
 from autosub.pipeline.format.timing import (
-    _close_slot_gaps,
+    _close_screen_gaps,
     check_display_invariants,
-    slot_key_for_speaker,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,37 +95,24 @@ def postprocess_subtitles(
         if _apply_radio_discourse_postprocess(processed):
             logger.info("Postprocessing modified subtitle document.")
 
-    # Close gaps too short to read as a pause, within each slot. This only
+    # Close gaps too short to read as a pause, across every slot. This only
     # settles once translation has finished splitting and reflowing cues, which
     # is why it lives here rather than in apply_timing_rules.
     #
-    # Scoped to one box on purpose. A hand-off between slots leaves no visible
-    # hole — one box empties as another fills, and the backdrop bars are there
-    # regardless — so closing those would only hold the previous speaker's line
-    # past where they stopped talking, at real cost to how well the subtitle
-    # tracks the audio.
+    # This moves ends and never starts. A start has to land on the speech or the
+    # subtitle reads as out of sync; an end does not, so holding a line until
+    # the next one appears costs nothing a viewer can see.
     gap_floor = min_duration_ms if min_gap_ms is None else min_gap_ms
-    slot_lookup = build_slot_lookup(speaker_map)
-    by_slot: dict[object, list[_CueSpan]] = {}
-    for cue in processed.cues:
-        if (cue.final_text or "").strip():
-            key = slot_key_for_speaker(cue.speaker, slot_lookup)
-            by_slot.setdefault(key, []).append(_CueSpan(cue))
-
+    spans = [_CueSpan(cue) for cue in processed.cues if (cue.final_text or "").strip()]
+    before = [span.end_ms for span in spans]
+    _close_screen_gaps(spans, gap_floor)
     extended = 0
-    for spans in by_slot.values():
-        before = [span.end_ms for span in spans]
-        _close_slot_gaps(spans, gap_floor)
-        for span, was in zip(spans, before):
-            if span.end_ms != was:
-                span.cue.end_time = span.end_ms / 1000.0
-                extended += 1
+    for span, was in zip(spans, before):
+        if span.end_ms != was:
+            span.cue.end_time = span.end_ms / 1000.0
+            extended += 1
     if extended:
-        logger.info(
-            "Extended %d line(s) to close sub-%dms gaps within a slot.",
-            extended,
-            gap_floor,
-        )
+        logger.info("Extended %d line(s) to close sub-%dms gaps.", extended, gap_floor)
 
     # Whatever the repairs could not settle is a regression upstream, so say so
     # rather than leaving it silent.

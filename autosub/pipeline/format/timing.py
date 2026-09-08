@@ -476,36 +476,42 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
     return resolved
 
 
-def _slot_gaps(spans) -> List[tuple]:
-    """Gaps within one box, as (gap_ms, ends_at, resumes_at).
+def _screen_gaps(spans) -> List[tuple]:
+    """Periods with no text anywhere, as (gap_ms, ends_at, resumes_at).
 
-    Callers must pass a group of lines that all render in the same slot. Two
-    lines in different boxes are independent, so a hand-off between them is not
-    a gap in either box.
+    Slots are independent boxes, so lines in different slots can be on screen at
+    once and a gap only exists where the merged coverage of every line has a
+    hole. Comparing consecutive lines pairwise would invent gaps wherever
+    concurrent speech happens to be ordered awkwardly.
     """
     order = sorted(spans, key=lambda item: (item.start_ms, item.end_ms))
+    merged: List[List[int]] = []
+    for span in order:
+        if merged and span.start_ms <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], span.end_ms)
+        else:
+            merged.append([span.start_ms, span.end_ms])
     return [
-        (later.start_ms - earlier.end_ms, earlier.end_ms, later.start_ms)
-        for earlier, later in zip(order, order[1:])
+        (later[0] - earlier[1], earlier[1], later[0])
+        for earlier, later in zip(merged, merged[1:])
     ]
 
 
-def _close_slot_gaps(spans, min_gap_ms: int):
-    """Close gaps within a box that are too short to read as a pause.
+def _close_screen_gaps(spans, min_gap_ms: int):
+    """Close gaps too short to read as a pause, across every slot.
 
-    Deliberately scoped to one slot. Across slots nothing blinks — one box
-    empties while another fills, and the backdrop bars stay put either way — so
-    closing those would only stretch the previous speaker's line past the point
-    they stopped talking. Measured over a real episode that cost 182ms of
-    accuracy per line on average, and up to half a second, in exchange for
-    hiding a hand-off pause the viewer cannot see.
+    Only ever moves an END, never a START, and that asymmetry is the whole
+    reason this is safe. A start has to land on the speech or the subtitle reads
+    as out of sync; an end does not, and holding a line a little longer is
+    ordinary subtitling practice — it is what minimum-duration rules do too.
 
-    Within one box it is different: the same box goes empty and refills, which
-    reads as a flash.
+    So a line is extended to meet whatever comes next on screen. Extending
+    reaches at most the next line's start, which is at or before the next line
+    in the same slot, so it cannot open a same-slot overlap.
     """
     if min_gap_ms <= 0 or len(spans) < 2:
         return spans
-    for gap, ends_at, resumes_at in _slot_gaps(spans):
+    for gap, ends_at, resumes_at in _screen_gaps(spans):
         if 0 < gap < min_gap_ms:
             for span in spans:
                 if span.end_ms == ends_at:
@@ -599,21 +605,34 @@ def check_display_invariants(
                     )
                 )
 
-        # Gaps are per-slot too. Across boxes nothing blinks, and closing those
-        # only stretches the previous speaker's line past where they stopped
-        # talking, which costs more accuracy than the unseen pause is worth.
-        for earlier, later in zip(group, group[1:]):
-            gap = round((later.start_time - earlier.end_time) * 1000)
-            if 0 < gap < gap_floor:
-                violations.append(
-                    DisplayViolation(
-                        "gap",
-                        earlier.id,
-                        earlier.start_time,
-                        f"{gap}ms gap before {later.id} in the same slot — the box "
-                        f"blinks empty",
-                    )
+    # Gaps are measured across every slot, over the merged coverage of the
+    # rendering cues: a hand-off leaves the screen textless just as a same-slot
+    # gap does. Closing one only ever lengthens the earlier line, which is
+    # harmless — it is the start that has to land on the speech.
+    class _Span(NamedTuple):
+        start_ms: int
+        end_ms: int
+
+    spans = [
+        _Span(round(c.start_time * 1000), round(c.end_time * 1000))
+        for group in groups.values()
+        for c in group
+    ]
+    ends_at_cue = {
+        round(c.end_time * 1000): c for group in groups.values() for c in group
+    }
+    for gap, ends_at, resumes_at in _screen_gaps(spans):
+        if 0 < gap < gap_floor:
+            cue = ends_at_cue.get(ends_at)
+            violations.append(
+                DisplayViolation(
+                    "gap",
+                    cue.id if cue else "?",
+                    ends_at / 1000.0,
+                    f"{gap}ms with no text on screen before the next line — too "
+                    f"short to read as a pause",
                 )
+            )
 
     violations.sort(key=lambda item: (item.start_time, item.kind))
     return violations
