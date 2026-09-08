@@ -231,6 +231,14 @@ def translate_subtitles(
     # document carries the wraps and splits rather than only the .ass. A script is
     # built first purely for its per-style capacities, which do not exist until the
     # styles have been generated.
+    stripped = _strip_corner_markers(translated_document.cues)
+    if stripped:
+        logger.info(
+            "Removed the [CORNER: ...] prefix from %d line(s); the boundary is "
+            "already carried by cue.corner and the rendered corner comments.",
+            stripped,
+        )
+
     # splits index into cues_to_translate, which has the empty cues filtered out,
     # so record the boundaries by cue id and resolve them to indices afterwards.
     boundary_cue_ids = (
@@ -601,6 +609,33 @@ def _line_capacities(script: pyass.Script) -> dict[str, int]:
             getattr(style, "fontName", None),
         )
     return capacities
+
+
+_CORNER_MARKER_RE = re.compile(r"^((?:\{[^}]*\})*)\s*\[CORNER:[^\]]*\]\s*")
+
+
+def _strip_corner_markers(cues: list[SubtitleCue]) -> int:
+    """Drop the [CORNER: x] prefix the translator is asked to prepend.
+
+    The prompt asks for it so segment boundaries are visible while translating,
+    but it is prose the LLM writes into the line, not metadata, so it renders on
+    screen. The boundary is already recorded twice over — as cue.corner, and as
+    the non-rendering "=== Corner: x ===" comment the generator emits — so
+    nothing is lost by removing it.
+
+    Done here rather than at postprocess because the marker is ~25 characters
+    that would otherwise count against the line's width budget and force a wrap
+    or a split the real line does not need.
+    """
+    stripped = 0
+    for cue in cues:
+        if not cue.translated_text:
+            continue
+        cleaned = _CORNER_MARKER_RE.sub(r"\1", cue.translated_text)
+        if cleaned != cue.translated_text:
+            cue.translated_text = cleaned
+            stripped += 1
+    return stripped
 
 
 def _chunk_boundary_indices(

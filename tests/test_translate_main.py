@@ -1213,3 +1213,42 @@ def test_line_breaking_survives_into_the_final_ass(tmp_path, monkeypatch):
     )
 
     assert r"\N" in final_ass_path.read_text(encoding="utf-8")
+
+
+def test_corner_marker_prefix_is_stripped_from_the_translation():
+    """The prompt asks for [CORNER: x]; it is prose, not metadata, so it renders.
+
+    The boundary survives as cue.corner and as the generator's non-rendering
+    corner comment, so removing it from the text loses nothing.
+    """
+    from autosub.pipeline.translate.main import _strip_corner_markers
+
+    cues = [
+        _cue("[CORNER: Opening Talk] Good evening.", cue_id="cue-00000001"),
+        _cue("{\\pos(330,270)}[CORNER: Song] Leading tag kept.", cue_id="cue-00000002"),
+        _cue("Ordinary line.", cue_id="cue-00000003"),
+        _cue("Mid-line [CORNER: Nope] stays.", cue_id="cue-00000004"),
+    ]
+
+    assert _strip_corner_markers(cues) == 2
+    assert cues[0].translated_text == "Good evening."
+    assert cues[1].translated_text == "{\\pos(330,270)}Leading tag kept."
+    assert cues[2].translated_text == "Ordinary line."
+    assert cues[3].translated_text == "Mid-line [CORNER: Nope] stays."
+
+
+def test_corner_marker_is_stripped_before_the_width_budget_is_measured():
+    """~25 characters of marker must not force a wrap the real line would not."""
+    from autosub.pipeline.translate.main import _lay_out_cue, _strip_corner_markers
+
+    text = "[CORNER: Card Illustrations] Tomorrow is Shiki-san's birthday, isn't it?"
+    cue = _cue(text, cue_id="cue-00000001")
+
+    with_marker = _lay_out_cue(cue.model_copy(), None, 42)
+    _strip_corner_markers([cue])
+    without = _lay_out_cue(cue, None, 42)
+
+    # The marker pushes it over the budget; the real line fits on two.
+    assert len(without) == 1
+    assert without[0].translated_text.count("\\N") <= 1
+    assert len(with_marker) >= len(without)
