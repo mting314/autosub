@@ -927,3 +927,72 @@ def test_apply_normalization_llm_writes_edit_audit_log(tmp_path, monkeypatch):
         and row["status"] == "rejected"
         for row in rows
     )
+
+
+def test_apply_normalization_can_drop_unusable_retry_edits_instead_of_failing(
+    monkeypatch,
+):
+    """Opt-in: a hallucinated retry edit is dropped rather than losing the stage.
+
+    Off by default (see the test above) because an LLM inventing source text has
+    arguably shown its whole edit set is suspect. Long runs can trade that for not
+    losing a 40-minute pipeline to one bad edit in 800 lines. Either way the bad
+    edit is never applied.
+    """
+    lines = [
+        SubtitleLine(text="鈴原のソミです", start_time=0.0, end_time=1.0),
+        SubtitleLine(text="セカラじです", start_time=1.0, end_time=2.0),
+    ]
+
+    def fake_propose(self, lines, terms):
+        return [
+            NormalizationEdit(
+                line_id=0,
+                source_text="鈴原のソミ",
+                replacement_text="鈴原のぞみ",
+                start_char=0,
+                end_char=5,
+            )
+        ]
+
+    def fake_correct(
+        self, lines, terms, *, accepted_edits, previous_edits, validation_errors
+    ):
+        return [
+            # Hallucinated: this source text is not in line 0.
+            NormalizationEdit(
+                line_id=0,
+                source_text="鈴原希実",
+                replacement_text="鈴原希実",
+                start_char=0,
+                end_char=4,
+            ),
+            # Valid, and must survive the other one being dropped.
+            NormalizationEdit(
+                line_id=1,
+                source_text="セカラじ",
+                replacement_text="セカラジ",
+                start_char=0,
+                end_char=4,
+            ),
+        ]
+
+    monkeypatch.setattr(LLMKeywordNormalizer, "propose_edits", fake_propose)
+    monkeypatch.setattr(LLMKeywordNormalizer, "propose_corrected_edits", fake_correct)
+
+    result = apply_normalization(
+        lines,
+        {
+            "engine": "llm",
+            "allow_llm_correction": True,
+            "drop_unusable_edits": True,
+            "terms": [
+                {"value": "鈴原希実", "explanation": "Host name."},
+                {"value": "セカラジ", "explanation": "Show name."},
+            ],
+        },
+    )
+
+    # The unusable edit was dropped, the usable one applied, the stage survived.
+    assert result[0].text == "鈴原のソミです"
+    assert result[1].text == "セカラジです"

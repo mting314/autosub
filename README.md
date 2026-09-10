@@ -13,6 +13,14 @@ Automatic Japanese subtitle generation and translation pipeline for speech-heavy
 
 The stages exchange structured JSON documents; `.ass` files are rendered byproducts at each stage, not inputs to later stages.
 
+A standalone finishing step (not part of `run`) can burn the reviewed subtitles into the video:
+
+- **Hardsub** (optional): `autosub hardsub` burns the finished `.ass` into a video and trims to the subbed segment(s). Requires an FFmpeg build with libass.
+
+  ```
+  uv run autosub hardsub video.mkv --ass translated.ass --start 00:09:45 --end 00:55:30
+  ```
+
 ```mermaid
 graph TD
     A[Video or Audio Input] --> B[Transcribe<br/>chirp_2, chirp_3, or WhisperX]
@@ -20,6 +28,7 @@ graph TD
     C --> D[Translate<br/>Vertex Gemini 3 Flash or Cloud Translation v3]
     D --> E[Postprocess<br/>Profile Extensions]
     E --> F[Final .ass + postprocessed.json]
+    F -.->|optional: hardsub + video| G[Burned-in video.mp4]
 ```
 
 ## Current Capabilities
@@ -43,7 +52,7 @@ graph TD
 
 1. Python 3.12+
 2. `uv`
-3. FFmpeg available on `PATH`
+3. FFmpeg available on `PATH` (built with libass — required for the `hardsub` command)
 4. Credentials for the services you plan to use:
    - Google Cloud for transcription, Cloud Translation v3, or `google-vertex`
    - `ANTHROPIC_API_KEY` for direct Anthropic translation or classification
@@ -229,6 +238,13 @@ For bilingual output:
 ```powershell
 uv run autosub run .\video.mp4 --profile suzuhara_nozomi --bilingual
 ```
+
+With speaker diarization (2 speakers, custom names/colors):
+
+```powershell
+uv run autosub run .\video.mp4 --profile my_profile --speakers 2 --speaker-map speaker_map.toml --chunk
+```
+
 
 By default, `run` writes these files next to the input media, named after the video stem:
 
@@ -471,6 +487,7 @@ Behavior notes:
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
 - `--profile`: Loads `[format]`, including timing keys, replacements, and extensions
+- `--speaker-map`: Path to a `speaker_map.toml` mapping API speaker labels to character names and colors.
 
 Behavior notes:
 
@@ -569,6 +586,19 @@ Behavior notes:
 - Postprocess always writes the JSON document and the final `.ass`, even when no extension makes edits.
 - The built-in `run` command writes `<stem>_postprocessed.json` and the final `<stem>_final.ass`.
 
+### `autosub assign-speakers`
+
+- Positional: path to the `.ass` subtitle file to update
+- `--speaker-map`: Path to `speaker_map.toml` (required)
+- `--sample-lines`: Number of sample lines per label. Default: `5`
+
+Behavior notes:
+
+- Groups subtitle events by style name and shows samples with timestamps, line count, character count, and time range.
+- Interactively prompts you to assign each style to a speaker from the speaker map.
+- Rewrites the `.ass` file in-place with updated style names and colors.
+- Can be re-run to fix incorrect assignments.
+
 ### `autosub run`
 
 `run` combines the full pipeline above and keeps the common end-to-end options:
@@ -621,6 +651,25 @@ To create a local profile from a tracked example:
 ```powershell
 Copy-Item .\profiles\examples\solo_seiyuu_radio.toml .\profiles\local\my_profile.toml
 ```
+
+### Do not shadow a tracked profile
+
+Because `local\` is searched first *and* is gitignored, a local file with the same name as
+a tracked one hides it silently: the tracked file still looks current, while every run
+uses the local copy, and none of the changes are in version control.
+
+That is exactly what happened to the `proseka` set and to `lieraji`. By the time it was
+caught the tracked copies had drifted far behind their local shadows — `n25` was 22 lines
+against 69, `leoneed` 26 against 79.
+
+**Give a local profile a name no tracked profile uses.** `local\` is for things that
+should never be tracked: a one-off override for a single re-processing job, or an A/B
+experiment. `proseka\n25_gapfill` and `proseka\n25_trimmed` are the intended shape — each
+`extends` a tracked profile, adds a narrow override, and carries a comment saying why it
+is not a production profile.
+
+If you are editing a local file that shadows a tracked one, the edit belongs in the
+tracked file.
 
 If a profile prompt entry points at `prompts\<name>.md` or `prompts\<name>.txt`, autosub searches in this order:
 
@@ -770,6 +819,75 @@ Each corner has:
 
 Corner names and cues are inherited and merged through profile `extends` chains.
 
+### Corners
+
+Profiles can define recurring program segments (corners) that the LLM detects during translation:
+
+```toml
+[[corners]]
+name = "Card Illustrations"
+description = "Segment where hosts discuss character card art"
+cues = ["カードイラスト", "イラストのコーナー"]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Segment where hosts watch and react to a 3DMV"
+cues = ["3DMV", "MV見よう"]
+```
+
+Each corner has:
+
+- `name`: Display name used in the output ASS comment marker.
+- `description`: Context for the LLM to understand what the segment is about.
+- `cues`: Japanese phrases that typically signal the start of this segment.
+
+**Corner detection**: During translation, the LLM prepends `[CORNER: Name]` tags to the first line of each detected segment. These are parsed post-translation and inserted as ASS Comment events (green rows in Aegisub) with `effect="corner"`. Duplicate consecutive corners are automatically deduplicated.
+
+**Corner-aware chunking**: When `--chunk` is enabled and the profile defines corners with cues, the chunker scans source text for cue phrases and splits at detected segment boundaries instead of fixed-size intervals. This keeps segments intact within chunks, improving translation quality and reducing duplicate corner detection at chunk boundaries. Falls back to fixed-size chunking when no cues are defined or no matches are found.
+
+Corner names and cues are inherited and merged through profile `extends` chains.
+
+### Speaker Maps
+
+When using `--speakers` for diarization, the API assigns numeric labels ("0", "1", etc.) to each speaker. A speaker map TOML file can remap these to character names with custom colors:
+
+```toml
+# speaker_map.toml
+[speakers."0"]
+name = "Suzuki Minori"
+character = "Ena Shinonome"
+color = "#FFA0A0"
+
+[speakers."1"]
+name = "Sato Hinata"
+character = "Mizuki Akiyama"
+color = "#A0D0FF"
+```
+
+Usage: `--speaker-map speaker_map.toml` on `format`, `translate`, or `run` commands.
+
+- Without a speaker map, diarized output uses auto-assigned colors with raw API labels as style names.
+- With a speaker map on `format` or `run`, styles use character names and specified hex colors.
+- Chirp 3 uses 0-based speaker labels ("0", "1", ...). The label assignment depends on who speaks first — verify against the transcript and swap if needed.
+- Chirp 3 treats the requested speaker count as a loose guideline and may return more labels than requested. Extra labels are carried through as raw styles.
+- Speaker maps are per-project files, typically stored alongside the video in the project directory.
+
+#### Post-Pipeline Speaker Assignment
+
+The recommended workflow is to defer speaker assignment until after reviewing the subtitle file in Aegisub, where you can hear who is speaking:
+
+1. Run the pipeline without speaker assignment — raw diarization labels flow through to the .ass file:
+   ```bash
+   uv run autosub run video.mp4 --speakers 2 --profile my_profile
+   ```
+2. Open the .ass in Aegisub, listen to the audio, and identify which style corresponds to which speaker.
+3. Assign speakers:
+   ```bash
+   uv run autosub assign-speakers video_translated.ass --speaker-map speaker_map.toml
+   ```
+
+The `assign-speakers` command parses the .ass file, shows sample lines per style with timestamps, and prompts you to map each style to a speaker from the speaker map. It rewrites the .ass file in-place with updated style names and colors.
+
 ### Prompt and Vocab Merge Rules
 
 - Prompt fragments from `[translate].prompt` are concatenated in inheritance order: base profile first, child profile after that, then CLI `--prompt` last.
@@ -785,8 +903,53 @@ These keys are currently consumed by the formatter:
 - `min_duration_ms`
 - `snap_threshold_ms`
 - `conditional_snap_threshold_ms`
+- `interjection_max_duration_ms`
+- `interjection_merge_threshold_ms`
+- `interjection_gap_threshold_ms`
 
 No layout-related profile keys are currently wired into the CLI formatter.
+
+### Interjection-Aware Gap Handling
+
+When diarization is enabled, the formatter detects short interjections (e.g. "うん", "そうだね") from one speaker that interrupt another speaker's continuous thought. Without this, speaker A's subtitle would flicker off and back on around the interjection.
+
+**Example — before interjection handling:**
+
+```
+Line 1: [00:00.0 → 00:02.0] Speaker A: "今日のテーマなんですけど、"
+Line 2: [00:02.1 → 00:02.4] Speaker B: "うん"
+Line 3: [00:02.5 → 00:04.0] Speaker A: "ちょっと面白い話がありまして"
+```
+
+Speaker A's subtitle disappears for 500ms (2.0→2.5) while B's "うん" plays, then reappears. This creates a distracting flicker.
+
+**After interjection handling (merge):**
+
+```
+Line 1: [00:00.0 → 00:04.0] Speaker A: "今日のテーマなんですけど、 ちょっと面白い話がありまして"
+Line 2: [00:02.1 → 00:02.4] Speaker B: "うん"
+```
+
+Speaker A's lines are merged into one continuous subtitle. B's interjection overlaps as a separate .ass style (displayed concurrently in Aegisub/video players that support overlapping subtitles).
+
+**Behavior depends on the gap size across the interjection:**
+
+| Gap (A.end → A.start) | Action | Result |
+|---|---|---|
+| ≤ `interjection_merge_threshold_ms` (1500ms) | **Merge** | A's lines are combined into one subtitle spanning the interjection |
+| ≤ `interjection_gap_threshold_ms` (2000ms) | **Extend** | A's lines stay separate but timing is extended to close the gap (meet-in-middle) |
+| > `interjection_gap_threshold_ms` | **Skip** | No change — the gap is too large to be a simple interjection |
+
+The interjection itself (B's line) must be shorter than `interjection_max_duration_ms` (1000ms) to trigger this behavior. Longer responses from B are treated as real dialogue turns, not interjections.
+
+Profile example:
+
+```toml
+[timing]
+interjection_max_duration_ms = 1000
+interjection_merge_threshold_ms = 1500
+interjection_gap_threshold_ms = 2000
+```
 
 ## `radio_discourse` Extension
 

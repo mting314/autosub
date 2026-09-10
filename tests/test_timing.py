@@ -1,9 +1,17 @@
-from autosub.core.schemas import ReplacementSpan, SubtitleLine, TranscribedWord
+from autosub.core.schemas import (
+    ReplacementSpan,
+    SubtitleCue,
+    SubtitleLine,
+    TranscribedWord,
+)
 from autosub.pipeline.format.timing import (
     apply_timing_rules,
+    check_display_invariants,
     _apply_min_duration_padding,
     _apply_gap_snapping,
     _apply_micro_snapping,
+    _apply_interjection_merging,
+    _prevent_slot_overlaps,
     SegmentMS,
 )
 
@@ -279,9 +287,14 @@ def test_pass2_small_gap_with_single_keyframe():
     assert result[1].start_time == 1.05
 
 
-def test_pass2_gap_with_multiple_keyframes():
-    # Gap 1.0 to 1.4 (400ms). Between 250 and 500 threshold.
-    # Keyframes at 1.1 and 1.3.
+def test_pass2_gap_with_multiple_keyframes_collapses_below_the_flash_floor():
+    """Spreading across two cuts is only allowed when the blank is legible.
+
+    Holding until the first cut and resuming at the last makes the blank line up
+    with a visual interlude, which is the point of the branch. But here the cuts
+    are 200ms apart, and a 200ms blank does not read as a deliberate pause — it
+    reads as the subtitle flashing. So both sides snap to the same cut instead.
+    """
     lines = [
         SubtitleLine(text="One", start_time=0.0, end_time=1.0, speaker=None),
         SubtitleLine(text="Two", start_time=1.4, end_time=2.4, speaker=None),
@@ -289,6 +302,22 @@ def test_pass2_gap_with_multiple_keyframes():
     keyframes = [1100, 1300]
     result = apply_timing_rules(
         lines, keyframes_ms=keyframes, conditional_snap_threshold_ms=500
+    )
+    assert result[0].end_time == 1.1
+    assert result[1].start_time == 1.1
+
+
+def test_pass2_multiple_keyframes_may_spread_when_the_floor_allows_it():
+    """The scene-aware spread survives where the resulting blank is readable."""
+    lines = [
+        SubtitleLine(text="One", start_time=0.0, end_time=1.0, speaker=None),
+        SubtitleLine(text="Two", start_time=1.4, end_time=2.4, speaker=None),
+    ]
+    result = apply_timing_rules(
+        lines,
+        keyframes_ms=[1100, 1300],
+        conditional_snap_threshold_ms=500,
+        min_gap_ms=150,
     )
     assert result[0].end_time == 1.1
     assert result[1].start_time == 1.3
@@ -340,3 +369,326 @@ def test_pass3_micro_snapping_isolated():
         segments, keyframes=[1050], micro_snap_threshold=250, video_duration_ms=None
     )
     assert result[0].end_ms == 1050
+
+
+# ── Interjection Merging Tests ──
+
+
+def test_interjection_merge_basic():
+    """A-B_short-A pattern with short span → merges A's lines."""
+    lines = [
+        SubtitleLine(text="Speaker A start", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(text="うん", start_time=2.1, end_time=2.4, speaker="B"),
+        SubtitleLine(
+            text="Speaker A continues", start_time=2.5, end_time=4.0, speaker="A"
+        ),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # A's lines merged, B interjection untouched
+    assert len(result) == 2
+    assert result[0].text == "Speaker A start Speaker A continues"
+    assert result[0].speaker == "A"
+    assert result[0].start_ms == 0
+    assert result[0].end_ms == 4000
+    # B's interjection remains
+    assert result[1].text == "うん"
+    assert result[1].speaker == "B"
+
+
+def test_interjection_extend_basic():
+    """A-B_short-A with larger gap → extends A's timing but keeps separate lines."""
+    lines = [
+        SubtitleLine(text="Speaker A start", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(text="そうだね", start_time=2.5, end_time=3.0, speaker="B"),
+        SubtitleLine(
+            text="Speaker A continues", start_time=3.8, end_time=5.0, speaker="A"
+        ),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # A's lines stay separate but gap is closed (meet in middle)
+    assert len(result) == 3
+    gap = result[2].start_ms - result[0].end_ms
+    assert gap == 0  # meet-in-middle closes the gap
+
+
+def test_interjection_no_merge_b_too_long():
+    """B's line is too long to be considered an interjection → no change."""
+    lines = [
+        SubtitleLine(text="A talks", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(
+            text="B has a long response here", start_time=2.1, end_time=3.5, speaker="B"
+        ),
+        SubtitleLine(text="A continues", start_time=3.6, end_time=5.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # B is 1400ms, exceeds 1000ms threshold → no change
+    assert len(result) == 3
+    assert result[0].text == "A talks"
+    assert result[2].text == "A continues"
+
+
+def test_interjection_different_speakers_both_sides():
+    """Different speakers on each side of the interjection → no merge."""
+    lines = [
+        SubtitleLine(text="Speaker A", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(text="うん", start_time=2.1, end_time=2.4, speaker="B"),
+        SubtitleLine(text="Speaker C", start_time=2.5, end_time=4.0, speaker="C"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    assert len(result) == 3
+
+
+def test_interjection_multiple_sequential():
+    """A-B-A-B-A pattern → first A-B-A merges, then merged A-B-A merges again."""
+    lines = [
+        SubtitleLine(text="A part 1", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(text="うん", start_time=2.1, end_time=2.3, speaker="B"),
+        SubtitleLine(text="A part 2", start_time=2.4, end_time=4.0, speaker="A"),
+        SubtitleLine(text="そう", start_time=4.1, end_time=4.3, speaker="B"),
+        SubtitleLine(text="A part 3", start_time=4.4, end_time=6.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # First merge: A1+A2 across B1. Result: [A_merged(0-4000), B1, B2, A3]
+    # B1 and B2 are consecutive B's, not an A-B-A pattern, so A3 stays separate.
+    a_lines = [s for s in result if s.speaker == "A"]
+    b_lines = [s for s in result if s.speaker == "B"]
+    assert len(a_lines) == 2
+    assert a_lines[0].text == "A part 1 A part 2"
+    assert a_lines[1].text == "A part 3"
+    assert len(b_lines) == 2
+
+
+def test_interjection_already_overlapping():
+    """Lines already overlap (gap ≤ 0) → no interjection merging."""
+    lines = [
+        SubtitleLine(text="A talks", start_time=0.0, end_time=2.5, speaker="A"),
+        SubtitleLine(text="うん", start_time=2.0, end_time=2.3, speaker="B"),
+        SubtitleLine(text="A continues", start_time=2.3, end_time=4.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # Gap from A.end (2500) to A.start (2300) is negative → skip
+    assert len(result) == 3
+
+
+def test_interjection_gap_too_large():
+    """Gap between A's lines exceeds threshold → no merge."""
+    lines = [
+        SubtitleLine(text="A talks", start_time=0.0, end_time=2.0, speaker="A"),
+        SubtitleLine(text="うん", start_time=3.0, end_time=3.2, speaker="B"),
+        SubtitleLine(text="A continues", start_time=5.0, end_time=7.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    # Gap from A.end (2000) to A.start (5000) = 3000ms > 2000ms threshold
+    assert len(result) == 3
+
+
+def test_interjection_no_speakers():
+    """Lines without speaker labels → no interjection merging."""
+    lines = [
+        SubtitleLine(text="Line 1", start_time=0.0, end_time=2.0, speaker=None),
+        SubtitleLine(text="Line 2", start_time=2.1, end_time=2.3, speaker=None),
+        SubtitleLine(text="Line 3", start_time=2.4, end_time=4.0, speaker=None),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+    result = _apply_interjection_merging(
+        segments,
+        interjection_max_duration_ms=1000,
+        interjection_merge_threshold_ms=1500,
+        interjection_gap_threshold_ms=2000,
+    )
+    assert len(result) == 3
+
+
+# --- Display invariants re-checked after translation ---
+
+
+def test_overlap_truncation_never_leaves_a_flash():
+    """Cutting the earlier line short to clear the later one must not flash it."""
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=3.0, speaker="A"),
+        SubtitleLine(text="Second", start_time=0.3, end_time=4.0, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+
+    # Truncating "First" to clear "Second" would leave it 250ms on screen, so the
+    # later line is delayed instead.
+    resolved = _prevent_slot_overlaps(segments, min_duration_ms=500)
+
+    assert len(resolved) == 2
+    for segment in resolved:
+        assert segment.end_ms - segment.start_ms >= 500
+    assert resolved[0].end_ms <= resolved[1].start_ms
+
+
+def test_overlap_merges_when_neither_line_can_give_way():
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=0.6, speaker="A"),
+        SubtitleLine(text="Second", start_time=0.1, end_time=0.7, speaker="A"),
+    ]
+    segments = [SegmentMS(line) for line in lines]
+
+    resolved = _prevent_slot_overlaps(segments, min_duration_ms=500)
+
+    assert len(resolved) == 1
+    assert resolved[0].text == "First Second"
+
+
+def _cue(cue_id, start, end, speaker, text="line"):
+    return SubtitleCue(
+        id=cue_id,
+        start_time=start,
+        end_time=end,
+        speaker=speaker,
+        source_text="ソース",
+        final_text=text,
+    )
+
+
+_SLOT_MAP = {
+    "0": {"name": "Sayuri", "slot": 1},
+    "1": {"name": "Liyuu", "slot": 2},
+}
+
+
+
+
+def test_check_reports_two_cues_sharing_a_slot():
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+    ]
+
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+
+    assert [v.kind for v in found] == ["overlap"]
+    assert "cue-00000002" in found[0].detail
+
+
+def test_check_allows_different_slots_to_be_concurrent():
+    """Two hosts talking at once is the point of the overlay, not a defect."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Liyuu"),
+    ]
+
+    assert check_display_invariants(cues, speaker_map=_SLOT_MAP) == []
+
+
+def test_check_reports_a_line_under_the_duration_floor():
+    cues = [_cue("cue-00000001", 0.0, 0.2, "Sayuri")]
+
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+
+    assert [v.kind for v in found] == ["duration"]
+    assert "200ms" in found[0].detail
+
+
+def test_check_reports_a_flash_gap_but_not_a_real_pause():
+    flash = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 2.05, 4.0, "Sayuri"),
+    ]
+    pause = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 3.0, 5.0, "Sayuri"),
+    ]
+    chained = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 2.0, 4.0, "Sayuri"),
+    ]
+
+    assert [v.kind for v in check_display_invariants(flash, speaker_map=_SLOT_MAP)] == [
+        "gap"
+    ]
+    assert check_display_invariants(pause, speaker_map=_SLOT_MAP) == []
+    assert check_display_invariants(chained, speaker_map=_SLOT_MAP) == []
+
+
+def test_check_treats_many_labels_for_one_person_as_one_slot():
+    """A speaker map is many-to-one; two labels for one person share a box."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "0"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+    ]
+
+    assert [v.kind for v in check_display_invariants(cues, speaker_map=_SLOT_MAP)] == [
+        "overlap"
+    ]
+
+
+def test_check_ignores_cues_that_render_nothing():
+    """A textless cue cannot flash, overlap or be too brief."""
+    cues = [
+        _cue("cue-00000001", 0.0, 0.1, "Sayuri", text=""),
+        _cue("cue-00000002", 0.05, 0.2, "Sayuri", text=""),
+    ]
+
+    assert check_display_invariants(cues, speaker_map=_SLOT_MAP) == []
+
+
+def test_check_never_mutates_the_document():
+    """The whole point: format owns the rules, this only reports."""
+    cues = [
+        _cue("cue-00000001", 0.0, 3.0, "Sayuri"),
+        _cue("cue-00000002", 1.0, 4.0, "Sayuri"),
+        _cue("cue-00000003", 4.05, 4.2, "Sayuri"),
+    ]
+    before = [(c.start_time, c.end_time, c.final_text) for c in cues]
+
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+
+    assert found  # it did find problems
+    assert [(c.start_time, c.end_time, c.final_text) for c in cues] == before
+    assert len(cues) == 3
+def test_overlap_resolution_chains_rather_than_leaving_a_sliver():
+    """Truncating the earlier line must land exactly on the later line's start."""
+    lines = [
+        SubtitleLine(text="First", start_time=0.0, end_time=3.0, speaker="A"),
+        SubtitleLine(text="Second", start_time=2.0, end_time=4.0, speaker="A"),
+    ]
+    resolved = _prevent_slot_overlaps([SegmentMS(x) for x in lines], min_duration_ms=500)
+
+    assert len(resolved) == 2
+    assert resolved[0].end_ms == resolved[1].start_ms

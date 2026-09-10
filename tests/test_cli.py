@@ -40,7 +40,7 @@ def test_transcribe_help_includes_backend_options():
     result = runner.invoke(app, ["transcribe", "--help"])
 
     assert result.exit_code == 0
-    assert "--speakers" not in result.output
+    assert "--speakers" in result.output
     assert "--backend" in result.output
     assert "--whisper-model" in result.output
 
@@ -716,3 +716,213 @@ def test_run_supports_whisperx_backend_options(tmp_path, monkeypatch):
     assert captured_transcribe["whisper_batch_size"] == 8
     assert captured_transcribe["whisper_diarize"] is True
     assert captured_transcribe["whisper_hf_token"] == "hf-token"
+
+
+# --- hardsub ---
+
+
+def test_hardsub_lone_start_rejected(tmp_path):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    input_ass = tmp_path / "subs.ass"
+    _write_minimal_ass(input_ass)
+
+    result = runner.invoke(
+        app,
+        ["hardsub", str(video_path), "--ass", str(input_ass), "--start", "0:10:00"],
+    )
+
+    assert result.exit_code == 2
+    assert "--start and --end must be provided together" in result.output
+
+
+def test_hardsub_passes_paired_segments(tmp_path, monkeypatch):
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    input_ass = tmp_path / "subs.ass"
+    _write_minimal_ass(input_ass)
+    captured: dict[str, object] = {}
+
+    from autosub.pipeline.hardsub import main as hardsub_module
+
+    monkeypatch.setattr(
+        hardsub_module,
+        "hardsub_video",
+        lambda *args, **kwargs: captured.update(segments=kwargs.get("segments")),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "hardsub", str(video_path), "--ass", str(input_ass),
+            "--start", "0:10:00", "--end", "0:11:00",
+            "--start", "0:20:00", "--end", "0:21:00",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["segments"] == [("0:10:00", "0:11:00"), ("0:20:00", "0:21:00")]
+
+
+def _write_slot_speaker_map(path):
+    path.write_text(
+        "\n".join(
+            [
+                '[speakers."0"]',
+                'name = "Date Sayuri"',
+                'character = "Shibuya Kanon"',
+                'color = "#FF9E00"',
+                "slot = 1",
+                "",
+                '[speakers."1"]',
+                'name = "Liyuu"',
+                'character = "Tang Keke"',
+                'color = "#00A3E0"',
+                "slot = 2",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_legacy_pos_ass(path):
+    """An episode rendered before the slot moved into the style."""
+    path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "ScriptType: v4.00+",
+                "PlayResX: 1920",
+                "PlayResY: 1080",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                "Style: Date Sayuri,Lato ExtraBold,70,&H00FFFFFF,&H000000FF,&H00009EFF,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,1.5,4,330,80,0,1",
+                "Style: Liyuu,Lato ExtraBold,70,&H00FFFFFF,&H000000FF,&H00E0A300,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,1.5,4,330,80,0,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                # Second line was retagged by hand in Aegisub to Liyuu, but still
+                # carries slot 1's position - the bug the feedback describes.
+                r"Dialogue: 0,0:00:00.00,0:00:02.00,Date Sayuri,,0,0,0,,{\pos(330,180)}Sayuri speaking",
+                r"Dialogue: 0,0:00:02.00,0:00:04.00,Liyuu,,0,0,0,,{\pos(330,180)}Actually Liyuu",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_relayout_strips_pos_and_rebuilds_slot_styles(tmp_path):
+    import pyass
+
+    ass_path = tmp_path / "episode.ass"
+    map_path = tmp_path / "speaker_map.toml"
+    _write_legacy_pos_ass(ass_path)
+    _write_slot_speaker_map(map_path)
+
+    result = runner.invoke(
+        app, ["relayout", str(ass_path), "--speaker-map", str(map_path)]
+    )
+    assert result.exit_code == 0, result.output
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    # The hand-made speaker correction survives, and now actually moves the line.
+    assert [event.style for event in script.events] == ["Date Sayuri", "Liyuu"]
+    assert all(r"\pos(" not in event.text for event in script.events)
+    assert [event.text for event in script.events] == [
+        "Sayuri speaking",
+        "Actually Liyuu",
+    ]
+
+    styles = {style.name: style for style in script.styles}
+    assert styles["Date Sayuri"].alignment == pyass.Alignment.TOP_LEFT
+    assert styles["Date Sayuri"].marginV < styles["Liyuu"].marginV
+
+
+def test_relayout_leaves_styles_outside_the_speaker_map_alone(tmp_path):
+    import pyass
+
+    ass_path = tmp_path / "episode.ass"
+    map_path = tmp_path / "speaker_map.toml"
+    _write_minimal_ass(ass_path)
+    _write_slot_speaker_map(map_path)
+
+    result = runner.invoke(
+        app, ["relayout", str(ass_path), "--speaker-map", str(map_path)]
+    )
+    assert result.exit_code == 0, result.output
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    assert "Default" in {style.name for style in script.styles}
+    assert script.events[0].style == "Default"
+
+
+def test_relayout_rejects_an_empty_speaker_map(tmp_path):
+    ass_path = tmp_path / "episode.ass"
+    map_path = tmp_path / "speaker_map.toml"
+    _write_minimal_ass(ass_path)
+    map_path.write_text("", encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["relayout", str(ass_path), "--speaker-map", str(map_path)]
+    )
+    assert result.exit_code == 1
+
+
+def test_relayout_slots_a_speaker_map_that_omits_slot_numbers(tmp_path):
+    """load_speaker_map numbers slots in order when the TOML leaves them out."""
+    import pyass
+
+    ass_path = tmp_path / "episode.ass"
+    map_path = tmp_path / "speaker_map.toml"
+    _write_legacy_pos_ass(ass_path)
+    map_path.write_text(
+        '[speakers."0"]\nname = "Date Sayuri"\n\n[speakers."1"]\nname = "Liyuu"\n',
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app, ["relayout", str(ass_path), "--speaker-map", str(map_path)]
+    )
+    assert result.exit_code == 0, result.output
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+    styles = {style.name: style for style in script.styles}
+    assert styles["Date Sayuri"].marginV < styles["Liyuu"].marginV
+
+
+def test_assign_speakers_writes_positioned_slot_styles(tmp_path):
+    """Reassigning a speaker must move the line, not just recolour it."""
+    import pyass
+
+    ass_path = tmp_path / "episode.ass"
+    map_path = tmp_path / "speaker_map.toml"
+    _write_legacy_pos_ass(ass_path)
+    _write_slot_speaker_map(map_path)
+
+    # Assign both raw styles to speaker 2 (Liyuu), i.e. slot 2.
+    result = runner.invoke(
+        app,
+        ["assign-speakers", str(ass_path), "--speaker-map", str(map_path)],
+        input="2\n2\n",
+    )
+    assert result.exit_code == 0, result.output
+
+    with open(ass_path, "r", encoding="utf-8") as handle:
+        script = pyass.load(handle)
+
+    assert {event.style for event in script.events} == {"Liyuu"}
+    assert all(r"\pos(" not in event.text for event in script.events)
+
+    liyuu = next(style for style in script.styles if style.name == "Liyuu")
+    assert liyuu.alignment == pyass.Alignment.TOP_LEFT
+    # Slot 2 of 2 on a 1080 canvas: the lower band, not the old bottom-centred
+    # Arial this command used to write.
+    assert liyuu.marginV > 540
+    assert liyuu.fontName == "Lato ExtraBold"
+

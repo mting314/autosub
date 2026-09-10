@@ -41,8 +41,8 @@ def extract_audio(
             input_args["to"] = end_time
 
         output_args: dict = {
-            "ac": 1,       # Mono channel
-            "ar": "16k",   # 16kHz sample rate
+            "ac": 1,  # Mono channel
+            "ar": "16k",  # 16kHz sample rate
             "loglevel": "error",
         }
         if opus:
@@ -99,7 +99,6 @@ def split_audio(
             raise RuntimeError(
                 f"Failed to split audio chunk {chunk_idx}: {error_message}"
             ) from e
-
         logger.info(
             f"  Chunk {chunk_idx}: {start:.0f}s - {start + chunk_duration:.0f}s "
             f"({chunk_duration:.0f}s)"

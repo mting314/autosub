@@ -1,0 +1,20 @@
+[speakers."0"]
+name = "Date Sayuri"
+character = "Shibuya Kanon"
+color = "#FF9E00"
+slot = 1
+avatar = "assets/avatars/date_sayuri.jpg"
+
+[speakers."1"]
+name = "Liyuu"
+character = "Tang Keke"
+color = "#00A3E0"
+slot = 2
+avatar = "assets/avatars/liyuu.jpg"
+
+[speakers."2"]
+name = "Misaki Nako"
+character = "Arashi Chisato"
+color = "#FFB7C5"
+slot = 3
+avatar = "assets/avatars/misaki_nako.jpg"

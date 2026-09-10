@@ -1,16 +1,36 @@
 import hashlib
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
+
+import pyass
 
 from autosub.core.config import PROJECT_ID
 from autosub.core.llm import ReasoningEffort
 from autosub.core.schemas import SubtitleCue, SubtitleDocument
-from autosub.pipeline.format.generator import render_ass_document
+from autosub.core.speaker_map import build_style_name_lookup, style_name_for_speaker
+from autosub.pipeline.format.generator import (
+    build_ass_script,
+    render_ass_document,
+)
 from autosub.pipeline.translate.chunker import make_chunks
+from autosub.pipeline.translate.linebreak import (
+    MAX_CHARS_PER_LINE,
+    capacity_for_style,
+    load_nlp,
+    normalized_text,
+    split_text,
+    strip_tags,
+    visible_length,
+    wrap_line,
+)
 
 logger = logging.getLogger(__name__)
+
+# Guard against pathological recursion when a line keeps failing to fit.
+_MAX_SPLIT_DEPTH = 4
 
 
 def _compute_cue_fingerprint(
@@ -58,6 +78,11 @@ def translate_subtitles(
     debug: bool = False,
     retry_chunks: list[int] | None = None,
     log_dir: Path | None = None,
+    reflow: bool = True,
+    reflow_engine: str = "deterministic",
+    reflow_model: str | None = None,
+    speaker_map: dict[str, dict] | None = None,
+    min_duration_ms: int = 500,
 ) -> None:
     """
     Reads a formatted subtitle JSON document, translates cue source text, and
@@ -95,6 +120,7 @@ def translate_subtitles(
             translated_document,
             output_ass_path,
             mode="bilingual" if bilingual else "translated",
+            speaker_map=speaker_map,
         )
         return
 
@@ -181,22 +207,65 @@ def translate_subtitles(
             f"Translation API expected {len(cues_to_translate)} translations, but got {len(translated_texts)}"
         )
 
+    if reflow:
+        translated_texts = _reflow_translations(
+            translated_texts,
+            cues_to_translate,
+            corner_boundaries,
+            engine=reflow_engine,
+            provider=provider,
+            location=location,
+            model=reflow_model,
+        )
+
     logger.info("Applying translations to subtitle document...")
     translated_document = document.model_copy(deep=True)
     translated_document.stage = "translated"
-    # splits index into cues_to_translate (empty cues filtered out); the
-    # document stores boundaries as indices into the full cue list.
-    cue_index_by_id = {cue.id: index for index, cue in enumerate(document.cues)}
-    translated_document.chunk_boundaries = (
-        sorted(cue_index_by_id[cues_to_translate[split].id] for split in splits)
-        if debug
-        else []
-    )
     cue_by_id = {cue.id: cue for cue in translated_document.cues}
     for source_cue, translated_text in zip(
         cues_to_translate, translated_texts, strict=True
     ):
         cue_by_id[source_cue.id].translated_text = translated_text
+
+    # Lay the translation out inside each speaker's box before serialising, so the
+    # document carries the wraps and splits rather than only the .ass. A script is
+    # built first purely for its per-style capacities, which do not exist until the
+    # styles have been generated.
+    stripped = _strip_corner_markers(translated_document.cues)
+    if stripped:
+        logger.info(
+            "Removed the [CORNER: ...] prefix from %d line(s); the boundary is "
+            "already carried by cue.corner and the rendered corner comments.",
+            stripped,
+        )
+
+    # splits index into cues_to_translate, which has the empty cues filtered out,
+    # so record the boundaries by cue id and resolve them to indices afterwards.
+    boundary_cue_ids = (
+        {cues_to_translate[split].id for split in splits} if debug else set()
+    )
+    capacities = _line_capacities(
+        build_ass_script(
+            translated_document,
+            mode="bilingual" if bilingual else "translated",
+            speaker_map=speaker_map,
+        )
+    )
+    cue_count = len(translated_document.cues)
+    translated_document.cues = _apply_line_breaks_to_cues(
+        translated_document.cues,
+        capacities,
+        style_names=build_style_name_lookup(speaker_map),
+        min_duration_ms=min_duration_ms,
+    )
+    if len(translated_document.cues) != cue_count:
+        logger.info(
+            "Line breaking split %d cue(s) that could not fit two lines.",
+            len(translated_document.cues) - cue_count,
+        )
+    translated_document.chunk_boundaries = _chunk_boundary_indices(
+        translated_document.cues, boundary_cue_ids
+    )
 
     logger.info(f"Writing translated JSON to {output_json_path}...")
     output_json_path.write_text(
@@ -208,12 +277,65 @@ def translate_subtitles(
         translated_document,
         output_ass_path,
         mode="bilingual" if bilingual else "translated",
+        speaker_map=speaker_map,
     )
 
     if llm_trace_path is not None and llm_trace_path.exists():
         logger.info(f"Wrote LLM trace to {llm_trace_path}.")
 
     logger.info("Translation complete!")
+
+
+def _reflow_translations(
+    translated_texts: list[str],
+    cues_to_translate: list[SubtitleCue],
+    corner_boundaries: list[int] | None,
+    engine: str = "deterministic",
+    provider: str = "google-vertex",
+    location: str = "global",
+    model: str | None = None,
+) -> list[str]:
+    """Re-split translated lines at natural English boundaries.
+
+    Derives per-line display durations and hard group-break indices (speaker
+    change, corner boundary, long time gap) from the cues, then delegates to
+    the reflow. The ``llm`` engine uses a cheap model to choose break points
+    (falling back to the deterministic engine per group); ``deterministic`` (the
+    default) needs no API calls. Any failure is non-fatal: the original
+    translations are returned unchanged.
+    """
+    from autosub.pipeline.translate.reflow import LONG_GAP_S, reflow_line_breaks
+
+    try:
+        durations_s: list[float] = []
+        boundaries: set[int] = set(corner_boundaries or [])
+        for i, cue in enumerate(cues_to_translate):
+            durations_s.append(max(0.0, cue.end_time - cue.start_time))
+            if i == 0:
+                continue
+            prev = cues_to_translate[i - 1]
+            if cue.speaker != prev.speaker:
+                boundaries.add(i)
+            elif cue.start_time - prev.end_time > LONG_GAP_S:
+                boundaries.add(i)
+
+        resplitter = None
+        if engine == "llm":
+            from autosub.pipeline.translate.reflow_llm import build_llm_resplitter
+
+            logger.info("Using LLM line-break reflow engine.")
+            resplitter = build_llm_resplitter(
+                project_id=PROJECT_ID,
+                model=model,  # None -> splitter's cheap flash-lite default
+                location=location,
+                provider=provider,
+            )
+        return reflow_line_breaks(
+            translated_texts, durations_s, boundaries, resplitter=resplitter
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(f"Line-break reflow skipped due to error: {exc}")
+        return translated_texts
 
 
 def _extract_corner_boundaries_from_cues(document: SubtitleDocument) -> list[int]:
@@ -444,3 +566,215 @@ def _translate_chunked(
         all_translated.extend(completed[chunk_idx])
 
     return all_translated, splits
+
+
+_LEADING_TAGS_RE = re.compile(r"^((?:\{[^}]*\})+)")
+
+
+def _split_leading_tags(text: str) -> tuple[str, str]:
+    """Separate leading ASS override blocks from the visible text.
+
+    The format stage writes each line's slot position as a leading \\pos tag. The
+    translator only ever returns prose, so the tags have to be carried across by
+    hand or every line falls back to the style default and the slot layout is lost.
+    """
+    match = _LEADING_TAGS_RE.match(text)
+    if not match:
+        return "", text
+    return match.group(1), text[match.end() :]
+
+
+def _line_capacities(script: pyass.Script) -> dict[str, int]:
+    """Characters that fit on one line, per style, from the script's own layout.
+
+    A positioned line has whatever width its style's margins leave it, which for
+    an overlay slot is not the full-width figure Netflix's 42 assumes.
+    """
+    play_res_x = None
+    for key, value in script.scriptInfo:
+        if key == "PlayResX":
+            try:
+                play_res_x = int(value)
+            except (TypeError, ValueError):
+                pass
+            break
+
+    capacities: dict[str, int] = {}
+    for style in getattr(script, "styles", []) or []:
+        capacities[style.name] = capacity_for_style(
+            play_res_x,
+            getattr(style, "marginL", None),
+            getattr(style, "marginR", None),
+            getattr(style, "fontSize", None),
+            getattr(style, "fontName", None),
+        )
+    return capacities
+
+
+_CORNER_MARKER_RE = re.compile(r"^((?:\{[^}]*\})*)\s*\[CORNER:[^\]]*\]\s*")
+
+
+def _strip_corner_markers(cues: list[SubtitleCue]) -> int:
+    """Drop the [CORNER: x] prefix the translator is asked to prepend.
+
+    The prompt asks for it so segment boundaries are visible while translating,
+    but it is prose the LLM writes into the line, not metadata, so it renders on
+    screen. The boundary is already recorded twice over — as cue.corner, and as
+    the non-rendering "=== Corner: x ===" comment the generator emits — so
+    nothing is lost by removing it.
+
+    Done here rather than at postprocess because the marker is ~25 characters
+    that would otherwise count against the line's width budget and force a wrap
+    or a split the real line does not need.
+    """
+    stripped = 0
+    for cue in cues:
+        if not cue.translated_text:
+            continue
+        cleaned = _CORNER_MARKER_RE.sub(r"\1", cue.translated_text)
+        if cleaned != cue.translated_text:
+            cue.translated_text = cleaned
+            stripped += 1
+    return stripped
+
+
+def _chunk_boundary_indices(
+    cues: list[SubtitleCue], boundary_cue_ids: set[str]
+) -> list[int]:
+    """Locate each chunk boundary after line breaking may have inserted cues.
+
+    Boundaries are stored as indices into the cue list, so a split anywhere ahead
+    of one shifts it. Match on the originating cue id instead and take the first
+    piece it produced. Cue ids are fixed-width, so no id is a prefix of another
+    and the child-id check cannot match the wrong cue.
+    """
+    indices: list[int] = []
+    for boundary_id in boundary_cue_ids:
+        prefix = f"{boundary_id}-"
+        for index, cue in enumerate(cues):
+            if cue.id == boundary_id or cue.id.startswith(prefix):
+                indices.append(index)
+                break
+    return sorted(indices)
+
+
+def _apply_line_breaks_to_cues(
+    cues: list[SubtitleCue],
+    capacities: dict[str, int] | None = None,
+    style_names: dict[str, str] | None = None,
+    min_duration_ms: int = 0,
+) -> list[SubtitleCue]:
+    """Lay every cue out within its box, at most two lines.
+
+    A cue that will not fit two lines becomes two consecutive cues, cut at a
+    grammatical boundary.
+
+    This runs before the document is serialised, so the JSON carries the layout.
+    Doing it to the rendered events instead would strand the result in the
+    translated .ass: postprocess re-renders from the JSON and would silently drop
+    every wrap and split back out of the file that actually ships.
+    """
+    nlp = load_nlp()
+    capacities = capacities or {}
+    processed: list[SubtitleCue] = []
+
+    for cue in cues:
+        if not strip_tags(cue.translated_text or "").strip():
+            # Nothing to lay out. Keep the cue so document indices stay meaningful;
+            # the renderer already leaves textless cues out of the .ass.
+            processed.append(cue)
+            continue
+        style = style_name_for_speaker(cue.speaker, style_names)
+        max_chars = capacities.get(style, MAX_CHARS_PER_LINE)
+        processed.extend(_lay_out_cue(cue, nlp, max_chars, min_duration_ms))
+
+    return processed
+
+
+def _lay_out_cue(
+    cue: SubtitleCue,
+    nlp,
+    max_chars: int,
+    min_duration_ms: int = 0,
+    depth: int = 0,
+) -> list[SubtitleCue]:
+    """Fit one cue into two lines, splitting it into two cues if it will not."""
+    tags, body = _split_leading_tags(cue.translated_text or "")
+
+    wrapped = wrap_line(body, nlp, max_chars)
+    if wrapped is not None:
+        return [cue.model_copy(update={"translated_text": tags + wrapped})]
+
+    def leave_over_length(reason: str) -> list[SubtitleCue]:
+        # Leaving the line long is better than breaking it badly; the QC pass
+        # flags it for rewording.
+        normalized = normalized_text(body)
+        logger.warning("%s: %r", reason, strip_tags(normalized)[:60])
+        return [cue.model_copy(update={"translated_text": tags + normalized})]
+
+    parts = split_text(body, nlp, max_chars) if depth < _MAX_SPLIT_DEPTH else None
+    if parts is None:
+        return leave_over_length("No safe line break, leaving it over length")
+
+    part1, part2 = parts
+
+    # Divide the display time in proportion to how much text each piece carries.
+    # The QC pass can snap the cut to a real silence later; the transcript is not
+    # available here. Never let the cut leave the cue's own span, or a piece would
+    # end before it starts and libass would drop it.
+    total_ms = round((cue.end_time - cue.start_time) * 1000)
+    if total_ms <= 0:
+        return [cue]
+
+    seen1 = visible_length(part1)
+    share = seen1 / max(1, seen1 + visible_length(part2))
+    mid_ms = min(max(round(total_ms * share), 0), total_ms)
+
+    # A split that puts either half on screen for less than the minimum duration
+    # trades one over-long line for two flashes, which is the worse of the two.
+    if min_duration_ms and min(mid_ms, total_ms - mid_ms) < min_duration_ms:
+        return leave_over_length(
+            f"Splitting would leave a line under {min_duration_ms}ms, "
+            "leaving it over length"
+        )
+
+    first, second = _split_cue(
+        cue, cue.start_time + mid_ms / 1000.0, tags + part1, tags + part2
+    )
+    return _lay_out_cue(first, nlp, max_chars, min_duration_ms, depth + 1) + _lay_out_cue(
+        second, nlp, max_chars, min_duration_ms, depth + 1
+    )
+
+
+def _split_cue(
+    cue: SubtitleCue, mid: float, first_text: str, second_text: str
+) -> tuple[SubtitleCue, SubtitleCue]:
+    """Cut one cue in two at mid, giving each half its share of the translation.
+
+    Only the translation was split. The source stays whole on the first half
+    rather than being cut at a guessed offset, so a bilingual render shows the
+    Japanese once, over the opening half of the line it belongs to.
+
+    Child ids extend the parent's, which keeps an unsplit cue's id identical to
+    the one the format stage assigned and makes a split traceable back to it.
+    """
+    first = cue.model_copy(
+        update={
+            "id": f"{cue.id}-1",
+            "end_time": mid,
+            "translated_text": first_text,
+            "words": [word for word in cue.words if word.end_time <= mid],
+        }
+    )
+    second = cue.model_copy(
+        update={
+            "id": f"{cue.id}-2",
+            "start_time": mid,
+            "translated_text": second_text,
+            "source_text": "",
+            "normalized_source_text": None,
+            "replacement_spans": [],
+            "words": [word for word in cue.words if word.end_time > mid],
+        }
+    )
+    return first, second
