@@ -77,13 +77,10 @@ class BaseStructuredLLM:
     _GOOGLE_LEVEL_MODEL_FAMILIES = ("gemini-3",)
     _GOOGLE_MINIMAL_MODEL_PATTERNS = (
         "gemini-3-flash",
-        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "flash-lite",
     )
-    _GOOGLE_MEDIUM_MODEL_PATTERNS = (
-        "gemini-3-flash",
-        "gemini-3.1-pro",
-        "gemini-3.1-flash-lite",
-    )
+    _GOOGLE_MEDIUM_MODEL_PATTERNS = ("gemini-3",)
     _GOOGLE_MIN_BUDGET_OVERRIDES = (
         ("gemini-2.5-flash-lite", 512),
         ("gemini-2.5-pro", 128),

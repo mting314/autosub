@@ -686,7 +686,7 @@ conditional_snap_threshold_ms = 500
 [format.normalizer]
 engine = "llm"
 provider = "google-vertex"
-model = "gemini-2.5-flash-lite"
+model = "gemini-3.1-flash-lite"
 reasoning_effort = "minimal"
 allow_llm_correction = true
 
@@ -761,7 +761,7 @@ LLM mode example:
 [format.normalizer]
 engine = "llm"
 provider = "google-vertex"
-model = "gemini-2.5-flash-lite"
+model = "gemini-3.1-flash-lite"
 reasoning_effort = "minimal"
 allow_llm_correction = true
 

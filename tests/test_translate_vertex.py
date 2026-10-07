@@ -162,6 +162,43 @@ def test_google_reasoning_effort_maps_minimal_for_supported_gemini_3_model():
     assert settings["google_thinking_config"] == {"thinking_level": "MINIMAL"}
 
 
+def test_google_reasoning_effort_maps_minimal_for_gemini_3_1_flash_lite():
+    llm = BaseStructuredLLM(
+        project_id="test-project",
+        model="gemini-3.1-flash-lite",
+        reasoning_effort=ReasoningEffort.MINIMAL,
+    )
+
+    settings = llm._build_google_model_settings(llm._get_model_config())
+
+    assert settings["google_thinking_config"] == {"thinking_level": "MINIMAL"}
+
+
+def test_google_reasoning_effort_rejects_minimal_for_gemini_3_8_flash():
+    import pytest
+
+    llm = BaseStructuredLLM(
+        project_id="test-project",
+        model="gemini-3.8-flash",
+        reasoning_effort=ReasoningEffort.MINIMAL,
+    )
+
+    with pytest.raises(ValueError, match="does not support reasoning_effort='minimal'"):
+        llm._build_google_model_settings(llm._get_model_config())
+
+
+def test_google_reasoning_effort_maps_medium_for_gemini_3_8_flash():
+    llm = BaseStructuredLLM(
+        project_id="test-project",
+        model="gemini-3.8-flash",
+        reasoning_effort=ReasoningEffort.MEDIUM,
+    )
+
+    settings = llm._build_google_model_settings(llm._get_model_config())
+
+    assert settings["google_thinking_config"] == {"thinking_level": "MEDIUM"}
+
+
 def test_google_reasoning_effort_maps_to_budget_for_gemini_2_5():
     llm = BaseStructuredLLM(
         project_id="test-project",
