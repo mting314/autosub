@@ -162,6 +162,7 @@ COMMAND_OPTION_SPECS: dict[str, dict[str, OptionSpec]] = {
         "start": OptionSpec(("start",), _as_str),
         "end": OptionSpec(("end",), _as_str),
         "chunk_size": OptionSpec(("chunk_size",), _as_int),
+        "keep_intermediates": OptionSpec(("keep_intermediates",), _as_bool),
     },
 }
 

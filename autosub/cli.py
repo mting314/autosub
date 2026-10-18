@@ -629,11 +629,8 @@ def translate(
 
     translate_log_dir = None
     if save_log:
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_stem = input_json.stem.removesuffix("_formatted")
-        translate_log_dir = input_json.parent / f"{log_stem}_logs_{ts}"
+        translate_log_dir = input_json.parent / f"{log_stem}_logs"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
@@ -702,6 +699,7 @@ def translate(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            enable_trace=bool(save_log),
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -914,6 +912,11 @@ def run(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
+    keep_intermediates: bool = typer.Option(
+        False,
+        "--keep-intermediates/--no-keep-intermediates",
+        help="Keep all stage-by-stage intermediate files (_formatted.json, _postprocessed.json, _final.ass) in the output directory.",
+    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -944,6 +947,7 @@ def run(
             "start": start,
             "end": end,
             "chunk_size": chunk_size,
+            "keep_intermediates": keep_intermediates,
         },
     )
     out_dir = resolved["out_dir"]
@@ -969,6 +973,7 @@ def run(
     start = resolved["start"]
     end = resolved["end"]
     chunk_size = resolved["chunk_size"]
+    keep_intermediates = resolved["keep_intermediates"]
     time_ranges = _normalize_time_ranges(start, end)
 
     logger.info(f"Starting full autosub pipeline for: {video_path}")
@@ -982,20 +987,31 @@ def run(
 
     translate_log_dir = None
     if save_log:
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        translate_log_dir = out_dir / f"{stem}_logs_{ts}"
+        translate_log_dir = out_dir / f"{stem}_logs"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
     transcript_out = out_dir / f"{stem}_transcript.json"
-    formatted_json_out = out_dir / f"{stem}_formatted.json"
     original_ass_out = out_dir / f"{stem}_original.ass"
     translated_json_out = out_dir / f"{stem}_translated.json"
     translated_ass_out = out_dir / f"{stem}_translated.ass"
-    postprocessed_json_out = out_dir / f"{stem}_postprocessed.json"
-    final_ass_out = out_dir / f"{stem}_final.ass"
+
+    if keep_intermediates:
+        formatted_json_out = out_dir / f"{stem}_formatted.json"
+        postprocessed_json_out = out_dir / f"{stem}_postprocessed.json"
+        final_ass_out = out_dir / f"{stem}_final.ass"
+    else:
+        if translate_log_dir:
+            formatted_json_out = translate_log_dir / f"{stem}_formatted.json"
+        else:
+            import tempfile
+            from uuid import uuid4
+
+            formatted_json_out = (
+                Path(tempfile.gettempdir()) / f"{stem}_{uuid4().hex[:8]}_formatted.json"
+            )
+        postprocessed_json_out = translated_json_out
+        final_ass_out = translated_ass_out
 
     # Resolve Profile
     final_vocab = []
@@ -1103,10 +1119,26 @@ def run(
                 logger.info(f"Using provided keyframes: {keyframes}")
                 kf_ms = parse_aegisub_keyframes(keyframes, fps)
             elif extract_keyframes:
-                kf_out = out_dir / f"{video_path.stem}_keyframes.log"
+                is_temp_kf = False
+                if translate_log_dir:
+                    kf_out = translate_log_dir / "keyframes.log"
+                elif not keep_intermediates:
+                    import tempfile
+                    from uuid import uuid4
+
+                    kf_out = (
+                        Path(tempfile.gettempdir())
+                        / f"{video_path.stem}_{uuid4().hex[:8]}_keyframes.log"
+                    )
+                    is_temp_kf = True
+                else:
+                    kf_out = out_dir / f"{video_path.stem}_keyframes.log"
+
                 logger.info(f"Extracting keyframes to {kf_out}...")
                 extract_keyframes_func(video_path, kf_out)
                 kf_ms = parse_aegisub_keyframes(kf_out, fps)
+                if is_temp_kf and kf_out.exists():
+                    kf_out.unlink()
         else:
             logger.warning("No video stream found. Keyframe extraction disabled.")
     except Exception as e:
@@ -1125,6 +1157,8 @@ def run(
             extensions_config=final_format_extensions,
             normalizer_config=normalizer_config,
             speaker_map=loaded_speaker_map,
+            log_dir=translate_log_dir,
+            enable_trace=bool(save_log),
         )
     except Exception as e:
         logger.error(f"Failed during formatting: {e}")
@@ -1148,7 +1182,14 @@ def run(
             debug=mark_chunks,
             retry_chunks=retry_chunk or None,
             log_dir=translate_log_dir,
+            enable_trace=bool(save_log),
         )
+        if (
+            not keep_intermediates
+            and not translate_log_dir
+            and formatted_json_out.exists()
+        ):
+            formatted_json_out.unlink()
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
         raise typer.Exit(code=1)
