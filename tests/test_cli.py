@@ -817,57 +817,6 @@ def test_run_consolidates_artifacts_by_default(tmp_path, monkeypatch):
     assert not (out_dir / "video.edit_audit.tsv").exists()
 
 
-def test_run_keep_intermediates_preserves_separate_files(tmp_path, monkeypatch):
-    video_path = tmp_path / "video.mp4"
-    video_path.write_text("fake", encoding="utf-8")
-    out_dir = tmp_path / "output"
-    out_dir.mkdir()
-
-    format_kwargs: dict[str, object] = {}
-    postprocess_kwargs: dict[str, object] = {}
-
-    monkeypatch.setattr(
-        cli_module.transcribe_main, "transcribe", lambda *args, **kwargs: None
-    )
-
-    def fake_format(*args, **kwargs):
-        format_kwargs.update(kwargs)
-        kwargs["output_json_path"].write_text("{}", encoding="utf-8")
-
-    def fake_translate(*args, **kwargs):
-        args[1].write_text("{}", encoding="utf-8")
-        kwargs["output_ass_path"].write_text("[Events]\n", encoding="utf-8")
-
-    monkeypatch.setattr(cli_module.format_module, "format_subtitles", fake_format)
-    monkeypatch.setattr(
-        cli_module.translate_module, "translate_subtitles", fake_translate
-    )
-    monkeypatch.setattr(
-        cli_module.postprocess_module,
-        "postprocess_subtitles",
-        lambda *args, **kwargs: postprocess_kwargs.update(kwargs),
-    )
-
-    result = runner.invoke(
-        app,
-        [
-            "run",
-            str(video_path),
-            "--out-dir",
-            str(out_dir),
-            "--keep-intermediates",
-            "--no-extract-keyframes",
-        ],
-    )
-
-    assert result.exit_code == 0
-    assert format_kwargs["output_json_path"] == out_dir / "video_formatted.json"
-    assert (
-        postprocess_kwargs["output_json_path"] == out_dir / "video_postprocessed.json"
-    )
-    assert postprocess_kwargs["output_ass_path"] == out_dir / "video_final.ass"
-
-
 def test_translate_save_log_uses_deterministic_folder(tmp_path, monkeypatch):
     input_json = tmp_path / "my_video_formatted.json"
     input_json.write_text("{}", encoding="utf-8")

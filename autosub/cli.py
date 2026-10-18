@@ -912,11 +912,6 @@ def run(
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
     ),
-    keep_intermediates: bool = typer.Option(
-        False,
-        "--keep-intermediates/--no-keep-intermediates",
-        help="Keep all stage-by-stage intermediate files (_formatted.json, _postprocessed.json, _final.ass) in the output directory.",
-    ),
 ):
     """
     Runs the end-to-end Japanese pipeline (Transcribe -> Format -> Translate -> Postprocess).
@@ -947,7 +942,6 @@ def run(
             "start": start,
             "end": end,
             "chunk_size": chunk_size,
-            "keep_intermediates": keep_intermediates,
         },
     )
     out_dir = resolved["out_dir"]
@@ -973,7 +967,6 @@ def run(
     start = resolved["start"]
     end = resolved["end"]
     chunk_size = resolved["chunk_size"]
-    keep_intermediates = resolved["keep_intermediates"]
     time_ranges = _normalize_time_ranges(start, end)
 
     logger.info(f"Starting full autosub pipeline for: {video_path}")
@@ -996,22 +989,15 @@ def run(
     translated_json_out = out_dir / f"{stem}_translated.json"
     translated_ass_out = out_dir / f"{stem}_translated.ass"
 
-    if keep_intermediates:
-        formatted_json_out = out_dir / f"{stem}_formatted.json"
-        postprocessed_json_out = out_dir / f"{stem}_postprocessed.json"
-        final_ass_out = out_dir / f"{stem}_final.ass"
+    if translate_log_dir:
+        formatted_json_out = translate_log_dir / f"{stem}_formatted.json"
     else:
-        if translate_log_dir:
-            formatted_json_out = translate_log_dir / f"{stem}_formatted.json"
-        else:
-            import tempfile
-            from uuid import uuid4
+        import tempfile
+        from uuid import uuid4
 
-            formatted_json_out = (
-                Path(tempfile.gettempdir()) / f"{stem}_{uuid4().hex[:8]}_formatted.json"
-            )
-        postprocessed_json_out = translated_json_out
-        final_ass_out = translated_ass_out
+        formatted_json_out = (
+            Path(tempfile.gettempdir()) / f"{stem}_{uuid4().hex[:8]}_formatted.json"
+        )
 
     # Resolve Profile
     final_vocab = []
@@ -1122,7 +1108,7 @@ def run(
                 is_temp_kf = False
                 if translate_log_dir:
                     kf_out = translate_log_dir / "keyframes.log"
-                elif not keep_intermediates:
+                else:
                     import tempfile
                     from uuid import uuid4
 
@@ -1131,8 +1117,6 @@ def run(
                         / f"{video_path.stem}_{uuid4().hex[:8]}_keyframes.log"
                     )
                     is_temp_kf = True
-                else:
-                    kf_out = out_dir / f"{video_path.stem}_keyframes.log"
 
                 logger.info(f"Extracting keyframes to {kf_out}...")
                 extract_keyframes_func(video_path, kf_out)
@@ -1184,11 +1168,7 @@ def run(
             log_dir=translate_log_dir,
             enable_trace=bool(save_log),
         )
-        if (
-            not keep_intermediates
-            and not translate_log_dir
-            and formatted_json_out.exists()
-        ):
+        if not translate_log_dir and formatted_json_out.exists():
             formatted_json_out.unlink()
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
@@ -1199,8 +1179,8 @@ def run(
         logger.info("[Step 4/4] Postprocessing...")
         postprocess_module.postprocess_subtitles(
             translated_json_out,
-            output_json_path=postprocessed_json_out,
-            output_ass_path=final_ass_out,
+            output_json_path=translated_json_out,
+            output_ass_path=translated_ass_out,
             extensions_config=final_postprocess_extensions,
             bilingual=bilingual,
         )
@@ -1209,7 +1189,7 @@ def run(
         raise typer.Exit(code=1)
 
     logger.info(
-        f"Pipeline completed successfully! Final output saved to {final_ass_out}"
+        f"Pipeline completed successfully! Final output saved to {translated_ass_out}"
     )
 
 
