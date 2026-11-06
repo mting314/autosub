@@ -162,6 +162,30 @@ def test_google_reasoning_effort_maps_minimal_for_supported_gemini_3_model():
     assert settings["google_thinking_config"] == {"thinking_level": "MINIMAL"}
 
 
+def test_google_reasoning_effort_maps_for_gemini_3_1_flash_lite():
+    llm_minimal = BaseStructuredLLM(
+        project_id="test-project",
+        model="gemini-3.1-flash-lite",
+        reasoning_effort=ReasoningEffort.MINIMAL,
+    )
+    settings_minimal = llm_minimal._build_google_model_settings(
+        llm_minimal._get_model_config()
+    )
+    assert settings_minimal["google_thinking_config"] == {"thinking_level": "MINIMAL"}
+    assert settings_minimal["max_tokens"] == 32768
+
+    llm_medium = BaseStructuredLLM(
+        project_id="test-project",
+        model="gemini-3.1-flash-lite",
+        reasoning_effort=ReasoningEffort.MEDIUM,
+    )
+    settings_medium = llm_medium._build_google_model_settings(
+        llm_medium._get_model_config()
+    )
+    assert settings_medium["google_thinking_config"] == {"thinking_level": "MEDIUM"}
+    assert settings_medium["max_tokens"] == 32768
+
+
 def test_google_max_tokens_capped_for_flash_lite():
     llm = BaseStructuredLLM(
         project_id="test-project",

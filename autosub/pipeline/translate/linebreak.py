@@ -173,7 +173,7 @@ def load_nlp():
     Cached because loading the model costs ~1s and every line needs it.
     """
     try:
-        import spacy
+        import spacy  # type: ignore[missing-import]
 
         return spacy.load("en_core_web_sm")
     except Exception as exc:
@@ -198,9 +198,9 @@ def _candidates_dep(nlp, prose: str) -> list[tuple[int, float]]:
 
         if tk.tag_ == "TO":  # never break before an infinitive marker
             continue
-        if (
-            tk.dep_ == "cc" or tk.pos_ == "CCONJ" or tk.text.lower() in COORD
-        ) and toks[k - 1].text != ",":  # a coordinator needs a preceding comma
+        if (tk.dep_ == "cc" or tk.pos_ == "CCONJ" or tk.text.lower() in COORD) and toks[
+            k - 1
+        ].text != ",":  # a coordinator needs a preceding comma
             continue
         if toks[k - 1].text.lower() in COORD:  # no dangling 'and'/'but' at line end
             continue
@@ -387,9 +387,7 @@ def normalized_text(text: str) -> str:
     return _normalized_with_offsets(text)[0]
 
 
-def wrap_line(
-    text: str, nlp=None, max_chars: int = MAX_CHARS_PER_LINE
-) -> str | None:
+def wrap_line(text: str, nlp=None, max_chars: int = MAX_CHARS_PER_LINE) -> str | None:
     """Lay text out as one or two lines within max_chars, breaking grammatically.
 
     Returns the text with a single ``\\N`` inserted, the text unchanged when it

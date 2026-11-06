@@ -34,11 +34,11 @@ class ReflowSplit(BaseModel):
 
 class ReflowSplitter(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-2.5-flash-lite",
+        "google-vertex": "gemini-3.1-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
     }
-    _DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash-lite"
+    _DEFAULT_GOOGLE_MODEL = "gemini-3.1-flash-lite"
 
     # Reflow output is small (just the split pieces) and lite models reject the
     # 65536 default, so cap the output window well below any lite model's limit.
