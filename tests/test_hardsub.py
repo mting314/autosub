@@ -35,14 +35,18 @@ class _Result:
 
 
 def test_burn_whole_cmd_has_no_seek():
-    cmd = hs._burn_whole_cmd("ffmpeg", "/v.mkv", "/tmp/subs.ass", "/out.mp4", 18, "medium")
+    cmd = hs._burn_whole_cmd(
+        "ffmpeg", "/v.mkv", "/tmp/subs.ass", "/out.mp4", 18, "medium"
+    )
     assert "ass=/tmp/subs.ass" in cmd
     assert "-ss" not in cmd and "-t" not in cmd
     assert "libx264" in cmd and "18" in cmd
 
 
 def test_seg_burn_cmd_uses_input_seek():
-    cmd = hs._seg_burn_cmd("ffmpeg", "/v.mkv", "/tmp/seg.ass", "/o.mp4", "00:44:00", 25.0, 20, "fast")
+    cmd = hs._seg_burn_cmd(
+        "ffmpeg", "/v.mkv", "/tmp/seg.ass", "/o.mp4", "00:44:00", 25.0, 20, "fast"
+    )
     # -ss must come BEFORE -i (input seek), and -t bounds the duration
     assert cmd.index("-ss") < cmd.index("-i")
     assert cmd[cmd.index("-ss") + 1] == "00:44:00"
@@ -61,20 +65,27 @@ def test_resolve_ffmpeg_missing(monkeypatch):
 
 def test_shift_ass_shifts_drops_and_clamps(tmp_path):
     src = tmp_path / "s.ass"
-    _write_ass(src, [
-        ("0:43:00.00", "0:43:05.00", "before"),   # entirely before the segment -> dropped
-        ("0:43:58.00", "0:44:03.00", "straddle"),  # straddles start -> clamped to 0
-        ("0:44:07.00", "0:44:11.00", "inside"),    # inside -> shifted
-    ])
+    _write_ass(
+        src,
+        [
+            (
+                "0:43:00.00",
+                "0:43:05.00",
+                "before",
+            ),  # entirely before the segment -> dropped
+            ("0:43:58.00", "0:44:03.00", "straddle"),  # straddles start -> clamped to 0
+            ("0:44:07.00", "0:44:11.00", "inside"),  # inside -> shifted
+        ],
+    )
     dst = tmp_path / "shifted.ass"
     hs._shift_ass(src, parse_timestamp("0:44:00"), dst)
 
     with open(dst, encoding="utf-8") as f:
         events = pyass.load(f).events
     spans = {e.text: (e.start.total_seconds(), e.end.total_seconds()) for e in events}
-    assert "before" not in spans          # dropped
+    assert "before" not in spans  # dropped
     assert spans["straddle"] == (0.0, 3.0)  # start clamped to 0
-    assert spans["inside"] == (7.0, 11.0)   # shifted by 44:00
+    assert spans["inside"] == (7.0, 11.0)  # shifted by 44:00
 
 
 # --- input validation ---
@@ -106,14 +117,24 @@ def test_single_segment_input_seek_and_shifted_subs(tmp_path, monkeypatch):
     ass = tmp_path / "my subs.ass"  # spaces in name
     _write_ass(ass, [("0:44:07.00", "0:44:11.00", "hi")])
     calls = []
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result()
+    )
 
-    hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[("0:44:00", "0:44:25")], detect_black=False)
+    hs.hardsub_video(
+        video,
+        ass,
+        tmp_path / "o.mp4",
+        segments=[("0:44:00", "0:44:25")],
+        detect_black=False,
+    )
 
     burn = next(c for c in calls if "-vf" in c)
     assert burn.index("-ss") < burn.index("-i")  # input seek
     vf = burn[burn.index("-vf") + 1]
-    assert vf.startswith("ass=") and " " not in vf and vf.endswith(".ass")  # shifted subs, clean path
+    assert (
+        vf.startswith("ass=") and " " not in vf and vf.endswith(".ass")
+    )  # shifted subs, clean path
 
 
 def test_whole_video_no_seek(tmp_path, monkeypatch):
@@ -123,7 +144,9 @@ def test_whole_video_no_seek(tmp_path, monkeypatch):
     ass = tmp_path / "s.ass"
     _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
     calls = []
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result()
+    )
 
     hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[], detect_black=False)
 
@@ -137,7 +160,9 @@ def test_burn_failure_raises(tmp_path, monkeypatch):
     video.write_bytes(b"x")
     ass = tmp_path / "s.ass"
     _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: _Result(returncode=1, stderr=b"boom"))
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: _Result(returncode=1, stderr=b"boom")
+    )
     with pytest.raises(RuntimeError, match="hardsub burn failed"):
         hs.hardsub_video(video, ass, tmp_path / "o.mp4", detect_black=False)
 
@@ -146,12 +171,17 @@ def test_burn_failure_raises(tmp_path, monkeypatch):
 
 
 def test_ass_filter_arg_escapes_windows_path():
-    assert hs._ass_filter_arg("/tmp/x/subs.ass") == "ass=/tmp/x/subs.ass"  # posix: no-op
+    assert (
+        hs._ass_filter_arg("/tmp/x/subs.ass") == "ass=/tmp/x/subs.ass"
+    )  # posix: no-op
     assert hs._ass_filter_arg("C:\\Users\\x\\subs.ass") == "ass=C\\:/Users/x/subs.ass"
 
 
 def test_ass_filter_arg_appends_fontsdir():
-    assert hs._ass_filter_arg("/tmp/x/subs.ass", "/tmp/x") == "ass=/tmp/x/subs.ass:fontsdir=/tmp/x"
+    assert (
+        hs._ass_filter_arg("/tmp/x/subs.ass", "/tmp/x")
+        == "ass=/tmp/x/subs.ass:fontsdir=/tmp/x"
+    )
     assert hs._ass_filter_arg("/tmp/x/subs.ass", None) == "ass=/tmp/x/subs.ass"
 
 
@@ -166,13 +196,15 @@ def test_bundled_font_next_to_ass_adds_fontsdir(tmp_path, monkeypatch):
     _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
     (tmp_path / "Lato.ttf").write_bytes(b"fontdata")  # bundled font beside the .ass
     calls = []
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result()
+    )
 
     hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[], detect_black=False)
 
     burn = next(c for c in calls if "-vf" in c)
     vf = burn[burn.index("-vf") + 1]
-    assert f"fontsdir={tmp_path}" in vf
+    assert f"fontsdir={hs._escape_filter_path(tmp_path)}" in vf
 
 
 def test_no_bundled_font_omits_fontsdir(tmp_path, monkeypatch):
@@ -182,7 +214,9 @@ def test_no_bundled_font_omits_fontsdir(tmp_path, monkeypatch):
     ass = tmp_path / "s.ass"
     _write_ass(ass, [("0:00:01.00", "0:00:02.00", "hi")])
     calls = []
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result()
+    )
 
     hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[], detect_black=False)
 
@@ -194,7 +228,9 @@ def test_no_bundled_font_omits_fontsdir(tmp_path, monkeypatch):
 
 
 def test_join_offsets_are_cumulative_part_durations():
-    offs = hs._join_offsets([("0:00:00", "0:00:10"), ("0:01:00", "0:01:05"), ("0:02:00", "0:02:20")])
+    offs = hs._join_offsets(
+        [("0:00:00", "0:00:10"), ("0:01:00", "0:01:05"), ("0:02:00", "0:02:20")]
+    )
     assert offs == [10.0, 15.0]  # parts are 10s, 5s, 20s -> joins at 10, 15
 
 
@@ -220,13 +256,21 @@ def test_multi_segment_parallel_then_concat(tmp_path, monkeypatch):
     video = tmp_path / "v.mkv"
     video.write_bytes(b"x")
     ass = tmp_path / "s.ass"
-    _write_ass(ass, [("0:10:00.00", "0:10:05.00", "a"), ("0:20:00.00", "0:20:05.00", "b")])
+    _write_ass(
+        ass, [("0:10:00.00", "0:10:05.00", "a"), ("0:20:00.00", "0:20:05.00", "b")]
+    )
     cmds, fake_run = _run_recorder()
     monkeypatch.setattr(hs.subprocess, "run", fake_run)
 
     hs.hardsub_video(
-        video, ass, tmp_path / "o.mp4",
-        segments=[("0:10:00", "0:11:00"), ("0:20:00", "0:21:00"), ("0:30:00", "0:31:00")],
+        video,
+        ass,
+        tmp_path / "o.mp4",
+        segments=[
+            ("0:10:00", "0:11:00"),
+            ("0:20:00", "0:21:00"),
+            ("0:30:00", "0:31:00"),
+        ],
         detect_black=False,
     )
 
@@ -243,9 +287,17 @@ def test_multi_segment_failure_raises(tmp_path, monkeypatch):
     video.write_bytes(b"x")
     ass = tmp_path / "s.ass"
     _write_ass(ass, [("0:10:00.00", "0:10:05.00", "a")])
-    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: _Result(returncode=1, stderr=b"seg boom"))
+    monkeypatch.setattr(
+        hs.subprocess, "run", lambda cmd, **k: _Result(returncode=1, stderr=b"seg boom")
+    )
     with pytest.raises(RuntimeError, match="hardsub segment"):
-        hs.hardsub_video(video, ass, tmp_path / "o.mp4", segments=[("0:10:00", "0:11:00"), ("0:20:00", "0:21:00")], detect_black=False)
+        hs.hardsub_video(
+            video,
+            ass,
+            tmp_path / "o.mp4",
+            segments=[("0:10:00", "0:11:00"), ("0:20:00", "0:21:00")],
+            detect_black=False,
+        )
 
 
 def test_black_scan_only_around_joins(tmp_path, monkeypatch):
@@ -258,11 +310,19 @@ def test_black_scan_only_around_joins(tmp_path, monkeypatch):
     monkeypatch.setattr(hs.subprocess, "run", fake_run)
 
     hs.hardsub_video(
-        video, ass, tmp_path / "o.mp4",
-        segments=[("0:10:00", "0:11:00"), ("0:20:00", "0:21:00"), ("0:30:00", "0:31:00")],
+        video,
+        ass,
+        tmp_path / "o.mp4",
+        segments=[
+            ("0:10:00", "0:11:00"),
+            ("0:20:00", "0:21:00"),
+            ("0:30:00", "0:31:00"),
+        ],
         detect_black=True,
     )
 
     black = [c for c in cmds if any("blackdetect" in tok for tok in c)]
     assert len(black) == 2  # 3 segments -> 2 joins, one windowed scan each
-    assert all("-ss" in c and "-t" in c for c in black)  # windowed, not a full-output decode
+    assert all(
+        "-ss" in c and "-t" in c for c in black
+    )  # windowed, not a full-output decode
