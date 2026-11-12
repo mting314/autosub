@@ -86,8 +86,8 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
             f"2. Do not translate each line in isolation. Understand the thought across neighboring lines before deciding wording.\n"
             f"3. Some inputs include timing, speaker, role, or corner metadata. Use those fields as context for tone and continuity, but translate only the text field.\n"
             f"4. If one sentence is split across multiple subtitle lines, translate the full thought naturally and distribute the English across those lines so the flow still reads naturally line by line.\n"
-            f"5. Prioritize natural subtitle English over literal wording, but do not invent information.\n"
-            f"6. Keep the tone, emotional intent, and speaker persona intact.\n"
+            f"5. Treat the input as spoken performance, not formal written prose. Prioritize natural, conversational spoken English (contractions, everyday vocabulary, active voice) over dictionary-literal, academic, or essay-like phrasing, without inventing information.\n"
+            f"6. Keep the tone, emotional intent, and speaker persona intact. When an idiom, joke, or anecdote depends on phrasing, preserve the punchline or emotional beat in idiomatic English.\n"
             f"7. Keep translations concise enough to work as readable subtitles.\n"
             f"8. If a line contains a catchphrase, segment title, fandom reference, or recurring term, translate it consistently with the provided context.\n"
             f"9. If a Glossary is provided in the context, you MUST use the exact English translations specified for those terms.\n"
@@ -96,6 +96,7 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
             f"12. Only use single quotes for contractions. Anywhere else, always use double quotation marks.\n"
             f"13. If a name is a Japanese name, preserve Japanese name order when translating.\n"
             f"14. Do not use the em-dash character (—) in translations. When separating clauses, prefer to end the current sentence or use a comma to separate causes while making it sound natural in English. Use ellipsis only if the speaker is trailing off before starting the next line.\n"
+            f"15. Unwrap Japanese nominalizers and shell-noun relative clauses (e.g., 〜な現場/場所/ところ/こと/感じ/人): never translate them into stiff English 'this is a [studio/place/moment] where...' or 'she is a person who...' wrappers. Turn the implied actor or setting into a direct active subject or natural adverbial (e.g., 'the staff here lets us...', 'in moments like that, I...', 'she always...'), keeping the natural clause order across adjacent subtitle lines.\n"
         )
         if self.system_prompt:
             instruction += (
