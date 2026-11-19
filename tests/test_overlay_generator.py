@@ -129,3 +129,39 @@ def test_avatarless_speaker_warns(tmp_path, caplog):
         generate_radio_overlay_image(speaker_map, tmp_path / "overlay.png")
 
     assert "No avatar set" in caplog.text
+
+
+def test_speaker_map_layout_overrides_align_overlay_and_ass_styles(tmp_path):
+    from autosub.core.speaker_map import load_speaker_map, slot_styles_for_map
+
+    toml_content = """\
+[layout]
+card_margin_left = 155
+bar_alpha = 210
+slot_2_y_offset = 15
+
+[speakers."0"]
+name = "Rina Honnizumi"
+character = "Shizuku Hinomori"
+color = "#99EEDD"
+slot = 1
+
+[speakers."1"]
+name = "Yui Ogura"
+character = "Minori Hanasato"
+color = "#FFCCAA"
+slot = 2
+"""
+    map_file = tmp_path / "speaker_map.toml"
+    map_file.write_text(toml_content, encoding="utf-8")
+
+    loaded = load_speaker_map(map_file)
+    assert loaded["0"]["card_margin_left"] == 155
+    assert loaded["0"]["bar_alpha"] == 210
+    assert loaded["1"]["y_offset"] == 15
+
+    styles = slot_styles_for_map(loaded)
+    default_slot2 = calculate_speaker_slot_layout(slot=2, total_slots=2)
+    assert styles["Rina Honnizumi"].marginL == 155 + 260 + 40
+    assert styles["Yui Ogura"].marginL == 155 + 260 + 40
+    assert styles["Yui Ogura"].marginV == default_slot2["text_top"] + 15

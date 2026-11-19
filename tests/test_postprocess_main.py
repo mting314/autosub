@@ -462,3 +462,66 @@ def test_postprocess_rerun_brings_an_older_document_up_to_date(tmp_path):
     assert [(c.start_time, c.end_time, c.final_text) for c in a.cues] == \
            [(c.start_time, c.end_time, c.final_text) for c in b.cues]
     assert a.cues[0].final_text == "Stale output."
+
+
+def test_postprocess_merges_chained_same_slot_flash_and_fragment_cues(tmp_path):
+    input_path = tmp_path / "translated.json"
+    output_path = tmp_path / "postprocessed.json"
+    _write_translated_document(
+        input_path,
+        [
+            SubtitleCue(
+                id="cue-00000010",
+                start_time=36.75,
+                end_time=37.25,
+                speaker="Liyuu",
+                role="host",
+                source_text="はい。",
+                translated_text="Okay.",
+                words=[TranscribedWord(word="はい。", start_time=36.92, end_time=37.08)],
+            ),
+            SubtitleCue(
+                id="cue-00000011",
+                start_time=37.25,
+                end_time=37.80,
+                speaker="Liyuu",
+                role="host",
+                source_text="はい。",
+                translated_text="Got it.",
+                words=[TranscribedWord(word="はい。", start_time=37.32, end_time=37.52)],
+            ),
+            SubtitleCue(
+                id="cue-00000055",
+                start_time=121.92,
+                end_time=122.76,
+                speaker="Liyuu",
+                role="host",
+                source_text="今日はいかがでしたか、",
+                translated_text="How was today for you,",
+            ),
+            SubtitleCue(
+                id="cue-00000056",
+                start_time=122.76,
+                end_time=123.28,
+                speaker="Liyuu",
+                role="host",
+                source_text="ほんちゃん。",
+                translated_text="Hon-chan?",
+            ),
+        ],
+    )
+    postprocess_subtitles(
+        input_path,
+        output_json_path=output_path,
+        output_ass_path=tmp_path / "final.ass",
+        bilingual=False,
+        speaker_map=_slot_speaker_map(),
+    )
+    doc = SubtitleDocument.model_validate_json(output_path.read_text(encoding="utf-8"))
+    assert len(doc.cues) == 2
+    assert doc.cues[0].final_text == "Okay. Got it."
+    assert doc.cues[0].start_time == 36.75
+    assert doc.cues[0].end_time == 37.80
+    assert doc.cues[1].final_text == "How was today for you, Hon-chan?"
+    assert doc.cues[1].start_time == 121.92
+    assert doc.cues[1].end_time == 123.28

@@ -55,6 +55,7 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
         data = tomllib.loads(f.read())
 
     speakers = data.get("speakers", {})
+    layout_cfg = data.get("layout", {})
     result = {}
     default_slot = 1
     for label, entry in speakers.items():
@@ -69,13 +70,31 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
         if avatar_path:
             avatar_path = _resolve_avatar(avatar_path, path)
 
-        result[str(label)] = {
+        speaker_info = {
             "name": entry.get("name", str(label)),
             "character": entry.get("character"),
             "color": entry.get("color"),
             "slot": slot_val,
             "avatar": avatar_path,
         }
+        card_margin_left = entry.get(
+            "card_margin_left", layout_cfg.get("card_margin_left")
+        )
+        if card_margin_left is not None:
+            speaker_info["card_margin_left"] = int(card_margin_left)
+
+        y_offset = entry.get(
+            "y_offset",
+            layout_cfg.get(f"slot_{slot_val}_y_offset", layout_cfg.get("y_offset")),
+        )
+        if y_offset is not None:
+            speaker_info["y_offset"] = int(y_offset)
+
+        bar_alpha = entry.get("bar_alpha", layout_cfg.get("bar_alpha"))
+        if bar_alpha is not None:
+            speaker_info["bar_alpha"] = int(bar_alpha)
+
+        result[str(label)] = speaker_info
     return result
 
 
@@ -151,6 +170,7 @@ def calculate_speaker_slot_layout(
     card_margin_left: int = 30,
     text_gap: int = 40,
     font_size: int = SLOT_FONT_SIZE,
+    y_offset: int = 0,
 ) -> dict[str, int]:
     """Calculate 2D coordinates for avatar cards and subtitle text for a given speaker slot.
 
@@ -172,7 +192,7 @@ def calculate_speaker_slot_layout(
     slot_height = canvas_height / total_slots
 
     card_h = int(slot_height * 0.75)
-    center_y = int((slot_index + 0.5) * slot_height)
+    center_y = int((slot_index + 0.5) * slot_height) + y_offset
     card_top_y = center_y - (card_h // 2)
 
     text_x = card_margin_left + card_width + text_gap
@@ -260,7 +280,12 @@ def slot_styles_for_map(speaker_map: dict[str, dict]) -> dict[str, "pyass.Style"
         styles[name] = slot_style(
             name,
             color,
-            calculate_speaker_slot_layout(slot=int(slot), total_slots=total_slots),
+            calculate_speaker_slot_layout(
+                slot=int(slot),
+                total_slots=total_slots,
+                card_margin_left=int(entry.get("card_margin_left", 30)),
+                y_offset=int(entry.get("y_offset", 0)),
+            ),
         )
     return styles
 

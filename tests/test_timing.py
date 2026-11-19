@@ -692,3 +692,75 @@ def test_overlap_resolution_chains_rather_than_leaving_a_sliver():
 
     assert len(resolved) == 2
     assert resolved[0].end_ms == resolved[1].start_ms
+
+
+def test_multi_slot_holds_across_brief_backchannel_and_avoids_artificial_overlap():
+    lines = [
+        SubtitleLine(
+            text="That makes sense.",
+            start_time=10.0,
+            end_time=11.08,
+            speaker="0",
+            words=[TranscribedWord(word="なるほど。", start_time=10.0, end_time=11.08)],
+        ),
+        SubtitleLine(
+            text="Right.",
+            start_time=11.16,
+            end_time=11.32,
+            speaker="1",
+            words=[TranscribedWord(word="うん。", start_time=11.16, end_time=11.32)],
+        ),
+        SubtitleLine(
+            text="You already gave a great answer.",
+            start_time=11.60,
+            end_time=14.0,
+            speaker="0",
+            words=[TranscribedWord(word="さっき答えてくれた。", start_time=11.60, end_time=14.0)],
+        ),
+    ]
+    result = apply_timing_rules(lines, min_duration_ms=500, speaker_map=_SLOT_MAP)
+    slot1 = [r for r in result if r.speaker == "0"]
+    slot2 = [r for r in result if r.speaker == "1"]
+    assert len(slot1) == 2
+    assert len(slot2) == 1
+    # Slot 1 holds continuously across Slot 2's backchannel with 0ms gap
+    assert slot1[0].end_time == slot1[1].start_time == 11.60
+    # Slot 2 backchannel starts at or after Slot 1's raw speech end (11.08)
+    assert slot2[0].start_time >= 11.08
+    assert round((slot2[0].end_time - slot2[0].start_time) * 1000) >= 500
+
+
+def test_multi_slot_turn_handoff_eliminates_artificial_padding_overlap():
+    lines = [
+        SubtitleLine(
+            text="What happened?",
+            start_time=20.16,
+            end_time=20.64,
+            speaker="1",
+            words=[TranscribedWord(word="どうしたの？", start_time=20.16, end_time=20.64)],
+        ),
+        SubtitleLine(
+            text="My morning banana.",
+            start_time=20.64,
+            end_time=21.68,
+            speaker="0",
+            words=[TranscribedWord(word="朝バナナ。", start_time=20.64, end_time=21.68)],
+        ),
+    ]
+    result = apply_timing_rules(lines, min_duration_ms=500, speaker_map=_SLOT_MAP)
+    assert len(result) == 2
+    # Earlier line pads left (20.14..20.64) rather than spilling 10ms into the next speaker's turn
+    assert result[0].start_time == 20.14
+    assert result[0].end_time == 20.64
+    assert result[1].start_time == 20.64
+
+
+def test_check_display_invariants_detects_same_slot_flash_gap_while_other_slot_active():
+    cues = [
+        _cue("cue-00000001", 0.0, 2.0, "Sayuri"),
+        _cue("cue-00000002", 0.0, 4.0, "Liyuu"),
+        _cue("cue-00000003", 2.1, 4.0, "Sayuri"),
+    ]
+    found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
+    assert [v.kind for v in found] == ["gap"]
+    assert found[0].cue_id == "cue-00000001"

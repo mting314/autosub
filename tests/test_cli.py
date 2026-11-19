@@ -233,6 +233,48 @@ def test_run_uses_stage_grouped_profile_settings(tmp_path, monkeypatch):
     assert postprocess_kwargs["extensions_config"] == {
         "radio_discourse": {"enabled": False}
     }
+    assert translate_kwargs["min_duration_ms"] == 900
+    assert postprocess_kwargs["min_duration_ms"] == 900
+
+
+def test_standalone_translate_and_postprocess_forward_profile_min_duration_ms(
+    tmp_path, monkeypatch
+):
+    formatted_json = tmp_path / "formatted.json"
+    formatted_json.write_text('{"stage": "formatted", "cues": []}', encoding="utf-8")
+    translated_json = tmp_path / "translated.json"
+    translated_json.write_text('{"stage": "translated", "cues": []}', encoding="utf-8")
+
+    translate_kwargs: dict[str, object] = {}
+    postprocess_kwargs: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        cli_module.translate_module,
+        "translate_subtitles",
+        lambda *args, **kwargs: translate_kwargs.update(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module.postprocess_module,
+        "postprocess_subtitles",
+        lambda *args, **kwargs: postprocess_kwargs.update(kwargs),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "load_unified_profile",
+        lambda profile: {"format": {"min_duration_ms": 750}},
+    )
+
+    res_t = runner.invoke(
+        app, ["translate", str(formatted_json), "--profile", "test_profile"]
+    )
+    res_p = runner.invoke(
+        app, ["postprocess", str(translated_json), "--profile", "test_profile"]
+    )
+
+    assert res_t.exit_code == 0
+    assert res_p.exit_code == 0
+    assert translate_kwargs["min_duration_ms"] == 750
+    assert postprocess_kwargs["min_duration_ms"] == 750
 
 
 def test_translate_model_falls_back_to_openrouter_when_only_openrouter_key_exists(

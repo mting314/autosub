@@ -794,8 +794,14 @@ def translate(
         loaded_speaker_map = load_speaker_map(speaker_map)
 
     final_prompt_parts = []
+    min_duration_ms = 500
     if profile:
         profile_data = load_unified_profile(profile)
+        format_cfg = profile_data.get("format", {})
+        min_duration_ms = format_cfg.get(
+            "min_duration_ms",
+            format_cfg.get("timing", {}).get("min_duration_ms", 500),
+        )
         translate_profile = profile_data.get("translate", {})
         final_prompt_parts.extend(translate_profile.get("prompt", []))
         glossary_text = _build_glossary_prompt(translate_profile.get("glossary", {}))
@@ -858,6 +864,7 @@ def translate(
             reflow_engine=reflow_engine,
             reflow_model=reflow_model,
             speaker_map=loaded_speaker_map,
+            min_duration_ms=min_duration_ms,
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -929,9 +936,15 @@ def postprocess(
         ass_out = out.with_suffix(".ass")
 
     final_extensions = {}
+    min_duration_ms = 500
     if profile:
         profile_data = load_unified_profile(profile)
         final_extensions = profile_data.get("postprocess", {}).get("extensions", {})
+        format_cfg = profile_data.get("format", {})
+        min_duration_ms = format_cfg.get(
+            "min_duration_ms",
+            format_cfg.get("timing", {}).get("min_duration_ms", 500),
+        )
 
     try:
         postprocess_module.postprocess_subtitles(
@@ -941,6 +954,7 @@ def postprocess(
             extensions_config=final_extensions,
             bilingual=bilingual,
             speaker_map=loaded_speaker_map,
+            min_duration_ms=min_duration_ms,
         )
     except Exception as e:
         logger.error(f"Error during postprocessing: {e}")

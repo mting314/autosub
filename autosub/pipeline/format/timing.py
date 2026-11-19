@@ -50,6 +50,12 @@ class SegmentMS:
         self.replacement_spans: list[ReplacementSpan] = list(line.replacement_spans)
         self.start_ms = int(round(line.start_time * 1000))
         self.end_ms = int(round(line.end_time * 1000))
+        if self.words:
+            self.raw_start_ms = int(round(self.words[0].start_time * 1000))
+            self.raw_end_ms = int(round(self.words[-1].end_time * 1000))
+        else:
+            self.raw_start_ms = self.start_ms
+            self.raw_end_ms = self.end_ms
 
     def to_subtitle_line(self) -> SubtitleLine:
         return SubtitleLine(
@@ -62,6 +68,35 @@ class SegmentMS:
             words=list(self.words),
             replacement_spans=list(self.replacement_spans),
         )
+
+
+def _merge_segment_into(left: SegmentMS, right: SegmentMS) -> None:
+    """Merge ``right`` into ``left``, preserving words and replacement_spans offsets."""
+    separator = " " if left.text and right.text else ""
+    if hasattr(left, "replacement_spans") and hasattr(right, "replacement_spans"):
+        right_orig_offset = _original_text_length(
+            left.text, left.replacement_spans
+        ) + len(separator)
+        right_replaced_offset = len(left.text) + len(separator)
+        left.replacement_spans.extend(
+            _offset_replacement_spans(
+                right.replacement_spans,
+                orig_offset=right_orig_offset,
+                replaced_offset=right_replaced_offset,
+            )
+        )
+    left.text = f"{left.text}{separator}{right.text}".strip()
+    left.end_ms = max(left.end_ms, right.end_ms)
+    if hasattr(left, "raw_end_ms") and hasattr(right, "raw_end_ms"):
+        left.raw_end_ms = max(left.raw_end_ms, right.raw_end_ms)
+    if hasattr(left, "words") and hasattr(right, "words"):
+        if separator and left.words:
+            # Keep concatenated word text aligned with left.text so
+            # char-position walks in find_split_time stay exact.
+            left.words[-1] = left.words[-1].model_copy(
+                update={"word": left.words[-1].word + separator}
+            )
+        left.words.extend(right.words)
 
 
 class ProposedExtension:
@@ -253,29 +288,12 @@ def _apply_min_duration_padding(
         if duration < min_duration_ms:
             if i < len(segments) - 1:
                 next_seg = segments[i + 1]
-                if _roles_compatible_for_merge(seg.role, next_seg.role):
+                if (
+                    _roles_compatible_for_merge(seg.role, next_seg.role)
+                    and not next_seg.corner
+                ):
                     # Merge with the next segment when semantic role stays compatible.
-                    separator = " " if seg.text and next_seg.text else ""
-                    right_orig_offset = _original_text_length(
-                        seg.text, seg.replacement_spans
-                    ) + len(separator)
-                    right_replaced_offset = len(seg.text) + len(separator)
-                    seg.replacement_spans.extend(
-                        _offset_replacement_spans(
-                            next_seg.replacement_spans,
-                            orig_offset=right_orig_offset,
-                            replaced_offset=right_replaced_offset,
-                        )
-                    )
-                    seg.text = f"{seg.text}{separator}{next_seg.text}".strip()
-                    seg.end_ms = next_seg.end_ms
-                    if separator and seg.words:
-                        # Keep concatenated word text aligned with seg.text so
-                        # char-position walks in find_split_time stay exact.
-                        seg.words[-1] = seg.words[-1].model_copy(
-                            update={"word": seg.words[-1].word + separator}
-                        )
-                    seg.words.extend(next_seg.words)
+                    _merge_segment_into(seg, next_seg)
                     skip_next = True
             else:
                 pass  # Final Segment edge case
@@ -398,10 +416,13 @@ def _apply_interjection_merging(
                 and span_gap > 0
                 and span_gap <= interjection_gap_threshold_ms
             ):
-                if span_gap <= interjection_merge_threshold_ms:
+                if (
+                    span_gap <= interjection_merge_threshold_ms
+                    and _roles_compatible_for_merge(prev_seg.role, next_seg.role)
+                    and not next_seg.corner
+                ):
                     # MERGE: combine A's lines into one
-                    prev_seg.text = f"{prev_seg.text} {next_seg.text}".strip()
-                    prev_seg.end_ms = next_seg.end_ms
+                    _merge_segment_into(prev_seg, next_seg)
                     segments.pop(i + 2)
                     # Don't advance i — check if another interjection follows
                     continue
@@ -471,8 +492,7 @@ def _prevent_slot_overlaps(segments, min_duration_ms: int = 0):
 
         # Neither line can give way without becoming a flash. Merging keeps both
         # texts readable instead of stacking glyphs.
-        previous.text = f"{previous.text} {segment.text}".strip()
-        previous.end_ms = max(previous.end_ms, segment.end_ms)
+        _merge_segment_into(previous, segment)
     return resolved
 
 
@@ -497,20 +517,48 @@ def _screen_gaps(spans) -> List[tuple]:
     ]
 
 
-def _close_screen_gaps(spans, min_gap_ms: int):
-    """Close gaps too short to read as a pause, across every slot.
+def _span_speaker(span) -> Optional[str]:
+    if hasattr(span, "speaker"):
+        return span.speaker
+    if hasattr(span, "cue") and hasattr(span.cue, "speaker"):
+        return span.cue.speaker
+    return None
+
+
+def _close_screen_gaps(
+    spans,
+    min_gap_ms: int,
+    slot_lookup: Optional[dict[str, int]] = None,
+):
+    """Close gaps too short to read as a pause, within and across every slot.
 
     Only ever moves an END, never a START, and that asymmetry is the whole
     reason this is safe. A start has to land on the speech or the subtitle reads
     as out of sync; an end does not, and holding a line a little longer is
     ordinary subtitling practice — it is what minimum-duration rules do too.
 
-    So a line is extended to meet whatever comes next on screen. Extending
-    reaches at most the next line's start, which is at or before the next line
-    in the same slot, so it cannot open a same-slot overlap.
+    Closes sub-min_gap_ms gaps within each individual slot first (even if another
+    slot is concurrently active on screen), then closes global screen-empty gaps.
     """
     if min_gap_ms <= 0 or len(spans) < 2:
         return spans
+
+    # 1. Close sub-min_gap_ms flash gaps within each slot, even when another slot
+    # is concurrently active on screen.
+    lookup = slot_lookup or {}
+    groups: dict[Optional[str], list] = {}
+    for span in spans:
+        key = slot_key_for_speaker(_span_speaker(span), lookup)
+        groups.setdefault(key, []).append(span)
+
+    for group in groups.values():
+        group.sort(key=lambda item: (item.start_ms, item.end_ms))
+        for earlier, later in zip(group, group[1:]):
+            gap = later.start_ms - earlier.end_ms
+            if 0 < gap < min_gap_ms:
+                earlier.end_ms = later.start_ms
+
+    # 2. Close global screen gaps (where no slot has text on screen).
     for gap, ends_at, resumes_at in _screen_gaps(spans):
         if 0 < gap < min_gap_ms:
             for span in spans:
@@ -576,6 +624,7 @@ def check_display_invariants(
         groups.setdefault(key, []).append(cue)
 
     violations: List[DisplayViolation] = []
+    reported_gap_windows: set[tuple[int, int]] = set()
     for group in groups.values():
         group.sort(key=lambda cue: (cue.start_time, cue.end_time))
 
@@ -591,10 +640,13 @@ def check_display_invariants(
                     )
                 )
 
-        # Overlap stays per-slot: two lines in different boxes at once is the
-        # point of the overlay, not a defect.
+        # Overlap and same-slot flash gaps stay per-slot: two lines in different
+        # boxes at once is the point of the overlay, not a defect, and a blink in
+        # one box is still a flash even while the other box is holding text.
         for earlier, later in zip(group, group[1:]):
-            gap = round((later.start_time - earlier.end_time) * 1000)
+            earlier_end_ms = round(earlier.end_time * 1000)
+            later_start_ms = round(later.start_time * 1000)
+            gap = later_start_ms - earlier_end_ms
             if gap < 0:
                 violations.append(
                     DisplayViolation(
@@ -604,8 +656,19 @@ def check_display_invariants(
                         f"overlaps {later.id} by {-gap}ms in the same slot",
                     )
                 )
+            elif 0 < gap < gap_floor:
+                reported_gap_windows.add((earlier_end_ms, later_start_ms))
+                violations.append(
+                    DisplayViolation(
+                        "gap",
+                        earlier.id,
+                        earlier_end_ms / 1000.0,
+                        f"{gap}ms gap before {later.id} in the same slot — too "
+                        f"short to read as a pause",
+                    )
+                )
 
-    # Gaps are measured across every slot, over the merged coverage of the
+    # Gaps are also measured across every slot, over the merged coverage of the
     # rendering cues: a hand-off leaves the screen textless just as a same-slot
     # gap does. Closing one only ever lengthens the earlier line, which is
     # harmless — it is the start that has to land on the speech.
@@ -618,12 +681,15 @@ def check_display_invariants(
         for group in groups.values()
         for c in group
     ]
-    ends_at_cue = {
-        round(c.end_time * 1000): c for group in groups.values() for c in group
-    }
+    ends_at_cues: dict[int, List[SubtitleCue]] = {}
+    for group in groups.values():
+        for c in group:
+            ends_at_cues.setdefault(round(c.end_time * 1000), []).append(c)
+
     for gap, ends_at, resumes_at in _screen_gaps(spans):
-        if 0 < gap < gap_floor:
-            cue = ends_at_cue.get(ends_at)
+        if 0 < gap < gap_floor and (ends_at, resumes_at) not in reported_gap_windows:
+            matching_cues = ends_at_cues.get(ends_at, [])
+            cue = matching_cues[-1] if matching_cues else None
             violations.append(
                 DisplayViolation(
                     "gap",
@@ -636,6 +702,160 @@ def check_display_invariants(
 
     violations.sort(key=lambda item: (item.start_time, item.kind))
     return violations
+
+
+def _merge_micro_fragments_before_padding(
+    segments: List[SegmentMS],
+    snap_threshold_ms: int,
+    max_merged_chars: int = 42,
+) -> List[SegmentMS]:
+    """Merge ultra-short speaker micro-fragments with an adjacent line before padding.
+
+    When diarized speech contains a tiny 80-150ms single-token utterance or a
+    pair of sub-250ms utterances separated by <= snap_threshold_ms, padding each
+    fragment with 350-420ms of silence inflates them into standalone 500ms cues
+    that no longer look short to the post-padding merge pass.
+    """
+    if len(segments) < 2:
+        return segments
+
+    merged: List[SegmentMS] = []
+    i = 0
+    while i < len(segments):
+        seg = segments[i]
+        while i + 1 < len(segments) and seg.speaker is not None:
+            next_seg = segments[i + 1]
+            gap = next_seg.start_ms - seg.end_ms
+            seg_dur = seg.end_ms - seg.start_ms
+            next_dur = next_seg.end_ms - next_seg.start_ms
+            combined_len = len(seg.text) + (1 if seg.text and next_seg.text else 0) + len(next_seg.text)
+            if (
+                0 <= gap <= snap_threshold_ms
+                and _roles_compatible_for_merge(seg.role, next_seg.role)
+                and not next_seg.corner
+                and combined_len <= max_merged_chars
+                and (
+                    seg_dur <= 150
+                    or next_dur <= 150
+                    or (seg_dur <= 250 and next_dur <= 250)
+                )
+            ):
+                _merge_segment_into(seg, next_seg)
+                i += 1
+            else:
+                break
+        merged.append(seg)
+        i += 1
+    return merged
+
+
+def _resolve_cross_slot_transitions(
+    segments: List[SegmentMS],
+    slot_lookup: dict[str, int],
+    min_duration_ms: int,
+    video_duration_ms: Optional[int] = None,
+) -> List[SegmentMS]:
+    """Coordinate turn hand-offs and backchannels across speaker slots.
+
+    1. Bridges [A1] [B_short] [A2] backchannels so Speaker A's box holds across
+       Speaker B's brief nod (no 500ms empty-box blink in A's slot), while A2
+       starts on Speaker A's actual resumption speech onset.
+    2. Eliminates artificial 1-5 frame cross-slot overlaps manufactured by
+       symmetric lead-in/lead-out padding when the two speakers' raw speech
+       did not overlap.
+    """
+    if len(segments) < 2:
+        return segments
+
+    def s_key(seg: SegmentMS) -> Optional[str]:
+        return slot_key_for_speaker(seg.speaker, slot_lookup)
+
+    # Index neighbours within each slot so clamping never creates a same-slot overlap.
+    slot_groups: dict[Optional[str], List[SegmentMS]] = {}
+    for seg in segments:
+        slot_groups.setdefault(s_key(seg), []).append(seg)
+    prev_in_slot: dict[int, SegmentMS] = {}
+    next_in_slot: dict[int, SegmentMS] = {}
+    for grp in slot_groups.values():
+        grp.sort(key=lambda s: (s.start_ms, s.end_ms))
+        for idx, seg in enumerate(grp):
+            if idx > 0:
+                prev_in_slot[id(seg)] = grp[idx - 1]
+            if idx + 1 < len(grp):
+                next_in_slot[id(seg)] = grp[idx + 1]
+
+    # 1. Detect [A1] [B_short] [A2] cross-slot backchannels
+    held_across_backchannel: set[tuple[int, int]] = set()
+    for i in range(len(segments) - 2):
+        a1, b, a2 = segments[i], segments[i + 1], segments[i + 2]
+        if (
+            s_key(a1) is not None
+            and s_key(a1) == s_key(a2)
+            and s_key(a1) != s_key(b)
+            and next_in_slot.get(id(a1)) is a2
+        ):
+            b_raw_dur = b.raw_end_ms - b.raw_start_ms
+            raw_gap_a = a2.raw_start_ms - a1.raw_end_ms
+            if (
+                b_raw_dur <= 400
+                and 0 <= raw_gap_a <= 1000
+                and b.raw_start_ms >= a1.raw_end_ms - 50
+            ):
+                # Restore A2's start to its speech onset if gap snapping pulled it early
+                if a2.start_ms < a2.raw_start_ms and a2.end_ms - a2.raw_start_ms >= min_duration_ms:
+                    a2.start_ms = a2.raw_start_ms
+                # Hold A1 across B_short to meet A2 with zero blink in A's slot
+                if a1.end_ms < a2.start_ms:
+                    a1.end_ms = a2.start_ms
+                # Ensure B_short does not start before A1's raw speech finishes
+                if b.start_ms < a1.raw_end_ms:
+                    b_prev = prev_in_slot.get(id(b))
+                    floor_ms = max(a1.raw_end_ms, b_prev.end_ms if b_prev else 0)
+                    b.start_ms = max(floor_ms, min(b.raw_start_ms, a2.start_ms - min_duration_ms))
+                    if b.start_ms < floor_ms:
+                        b.start_ms = floor_ms
+                    b_next = next_in_slot.get(id(b))
+                    ceil_ms = b_next.start_ms if b_next else (video_duration_ms or (b.start_ms + min_duration_ms))
+                    if b.end_ms - b.start_ms < min_duration_ms:
+                        b.end_ms = min(ceil_ms, b.start_ms + min_duration_ms)
+                held_across_backchannel.add((id(a1), id(b)))
+                held_across_backchannel.add((id(b), id(a2)))
+
+    # 2. Remove artificial padding overlaps on sequential non-overlapping turns
+    for i in range(len(segments) - 1):
+        prev_seg = segments[i]
+        curr_seg = segments[i + 1]
+        if s_key(prev_seg) == s_key(curr_seg):
+            continue
+        if (id(prev_seg), id(curr_seg)) in held_across_backchannel:
+            continue
+        # Only repair when raw speech did not overlap
+        if curr_seg.raw_start_ms < prev_seg.raw_end_ms:
+            continue
+        if prev_seg.end_ms <= curr_seg.start_ms:
+            continue
+
+        # Clamp prev_seg post-speech padding if it spilled past curr_seg's raw start
+        if prev_seg.end_ms > prev_seg.raw_end_ms and prev_seg.end_ms > curr_seg.raw_start_ms:
+            prev_seg.end_ms = max(prev_seg.raw_end_ms, curr_seg.raw_start_ms)
+            if prev_seg.end_ms - prev_seg.start_ms < min_duration_ms:
+                p_prev = prev_in_slot.get(id(prev_seg))
+                left_bound = p_prev.end_ms if p_prev else 0
+                prev_seg.start_ms = max(left_bound, prev_seg.end_ms - min_duration_ms)
+
+        # Shift curr_seg pre-speech lead-in so it starts at or after prev_seg.end_ms
+        if curr_seg.start_ms < prev_seg.end_ms and curr_seg.start_ms < curr_seg.raw_start_ms:
+            new_start = min(curr_seg.raw_start_ms, max(curr_seg.start_ms, prev_seg.end_ms))
+            if new_start < prev_seg.end_ms:
+                new_start = prev_seg.end_ms
+            curr_seg.start_ms = new_start
+            if curr_seg.end_ms - curr_seg.start_ms < min_duration_ms:
+                c_next = next_in_slot.get(id(curr_seg))
+                right_bound = c_next.start_ms if c_next else (video_duration_ms or (curr_seg.start_ms + min_duration_ms))
+                curr_seg.end_ms = min(right_bound, curr_seg.start_ms + min_duration_ms)
+
+    segments.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
+    return segments
 
 
 def apply_timing_rules(
@@ -683,6 +903,9 @@ def apply_timing_rules(
         all_processed: List[SegmentMS] = []
         for spk, spk_lines in speaker_groups.items():
             spk_segments = [SegmentMS(line) for line in spk_lines]
+            spk_segments = _merge_micro_fragments_before_padding(
+                spk_segments, snap_threshold_ms
+            )
             spk_segments = _apply_interjection_merging(
                 spk_segments,
                 interjection_max_duration_ms,
@@ -706,9 +929,17 @@ def apply_timing_rules(
             all_processed.extend(spk_segments)
 
         all_processed.sort(key=lambda seg: (seg.start_ms, seg.end_ms))
-        segments = all_processed
+        segments = _resolve_cross_slot_transitions(
+            all_processed,
+            slot_lookup=slot_lookup,
+            min_duration_ms=min_duration_ms,
+            video_duration_ms=video_duration_ms,
+        )
     else:
         segments = [SegmentMS(line) for line in lines]
+        segments = _merge_micro_fragments_before_padding(
+            segments, snap_threshold_ms
+        )
         segments = _apply_interjection_merging(
             segments,
             interjection_max_duration_ms,

@@ -69,6 +69,25 @@ SUBORD = (
     "that",
     "if",
 )
+PREPOSITIONS = (
+    "in",
+    "on",
+    "at",
+    "from",
+    "with",
+    "about",
+    "after",
+    "before",
+    "into",
+    "over",
+    "under",
+    "through",
+    "between",
+    "without",
+    "during",
+    "around",
+    "against",
+)
 COMPLEMENTIZERS = {
     "that",
     "how",
@@ -264,6 +283,15 @@ def _candidates_regex(prose: str) -> list[tuple[int, float]]:
         for m in re.finditer(rf"\b{c} ", prose):
             if m.start():
                 out.append((m.start(), -20.0))
+    for p in PREPOSITIONS:
+        for m in re.finditer(rf"\b{p} ", prose):
+            if m.start():
+                out.append((m.start(), -10.0))
+    for m in re.finditer(
+        r"\b(?:something|anything|everything|nothing|someone|anyone|everyone|things|time|way|place|day)\s+(?=(?:I|you|he|she|we|they|it)\b)",
+        prose,
+    ):
+        out.append((m.end(), -15.0))
     return out
 
 

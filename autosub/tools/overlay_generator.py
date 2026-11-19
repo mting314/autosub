@@ -317,21 +317,23 @@ def generate_radio_overlay_image(
             canvas_width=canvas_w,
             canvas_height=canvas_h,
             card_width=260,
-            card_margin_left=30,
+            card_margin_left=int(entry.get("card_margin_left", 30)),
             text_gap=40,
+            y_offset=int(entry.get("y_offset", 0)),
         )
 
         # Bar geometry comes from the layout, not from arithmetic repeated here:
         # the ASS styles take their margins from the same call, and a bar that
         # disagrees with them puts the subtitle outside its own backdrop.
-        # Translucent dark charcoal background bar (approx 70% opacity)
+        # Translucent dark charcoal background bar (approx 70% opacity by default)
+        bar_alpha = int(entry.get("bar_alpha", 175))
         bar_draw.rounded_rectangle(
             [
                 (layout["bar_x1"], layout["bar_y1"]),
                 (layout["bar_x2"], layout["bar_y2"]),
             ],
             radius=14,
-            fill=(14, 14, 20, 175),
+            fill=(14, 14, 20, bar_alpha),
             outline=(255, 255, 255, 30),
             width=1,
         )
@@ -357,8 +359,9 @@ def generate_radio_overlay_image(
             canvas_width=canvas_w,
             canvas_height=canvas_h,
             card_width=260,
-            card_margin_left=30,
+            card_margin_left=int(entry.get("card_margin_left", 30)),
             text_gap=40,
+            y_offset=int(entry.get("y_offset", 0)),
         )
 
         cx, cy, cw, ch = (

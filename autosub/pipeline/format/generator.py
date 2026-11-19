@@ -11,6 +11,7 @@ from autosub.core.speaker_map import (
     hex_to_pyass_color,
     remap_speaker_labels,
     slot_style,
+    slot_styles_for_map,
 )
 
 # Script resolution the styles are authored against (1080p). Must be written into the
@@ -216,6 +217,7 @@ def _script_from_entries(
         else len(unique_speakers)
     )
 
+    positioned_styles = slot_styles_for_map(speaker_map) if speaker_map else {}
     styles = []
     speaker_origin_to_style_map = {}
     for i, speaker_name in enumerate(sorted(unique_speakers)):
@@ -227,7 +229,9 @@ def _script_from_entries(
         )
 
         slot = map_slots.get(speaker_name, map_slots.get(resolved_name))
-        if slot is not None:
+        if style_name in positioned_styles:
+            st = positioned_styles[style_name]
+        elif slot is not None:
             st = slot_style(
                 style_name,
                 c,
