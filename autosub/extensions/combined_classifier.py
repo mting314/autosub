@@ -32,7 +32,7 @@ class CombinedDecision(BaseModel):
 
 class CombinedClassifier(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-2.5-flash-lite",
+        "google-vertex": "gemini-3.1-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
     }
@@ -54,7 +54,7 @@ class CombinedClassifier(BaseStructuredLLM):
         speaker_names: list[str] | None = None,
     ):
         resolved_model = model or self.DEFAULT_MODELS.get(
-            provider, "gemini-2.5-flash-lite"
+            provider, "gemini-3.1-flash-lite"
         )
         super().__init__(
             project_id=project_id,
@@ -79,7 +79,6 @@ class CombinedClassifier(BaseStructuredLLM):
             segments_text += f"- {seg['name']}: {seg.get('description', '')}\n"
             if seg.get("cues"):
                 segments_text += f"  Common cue phrases: {', '.join(seg['cues'])}\n"
-
         speaker_task = ""
         speaker_field = ""
         if self._speaker_names:

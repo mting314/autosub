@@ -30,7 +30,7 @@ autosub/
 │   ├── postprocess/           # Profile-driven editorial cleanup
 │   └── report/                # HTML review report generator
 profiles/                      # TOML profiles (examples/ tracked, local/ gitignored)
-prompts/                       # Prompt files (examples/ tracked, local/ gitignored)
+prompts/                       # Legacy prompt files (DEPRECATED — inline into profile TOML instead)
 tests/                         # pytest test suite
 ```
 
@@ -47,8 +47,11 @@ Stages exchange `SubtitleDocument` JSON (`autosub/core/schemas.py`); `.ass` file
 
 ## Key Concepts
 
-- **Profiles**: TOML files with `extends` inheritance. Searched: `profiles/local/` > `profiles/examples/` > `profiles/`
-- **Prompts**: Markdown/text files loaded by profiles. Searched: `prompts/local/` > `prompts/examples/` > `prompts/`
+- **Profiles**: TOML files with `extends` inheritance. Searched: `profiles/local/` > `profiles/examples/` > `profiles/`. A profile not found anywhere is a hard error (`FileNotFoundError`), not a silent warning.
+- **Prompts**: Inline TOML strings inside a profile's `[translate] prompt = ...`. A profile can use either:
+  - **A single string** (`prompt = """..."""`) — one fragment.
+  - **A list of strings** (`prompt = ["""...""", """..."""]`) — multiple fragments concatenated, in order. Useful for layering: e.g. one block for program identity, another for shared style rules, another for unit-specific context. Fragments inherit additively through `extends` — a child profile's fragments are appended to the parent's, never replacing them.
+  - **(Deprecated)** A `.md`/`.txt` file path (`prompt = "prompts/foo.md"`). Still works but emits a deprecation warning. The `prompts/` directory will be removed in a future release.
 - **Extensions**: `radio_discourse` (listener mail classification) and `corners` (program segment detection) run at format/postprocess time
 - **Speaker maps**: Per-project TOML files mapping diarization labels to character names/colors
 - **Speaker colors**: Take Love Live colors from <https://ratius.github.io/LLS/color.html> — official
@@ -64,7 +67,7 @@ Stages exchange `SubtitleDocument` JSON (`autosub/core/schemas.py`); `.ass` file
 - Requires Opus encoding (WAV/AAC return empty results — observed behavior, not documented)
 - Audio > 18 min is split into chunks and transcribed in parallel via `ThreadPoolExecutor`
 - Chirp 3 returns bogus word timestamps at internal 18-min boundaries; `_clamp_word_timestamps` fixes these before offset is applied
-- SpeechAdaptation PhraseSet is incompatible with `enable_word_time_offsets` on Chirp 3, so vocabulary hints are skipped (logged as warning)
+- SpeechAdaptation is incompatible with `enable_word_time_offsets` on **both** Chirp models, so vocabulary hints never reach a subtitle run (logged as a warning). Chirp 3 returns 404 when both are set; Chirp 2 accepts the request and silently ignores the phrases. Correct ASR misreadings with `[format.normalizer.terms]` instead
 - Chirp 2 remains the default and uses WAV (pcm_s16le) encoding
 
 ## Docker Remote Execution
@@ -122,5 +125,5 @@ The script escapes single quotes in filenames for nested shell commands (e.g. "W
 
 - Commit messages: imperative mood, lowercase, concise
 - Branch per feature - don't tangle unrelated features
-- Local/user-specific files go in gitignored dirs (`profiles/local/`, `prompts/local/`, `config.toml`)
+- Local/user-specific files go in gitignored dirs (`profiles/local/`, `config.toml`). `prompts/local/` exists for legacy file-based prompts only — new content should be inlined directly into the profile TOML.
 - `scripts/remote.sh` is gitignored (contains hardcoded GCP config)

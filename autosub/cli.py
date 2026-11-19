@@ -26,7 +26,10 @@ LOG_FORMAT = "%(asctime)s:%(levelname)s:%(name)s: %(message)s"
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 logger = logging.getLogger(__name__)
 
-PROFILE_LOAD_ERRORS = (ValueError, FileNotFoundError, tomllib.TOMLDecodeError)
+# The profile loader only raises FileNotFoundError (missing profile/prompt) or
+# TOMLDecodeError (unparseable). Catching bare ValueError too would mask
+# unrelated programming errors as a clean "profile load failed" exit.
+PROFILE_LOAD_ERRORS = (FileNotFoundError, tomllib.TOMLDecodeError)
 
 app = typer.Typer(help="AutoSub CLI for Japanese subtitle generation and translation")
 
@@ -471,7 +474,11 @@ def transcribe(
 
     final_vocab = []
     if profile:
-        profile_data = load_unified_profile(profile)
+        try:
+            profile_data = load_unified_profile(profile)
+        except PROFILE_LOAD_ERRORS as e:
+            logger.error(f"Error while loading transcribe profile: {e}")
+            raise typer.Exit(code=1)
         final_vocab.extend(profile_data.get("transcribe", {}).get("vocab", []))
     if vocab:
         final_vocab.extend(vocab)
@@ -531,7 +538,7 @@ def format(
     speaker_map: Path = typer.Option(
         None,
         "--speaker-map",
-        help="Path to speaker_map.toml mapping API speaker labels to character names and colors.",
+        help="Path to speaker_map.toml mapping diarization labels to speaker names and colors.",
         exists=True,
         dir_okay=False,
     ),
@@ -779,11 +786,8 @@ def translate(
 
     translate_log_dir = None
     if save_log:
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_stem = input_json.stem.removesuffix("_formatted")
-        translate_log_dir = input_json.parent / f"{log_stem}_logs_{ts}"
+        translate_log_dir = input_json.parent / f"{log_stem}_logs"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
@@ -796,7 +800,11 @@ def translate(
     final_prompt_parts = []
     min_duration_ms = 500
     if profile:
-        profile_data = load_unified_profile(profile)
+        try:
+            profile_data = load_unified_profile(profile)
+        except PROFILE_LOAD_ERRORS as e:
+            logger.error(f"Error while loading translate profile: {e}")
+            raise typer.Exit(code=1)
         format_cfg = profile_data.get("format", {})
         min_duration_ms = format_cfg.get(
             "min_duration_ms",
@@ -865,6 +873,7 @@ def translate(
             reflow_model=reflow_model,
             speaker_map=loaded_speaker_map,
             min_duration_ms=min_duration_ms,
+            enable_trace=bool(save_log),
         )
     except Exception as e:
         logger.error(f"Error during translation: {e}")
@@ -938,7 +947,11 @@ def postprocess(
     final_extensions = {}
     min_duration_ms = 500
     if profile:
-        profile_data = load_unified_profile(profile)
+        try:
+            profile_data = load_unified_profile(profile)
+        except PROFILE_LOAD_ERRORS as e:
+            logger.error(f"Error while loading postprocess profile: {e}")
+            raise typer.Exit(code=1)
         final_extensions = profile_data.get("postprocess", {}).get("extensions", {})
         format_cfg = profile_data.get("format", {})
         min_duration_ms = format_cfg.get(
@@ -1398,6 +1411,13 @@ def run(
     prompt: str = typer.Option(
         None, "--prompt", "-p", help="System prompt to guide the LLM translation."
     ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Path to speaker_map.toml mapping diarization labels to speaker names and colors.",
+        exists=True,
+        dir_okay=False,
+    ),
     target_lang: str = typer.Option("en", "--target", help="Target language code."),
     source_lang: str = typer.Option("ja", "--source", help="Source language code."),
     model: str | None = typer.Option(
@@ -1465,13 +1485,6 @@ def run(
         None,
         "--retry-chunk",
         help="Re-translate specific chunk(s) by number (1-based). Can be passed multiple times.",
-    ),
-    speaker_map: Path = typer.Option(
-        None,
-        "--speaker-map",
-        help="Path to speaker_map.toml mapping API speaker labels to character names and colors.",
-        exists=True,
-        dir_okay=False,
     ),
     reflow: bool = typer.Option(
         True,
@@ -1562,20 +1575,24 @@ def run(
 
     translate_log_dir = None
     if save_log:
-        from datetime import datetime
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        translate_log_dir = out_dir / f"{stem}_logs_{ts}"
+        translate_log_dir = out_dir / f"{stem}_logs"
         translate_log_dir.mkdir(parents=True, exist_ok=True)
         _add_file_logger(translate_log_dir / "run.log")
 
     transcript_out = out_dir / f"{stem}_transcript.json"
-    formatted_json_out = out_dir / f"{stem}_formatted.json"
     original_ass_out = out_dir / f"{stem}_original.ass"
     translated_json_out = out_dir / f"{stem}_translated.json"
     translated_ass_out = out_dir / f"{stem}_translated.ass"
-    postprocessed_json_out = out_dir / f"{stem}_postprocessed.json"
-    final_ass_out = out_dir / f"{stem}_final.ass"
+
+    if translate_log_dir:
+        formatted_json_out = translate_log_dir / f"{stem}_formatted.json"
+    else:
+        import tempfile
+        from uuid import uuid4
+
+        formatted_json_out = (
+            Path(tempfile.gettempdir()) / f"{stem}_{uuid4().hex[:8]}_formatted.json"
+        )
 
     # Resolve Profile
     final_vocab = []
@@ -1634,6 +1651,16 @@ def run(
 
     if vocab:
         final_vocab.extend(vocab)
+
+    # Loaded once and used twice: to style the .ass by speaker at format time,
+    # and to tell the translator who is in the room.
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import build_speaker_prompt, load_speaker_map
+
+        loaded_speaker_map = load_speaker_map(speaker_map)
+        final_prompt_parts.append(build_speaker_prompt(loaded_speaker_map))
+
     if prompt:
         final_prompt_parts.append(prompt)
 
@@ -1720,10 +1747,24 @@ def run(
                 logger.info(f"Using provided keyframes: {keyframes}")
                 kf_ms = parse_aegisub_keyframes(keyframes, fps)
             elif extract_keyframes:
-                kf_out = out_dir / f"{video_path.stem}_keyframes.log"
+                is_temp_kf = False
+                if translate_log_dir:
+                    kf_out = translate_log_dir / "keyframes.log"
+                else:
+                    import tempfile
+                    from uuid import uuid4
+
+                    kf_out = (
+                        Path(tempfile.gettempdir())
+                        / f"{video_path.stem}_{uuid4().hex[:8]}_keyframes.log"
+                    )
+                    is_temp_kf = True
+
                 logger.info(f"Extracting keyframes to {kf_out}...")
                 extract_keyframes_func(video_path, kf_out)
                 kf_ms = parse_aegisub_keyframes(kf_out, fps)
+                if is_temp_kf and kf_out.exists():
+                    kf_out.unlink()
         else:
             logger.warning("No video stream found. Keyframe extraction disabled.")
     except Exception as e:
@@ -1742,6 +1783,8 @@ def run(
             extensions_config=final_format_extensions,
             normalizer_config=normalizer_config,
             speaker_map=loaded_speaker_map,
+            log_dir=translate_log_dir,
+            enable_trace=bool(save_log),
         )
     except Exception as e:
         logger.error(f"Failed during formatting: {e}")
@@ -1770,7 +1813,10 @@ def run(
             reflow_model=reflow_model,
             speaker_map=loaded_speaker_map,
             min_duration_ms=final_timing.get("min_duration_ms", 500),
+            enable_trace=bool(save_log),
         )
+        if not translate_log_dir and formatted_json_out.exists():
+            formatted_json_out.unlink()
     except Exception as e:
         logger.error(f"Failed during translation: {e}")
         raise typer.Exit(code=1)
@@ -1780,8 +1826,8 @@ def run(
         logger.info("[Step 4/4] Postprocessing...")
         postprocess_module.postprocess_subtitles(
             translated_json_out,
-            output_json_path=postprocessed_json_out,
-            output_ass_path=final_ass_out,
+            output_json_path=translated_json_out,
+            output_ass_path=translated_ass_out,
             extensions_config=final_postprocess_extensions,
             bilingual=bilingual,
             speaker_map=loaded_speaker_map,
@@ -1792,7 +1838,7 @@ def run(
         raise typer.Exit(code=1)
 
     logger.info(
-        f"Pipeline completed successfully! Final output saved to {final_ass_out}"
+        f"Pipeline completed successfully! Final output saved to {translated_ass_out}"
     )
 
 

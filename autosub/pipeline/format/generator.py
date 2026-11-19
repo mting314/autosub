@@ -41,10 +41,9 @@ def generate_ass_file(
     Converts a list of SubtitleLine objects into a pyass Script and saves it to disk.
     Automatically generates unique styles per speaker.
 
-    If speaker_map is provided, uses character names and specified colors
-    instead of raw API labels with auto-colors.
+    If speaker_map is provided, styles are named after the mapped speakers and
+    use their configured colors instead of raw labels with generated colors.
     """
-    # Remap raw speaker labels to character names before building styles
     if speaker_map:
         remap_speaker_labels(lines, speaker_map)
 

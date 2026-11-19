@@ -32,11 +32,19 @@ VALID_ENGINES: dict[str, set[str]] = {
 TRAILING_SPLIT_PUNCTUATION = "。！？!?、,"
 
 
-def _stage_trace_path(output_ass_path: Path, stage_name: str) -> Path:
+def _stage_trace_path(
+    output_ass_path: Path, stage_name: str, log_dir: Path | None = None
+) -> Path:
+    if log_dir is not None:
+        return log_dir / f"{stage_name}.llm_trace.jsonl"
     return output_ass_path.with_suffix(f".{stage_name}.llm_trace.jsonl")
 
 
-def _stage_edit_audit_path(output_ass_path: Path, stage_name: str) -> Path:
+def _stage_edit_audit_path(
+    output_ass_path: Path, stage_name: str, log_dir: Path | None = None
+) -> Path:
+    if log_dir is not None:
+        return log_dir / f"{stage_name}.edit_audit.tsv"
     return output_ass_path.with_suffix(f".{stage_name}.edit_audit.tsv")
 
 
@@ -55,6 +63,8 @@ def _apply_combined_extensions(
     corners_config: dict,
     output_ass_path: Path,
     speaker_map: dict[str, dict] | None = None,
+    log_dir: Path | None = None,
+    enable_trace: bool = True,
 ) -> list[SubtitleLine]:
     """Run radio_discourse + corners in a single LLM call."""
     from autosub.core.config import PROJECT_ID
@@ -104,9 +114,10 @@ def _apply_combined_extensions(
         if key not in combined_config and key in corners_config:
             combined_config[key] = corners_config[key]
     combined_config.setdefault("project_id", PROJECT_ID)
-    llm_trace_path = _stage_trace_path(output_ass_path, "combined")
-    combined_config.setdefault("llm_trace_path", llm_trace_path)
-    llm_trace_path.unlink(missing_ok=True)
+    if enable_trace:
+        llm_trace_path = _stage_trace_path(output_ass_path, "combined", log_dir=log_dir)
+        combined_config.setdefault("llm_trace_path", llm_trace_path)
+        llm_trace_path.unlink(missing_ok=True)
 
     # Speaker attribution rides along on the call the classifier already makes,
     # so correcting diarization costs no extra request. Opt-in per show: it is
@@ -410,6 +421,8 @@ def format_subtitles(
     normalizer_config: dict | None = None,
     replacements: dict[str, str] | None = None,
     speaker_map: dict[str, dict] | None = None,
+    log_dir: Path | None = None,
+    enable_trace: bool = True,
 ) -> SubtitleDocument:
     """
     Reads one or more transcript.json files, chunks the transcribed words into
@@ -440,14 +453,19 @@ def format_subtitles(
         if normalizer_engine == "llm":
             from autosub.core.config import PROJECT_ID
 
-            llm_trace_path = _stage_trace_path(output_ass_path, "normalizer")
-            edit_audit_path = _stage_edit_audit_path(output_ass_path, "normalizer")
-            llm_trace_path.unlink(missing_ok=True)
-            edit_audit_path.unlink(missing_ok=True)
             normalizer_config = dict(normalizer_config)
             normalizer_config.setdefault("project_id", PROJECT_ID)
-            normalizer_config.setdefault("llm_trace_path", llm_trace_path)
-            normalizer_config.setdefault("edit_audit_path", edit_audit_path)
+            if enable_trace:
+                llm_trace_path = _stage_trace_path(
+                    output_ass_path, "normalizer", log_dir=log_dir
+                )
+                edit_audit_path = _stage_edit_audit_path(
+                    output_ass_path, "normalizer", log_dir=log_dir
+                )
+                llm_trace_path.unlink(missing_ok=True)
+                edit_audit_path.unlink(missing_ok=True)
+                normalizer_config.setdefault("llm_trace_path", llm_trace_path)
+                normalizer_config.setdefault("edit_audit_path", edit_audit_path)
         lines = apply_normalization(lines, normalizer_config)
 
     if not extensions_config:
@@ -478,10 +496,13 @@ def format_subtitles(
         from autosub.extensions.radio_discourse.main import apply_radio_discourse
 
         if radio_engine in {"llm", "hybrid"}:
-            llm_trace_path = _stage_trace_path(output_ass_path, "radio_discourse")
             radio_discourse_config = dict(radio_discourse_config)
-            radio_discourse_config.setdefault("llm_trace_path", llm_trace_path)
-            llm_trace_path.unlink(missing_ok=True)
+            if enable_trace:
+                llm_trace_path = _stage_trace_path(
+                    output_ass_path, "radio_discourse", log_dir=log_dir
+                )
+                radio_discourse_config.setdefault("llm_trace_path", llm_trace_path)
+                llm_trace_path.unlink(missing_ok=True)
 
         lines = apply_radio_discourse(lines, radio_discourse_config)
         logger.info(f"Radio discourse extension produced {len(lines)} subtitle lines.")
@@ -495,6 +516,8 @@ def format_subtitles(
                 corners_config,
                 output_ass_path,
                 speaker_map=speaker_map,
+                log_dir=log_dir,
+                enable_trace=enable_trace,
             )
         else:
             # Standalone corners (cues-only, or radio_discourse not using LLM)
@@ -502,10 +525,13 @@ def format_subtitles(
             from autosub.extensions.corners.main import apply_corners
 
             if corners_engine in {"llm", "hybrid"}:
-                llm_trace_path = _stage_trace_path(output_ass_path, "corners")
-                llm_trace_path.unlink(missing_ok=True)
                 corners_config = dict(corners_config)
-                corners_config.setdefault("llm_trace_path", llm_trace_path)
+                if enable_trace:
+                    llm_trace_path = _stage_trace_path(
+                        output_ass_path, "corners", log_dir=log_dir
+                    )
+                    llm_trace_path.unlink(missing_ok=True)
+                    corners_config.setdefault("llm_trace_path", llm_trace_path)
 
             lines = apply_corners(lines, corners_config)
             detected = sum(1 for line in lines if line.corner)
@@ -536,8 +562,8 @@ def format_subtitles(
         speaker_map=speaker_map,
     )
 
-    # Remap raw diarization labels to character names before the document is built,
-    # so the JSON carries the same names the .ass styles are keyed on.
+    # Remap raw diarization labels to speaker names before the document is
+    # built, so the JSON carries the same names the .ass styles are keyed on.
     if speaker_map:
         remap_speaker_labels(lines, speaker_map)
 

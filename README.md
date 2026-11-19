@@ -181,6 +181,45 @@ Override the host project directory with `AUTOSUB_PROJECTS_DIR` (defaults to `./
 
 See `.env.example` for all configurable environment variables.
 
+## Speaker maps
+
+Diarization backends emit anonymous labels (`0`, `1`, ...) that are stable within a
+transcript but meaningless outside it. A speaker map names them:
+
+```toml
+[speakers."0"]
+name = "Suzuki Minori"
+character = "Ena Shinonome"   # optional
+color = "#FFA0A0"             # optional
+
+[speakers."1"]
+name = "Sato Hinata"
+character = "Mizuki Akiyama"
+color = "#A0D0FF"
+```
+
+Pass it to either stage, or to `autosub run`:
+
+```bash
+uv run autosub format transcript.json --speaker-map speaker_map.toml
+uv run autosub translate formatted.json --speaker-map speaker_map.toml
+```
+
+At **format** time the labels are replaced with `name`, so the formatted JSON and the
+generated `.ass` both carry real names, and each speaker gets a style in their `color`.
+A speaker with no `color` falls back to the generated palette.
+
+At **translate** time the map is turned into a "Speakers in this recording" prompt
+fragment listing each speaker and the character they voice, which helps the model keep
+first-person references and speech registers straight.
+
+Notes:
+
+- Several labels may share a `name`. Diarization tends to over-segment one person into
+  multiple labels, and giving them the same name merges them into a single style.
+- The map is keyed on the raw label, so it is specific to one transcript. Re-transcribing
+  can renumber the labels.
+
 ## Configuration
 
 Create a `.env` file in the repo root:
@@ -211,9 +250,8 @@ Copy-Item .\config.toml.sample .\config.toml
 
 Then choose one of these workflows:
 
-- Use a tracked example profile as-is. Example profiles in `.\profiles\examples` and prompt files in `.\prompts\examples` are committed and ready to use directly.
+- Use a tracked example profile as-is. Example profiles in `.\profiles\examples` are committed and ready to use directly. Each profile is fully self-contained — prompt text lives inline in the TOML.
 - Make your own local profile by copying an example into `.\profiles\local\my_profile.toml` and editing it.
-- Only create a file in `.\prompts\local` when you want to override prompt text locally. You do not need to copy every example prompt up front.
 
 Example local profile setup:
 
@@ -221,9 +259,9 @@ Example local profile setup:
 Copy-Item .\profiles\examples\solo_seiyuu_radio.toml .\profiles\local\my_profile.toml
 ```
 
-If `my_profile.toml` contains `prompt = "prompts/solo_seiyuu_radio.md"`, autosub will automatically prefer `.\prompts\local\solo_seiyuu_radio.md` over the tracked example file if both exist.
+`.\config.toml` and `.\profiles\local\*.toml` are gitignored on purpose, so you do not need to recommit them whenever you add or tweak a profile.
 
-`.\config.toml`, `.\profiles\local\*.toml`, and `.\prompts\local\*` are gitignored on purpose, so you do not need to recommit them whenever you add or tweak a profile or prompt.
+> **Legacy `prompts/` directory**: older profiles referenced prompt content via `prompt = "prompts/foo.md"`. Those references still load but emit a deprecation warning — inline the content into the profile TOML using `prompt = """..."""` instead. The `prompts/` tree will be removed in a future release.
 
 ## Quick Start
 
@@ -440,16 +478,16 @@ For `autosub run`, the effective defaults are combined from the stage sections:
 
 If you need a run-only override such as `out_dir` or `extract_keyframes`, an optional `[run]` section is still supported, but the default template leaves it out on purpose.
 
-Keep reusable content in profiles and prompt files instead:
+Keep reusable content in profiles instead:
 
-- prompt text
+- prompt text (inline as TOML strings; see [Profile Keys](#profile-keys))
 - vocabulary lists
 - glossary entries
 - timing rules
 - replacements
 - extension settings
 
-Tracked example prompt fragments live in [`prompts/examples`](./prompts/examples). Local prompt overrides live in `.\prompts\local`, which is gitignored.
+Tracked example profiles live in [`profiles/examples`](./profiles/examples). Local profile overrides live in `.\profiles\local`, which is gitignored.
 
 ## Command Reference
 
@@ -487,7 +525,7 @@ Behavior notes:
 - `--keyframes`: Path to an Aegisub keyframe log
 - `--fps`: Required when `--keyframes` is used
 - `--profile`: Loads `[format]`, including timing keys, replacements, and extensions
-- `--speaker-map`: Path to a `speaker_map.toml` mapping API speaker labels to character names and colors.
+- `--speaker-map`: Path to a `speaker_map.toml` naming the diarization labels (see [Speaker maps](#speaker-maps))
 
 Behavior notes:
 
@@ -509,6 +547,7 @@ Takes the formatted JSON from `autosub format` as input (not the `.ass` file).
 - `--llm-provider`: `google-vertex`, `anthropic-vertex`, `anthropic`, `openai`, or `openrouter` for the `vertex` engine
 - `--prompt`, `-p`: Extra translation guidance appended after profile prompts
 - `--profile`: Loads `[translate]`, including prompt text and glossary entries
+- `--speaker-map`: Path to a `speaker_map.toml`; adds a "Speakers in this recording" fragment to the prompt
 - `--target`: Target language code. Default: `en`
 - `--source`: Source language code. Default: `ja`
 - `--llm-model` / `--vertex-model`: Override the LLM model name. Defaults to `gemini-3-flash-preview` for `google-vertex`, `claude-haiku-4-5` for both `anthropic-vertex` and `anthropic`, `gpt-5-mini` for `openai`, and `openai/gpt-5-mini` for `openrouter`
@@ -695,7 +734,7 @@ conditional_snap_threshold_ms = 500
 [format.normalizer]
 engine = "llm"
 provider = "google-vertex"
-model = "gemini-2.5-flash-lite"
+model = "gemini-3.1-flash-lite"
 reasoning_effort = "minimal"
 allow_llm_correction = true
 
@@ -720,7 +759,11 @@ split_framing_phrases = true
 label_roles = true
 
 [translate]
-prompt = "prompts/suzuhara_nozomi.md"
+prompt = """
+Speaker-specific guidance for Nozomi Suzuhara (鈴原希実):
+1. Persona: She has a softer, cozy, slightly reserved presence...
+2. Delivery shifts: Her gentle, intimate casual speech will suddenly shift...
+"""
 
 [translate.glossary]
 "鈴原希実" = "Suzuhara Nozomi"
@@ -737,7 +780,7 @@ enabled = true
 - `[format.replacements]`: Exact deterministic replacements applied before formatting and timing rules. If `[format.normalizer]` is omitted, autosub treats this as the default exact normalizer.
 - `[format.normalizer]`: Optional normalizer config. Set `engine = "exact"` to use a replacement map or `engine = "llm"` to let an LLM propose substring replacements from an approved term list.
 - `[format.extensions]`: Nested extension configuration for the formatting stage.
-- `[translate].prompt`: Either inline text or a path ending in `.md` or `.txt`. File contents are loaded into the translation prompt.
+- `[translate].prompt`: Inline prompt text. Accepts either a single string (`prompt = """..."""`) or a list of strings (`prompt = ["""...""", """..."""]`) — list entries are concatenated in order, useful for layering reusable fragments. Inherited prompts from `extends` are appended additively (parent fragments first, then child). A path ending in `.md`/`.txt` is also accepted for backward compatibility but emits a deprecation warning; inline the content instead.
 - `[translate.glossary]`: Exact translation overrides appended to the translation prompt.
 - `[postprocess.extensions]`: Nested extension configuration for the postprocessing stage.
 
@@ -766,7 +809,7 @@ LLM mode example:
 [format.normalizer]
 engine = "llm"
 provider = "google-vertex"
-model = "gemini-2.5-flash-lite"
+model = "gemini-3.1-flash-lite"
 reasoning_effort = "minimal"
 allow_llm_correction = true
 

@@ -1,3 +1,11 @@
+"""Map raw diarization labels onto the people who were actually speaking.
+
+Diarization backends emit anonymous labels ("0", "1", ...) that are stable
+within a transcript but meaningless outside it. A speaker map is a per-project
+TOML file naming who each label is, so the rest of the pipeline can style each
+speaker distinctly and tell the translator who is in the room.
+"""
+
 import logging
 import tomllib
 from pathlib import Path
@@ -325,7 +333,11 @@ def build_speaker_prompt(speaker_map: dict[str, dict]) -> str:
 def remap_speaker_labels(
     lines: list[SubtitleLine], speaker_map: dict[str, dict]
 ) -> None:
-    """Replace raw API speaker labels with character names. Mutates in place."""
+    """Replace raw API speaker labels with speaker names. Mutates in place.
+
+    Idempotent: the map is keyed on raw labels, and a name that has already
+    been substituted is not itself a key, so a second pass is a no-op.
+    """
     for line in lines:
         if line.speaker and line.speaker in speaker_map:
             line.speaker = speaker_map[line.speaker]["name"]

@@ -253,11 +253,11 @@ def _apply_line_edits_to_words(
 
 class LLMKeywordNormalizer(BaseStructuredLLM):
     DEFAULT_MODELS = {
-        "google-vertex": "gemini-2.5-flash-lite",
+        "google-vertex": "gemini-3.1-flash-lite",
         "anthropic-vertex": "claude-haiku-4-5",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
-        "openrouter": "google/gemini-2.5-flash-lite",
+        "openrouter": "google/gemini-3.1-flash-lite",
     }
 
     def __init__(
@@ -275,7 +275,7 @@ class LLMKeywordNormalizer(BaseStructuredLLM):
         trace_path: Path | str | None = None,
     ):
         resolved_model = model or self.DEFAULT_MODELS.get(
-            provider, "gemini-2.5-flash-lite"
+            provider, "gemini-3.1-flash-lite"
         )
         super().__init__(
             project_id=project_id,

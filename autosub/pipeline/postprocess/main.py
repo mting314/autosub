@@ -73,7 +73,7 @@ def postprocess_subtitles(
     speaker_map: dict[str, dict] | None = None,
     min_duration_ms: int = 500,
     min_gap_ms: int | None = None,
-) -> None:
+) -> bool:
     """Produce the file that ships, and make it satisfy the on-screen rules.
 
     This is the stage that owns the finished output, so re-running it on an older
@@ -97,8 +97,10 @@ def postprocess_subtitles(
     for cue in processed.cues:
         cue.final_text = cue.final_text or cue.translated_text
 
+    modified = False
     stripped = _strip_corner_markers(processed)
     if stripped:
+        modified = True
         logger.info(
             "Removed the [CORNER: ...] prefix from %d line(s); the boundary is "
             "carried by cue.corner and the rendered corner comments.",
@@ -116,6 +118,7 @@ def postprocess_subtitles(
         bilingual=bilingual,
     )
     if merged_flashes:
+        modified = True
         logger.info(
             "Merged %d chained same-slot flash/fragment cue(s).",
             merged_flashes,
@@ -127,6 +130,7 @@ def postprocess_subtitles(
         bilingual=bilingual,
     )
     if rewrapped:
+        modified = True
         logger.info(
             "Re-wrapped %d cue(s) to fit the current slot style width.",
             rewrapped,
@@ -138,15 +142,16 @@ def postprocess_subtitles(
         min_duration_ms=min_duration_ms,
     )
     if repaired_overlaps:
+        modified = True
         logger.info(
             "Adjusted %d cross-slot turn transition(s) to eliminate artificial overlaps and hold across backchannels.",
             repaired_overlaps,
         )
-
     extensions_config = extensions_config or {}
     radio_discourse_config = extensions_config.get("radio_discourse", {})
     if radio_discourse_config.get("enabled"):
         if _apply_radio_discourse_postprocess(processed):
+            modified = True
             logger.info("Postprocessing modified subtitle document.")
 
     # Close gaps too short to read as a pause, across every slot. This only
@@ -165,6 +170,7 @@ def postprocess_subtitles(
             span.cue.end_time = span.end_ms / 1000.0
             extended += 1
     if extended:
+        modified = True
         logger.info("Extended %d line(s) to close sub-%dms gaps.", extended, gap_floor)
 
     # Whatever the repairs could not settle is a regression upstream, so say so
@@ -197,6 +203,7 @@ def postprocess_subtitles(
         mode="bilingual" if bilingual else "final",
         speaker_map=speaker_map,
     )
+    return modified
 
 
 def _apply_radio_discourse_postprocess(document: SubtitleDocument) -> bool:
