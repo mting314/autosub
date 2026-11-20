@@ -261,6 +261,7 @@ __marimo__/
 *.ass
 *.txt
 *.tsv
+/projects
 
 # Pipeline logs, traces, and temporary files
 *_logs/

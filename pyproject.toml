@@ -16,6 +16,7 @@ dependencies = [
     "google-cloud-storage>=3.9.0",
     "google-cloud-translate>=3.24.0",
     "google-genai>=1.64.0",
+    "pillow>=10.0.0",
     "pyass>=0.1.4",
     "pydantic>=2.12.5",
     "pydantic-ai-slim[anthropic,google,openai,openrouter]>=1.74.0",
@@ -26,6 +27,13 @@ dependencies = [
 [project.optional-dependencies]
 whisperx = [
     "whisperx>=3.8.5",
+]
+# Dependency-parse engine for Netflix-style line breaking. The model ships
+# separately: `python -m spacy download en_core_web_sm`. Without either, the
+# translate stage falls back to the regex engine, a coarser approximation of
+# the same rules.
+linebreak = [
+    "spacy>=3.8.0",
 ]
 
 [project.scripts]

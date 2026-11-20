@@ -11,7 +11,7 @@ from autosub.core.schemas import (
     TranscriptionMetadata,
     TranscriptionResult,
 )
-from autosub.core.speaker_map import remap_speaker_labels
+from autosub.core.speaker_map import build_style_name_lookup, remap_speaker_labels
 from autosub.pipeline.format import chunker
 from autosub.pipeline.format import generator
 from autosub.pipeline.format.normalizer import (
@@ -62,6 +62,7 @@ def _apply_combined_extensions(
     radio_config: dict,
     corners_config: dict,
     output_ass_path: Path,
+    speaker_map: dict[str, dict] | None = None,
     log_dir: Path | None = None,
     enable_trace: bool = True,
 ) -> list[SubtitleLine]:
@@ -118,9 +119,37 @@ def _apply_combined_extensions(
         combined_config.setdefault("llm_trace_path", llm_trace_path)
         llm_trace_path.unlink(missing_ok=True)
 
+    # Speaker attribution rides along on the call the classifier already makes,
+    # so correcting diarization costs no extra request. Opt-in per show: it is
+    # only useful when several hosts share a recording.
+    speaker_names: list[str] | None = None
+    if radio_config.get("correct_speakers") and speaker_map:
+        speaker_names = list(
+            dict.fromkeys(
+                entry["name"] for entry in speaker_map.values() if entry.get("name")
+            )
+        )
+        # Lines still carry raw diarization labels at this point, and the model is
+        # asked to answer in names. Resolve them first so the prior it is given and
+        # the answer it returns are in the same vocabulary. Remapping early is safe:
+        # slot lookup and remap_speaker_labels both accept labels or names.
+        style_names = build_style_name_lookup(speaker_map)
+        processed = [
+            line.model_copy(
+                update={"speaker": style_names.get(str(line.speaker), line.speaker)}
+            )
+            if line.speaker
+            else line
+            for line in processed
+        ]
+
     try:
-        roles, corners = classify_combined(
-            processed, fallback_roles, segments, combined_config
+        roles, corners, speakers = classify_combined(
+            processed,
+            fallback_roles,
+            segments,
+            combined_config,
+            speaker_names=speaker_names,
         )
     except VertexError:
         radio_engine = str(radio_config.get("engine", "rules")).lower()
@@ -133,6 +162,7 @@ def _apply_combined_extensions(
         )
         roles = fallback_roles
         corners = cue_corners
+        speakers = [line.speaker for line in processed]
 
     # Merge LLM corners with cue fallback
     merged_corners: list[str | None] = []
@@ -142,15 +172,16 @@ def _apply_combined_extensions(
 
     label_roles = radio_config.get("label_roles", True)
     result: list[SubtitleLine] = []
-    for line, role, corner in zip(processed, roles, merged_corners, strict=False):
-        result.append(
-            line.model_copy(
-                update={
-                    "role": role if label_roles else None,
-                    "corner": corner,
-                }
-            )
-        )
+    for line, role, corner, speaker in zip(
+        processed, roles, merged_corners, speakers, strict=False
+    ):
+        update = {
+            "role": role if label_roles else None,
+            "corner": corner,
+        }
+        if speaker_names:
+            update["speaker"] = speaker or line.speaker
+        result.append(line.model_copy(update=update))
 
     return result
 
@@ -484,6 +515,7 @@ def format_subtitles(
                 radio_discourse_config,
                 corners_config,
                 output_ass_path,
+                speaker_map=speaker_map,
                 log_dir=log_dir,
                 enable_trace=enable_trace,
             )
@@ -518,6 +550,16 @@ def format_subtitles(
         conditional_snap_threshold_ms=timing_config.get(
             "conditional_snap_threshold_ms", 500
         ),
+        interjection_max_duration_ms=timing_config.get(
+            "interjection_max_duration_ms", 1000
+        ),
+        interjection_merge_threshold_ms=timing_config.get(
+            "interjection_merge_threshold_ms", 1500
+        ),
+        interjection_gap_threshold_ms=timing_config.get(
+            "interjection_gap_threshold_ms", 2000
+        ),
+        speaker_map=speaker_map,
     )
 
     # Remap raw diarization labels to speaker names before the document is

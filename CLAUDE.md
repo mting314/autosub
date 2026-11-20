@@ -54,6 +54,11 @@ Stages exchange `SubtitleDocument` JSON (`autosub/core/schemas.py`); `.ass` file
   - **(Deprecated)** A `.md`/`.txt` file path (`prompt = "prompts/foo.md"`). Still works but emits a deprecation warning. The `prompts/` directory will be removed in a future release.
 - **Extensions**: `radio_discourse` (listener mail classification) and `corners` (program segment detection) run at format/postprocess time
 - **Speaker maps**: Per-project TOML files mapping diarization labels to character names/colors
+- **Speaker colors**: Take Love Live colors from <https://ratius.github.io/LLS/color.html> — official
+  character colors, looked up by *character* not voice actress. Never sample from artwork or guess.
+  ProSeka instead reads them from `sekai-story-indexer`'s `meta.json`. See
+  [`docs/speaker_colors.md`](docs/speaker_colors.md) for how the color is applied (subtitle outline,
+  card banner) and why a missing one fails silently rather than erroring.
 - **Config**: `config.toml` (gitignored) provides default CLI flags per stage
 
 ## Chirp 3 Backend (this branch)

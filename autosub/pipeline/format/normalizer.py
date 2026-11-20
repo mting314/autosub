@@ -1109,6 +1109,11 @@ def apply_llm_normalization(
     )
     edits = normalizer.propose_edits(lines, terms)
     allowed_terms = {term.value for term in terms}
+    # Off by default: an LLM that invents source text has arguably shown its whole
+    # edit set is untrustworthy, so failing loudly is the safer default. Long runs
+    # can opt out — one hallucinated edit in 800 lines should not cost a 40-minute
+    # pipeline, and a dropped edit is never applied to the text either way.
+    drop_unusable_edits = bool(config.get("drop_unusable_edits"))
     validation = _collect_llm_edit_validation(
         lines,
         edits,
@@ -1198,16 +1203,35 @@ def apply_llm_normalization(
             else []
         )
         if corrected_edits:
-            try:
-                corrected_edits = _override_retry_edit_ranges(lines, corrected_edits)
-            except NormalizerValidationError as exc:
-                _log_validation_errors(
-                    logging.ERROR,
-                    "LLM normalizer correction attempt",
-                    exc.errors,
+            if drop_unusable_edits:
+                repaired_ranges = _override_edit_ranges_best_effort(
+                    lines, corrected_edits
                 )
-                flush_audit_log()
-                raise
+                if repaired_ranges.errors:
+                    _log_validation_errors(
+                        logging.WARNING,
+                        "LLM normalizer correction attempt (dropping unusable edits)",
+                        repaired_ranges.errors,
+                    )
+                    audit_entries.extend(
+                        _audit_entries_for_edits(
+                            repaired_ranges.unresolved_edits, status="rejected"
+                        )
+                    )
+                corrected_edits = repaired_ranges.resolved_edits
+            else:
+                try:
+                    corrected_edits = _override_retry_edit_ranges(
+                        lines, corrected_edits
+                    )
+                except NormalizerValidationError as exc:
+                    _log_validation_errors(
+                        logging.ERROR,
+                        "LLM normalizer correction attempt",
+                        exc.errors,
+                    )
+                    flush_audit_log()
+                    raise
             corrected_validation = _collect_llm_edit_validation(
                 lines,
                 corrected_edits,
@@ -1220,7 +1244,7 @@ def apply_llm_normalization(
                     status="rejected",
                 )
             )
-            if corrected_validation.errors:
+            if corrected_validation.errors and not drop_unusable_edits:
                 _log_validation_errors(
                     logging.ERROR,
                     "LLM normalizer correction attempt",
@@ -1228,6 +1252,14 @@ def apply_llm_normalization(
                 )
                 flush_audit_log()
                 raise NormalizerValidationError(corrected_validation.errors)
+            if corrected_validation.errors:
+                # Keep the edits that validated and drop the rest; they are already
+                # recorded as rejected in the audit log.
+                _log_validation_errors(
+                    logging.WARNING,
+                    "LLM normalizer correction attempt (dropping unusable edits)",
+                    corrected_validation.errors,
+                )
             audit_entries.extend(
                 _audit_entries_for_edits(
                     _validated_to_normalization_edits(

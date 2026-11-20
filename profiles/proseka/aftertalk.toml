@@ -1,0 +1,84 @@
+extends = ["solo_seiyuu_radio", "proseka/base"]
+
+prompt = [
+    """
+ProSeka AfterTalk (プロセカアフタートーク) is a recurring livestream for the mobile rhythm game Project Sekai: Colorful Stage! feat. Hatsune Miku. Each edition covers one in-game event story: a single voice actor hosts, reads fan letters, and discusses the story while watching key scenes live. Streams air on YouTube after each event ends.
+
+Tone: relaxed YouTube livestream, not a formal presentation. Use casual register — "Here we go!" not "Please, take a look"; "if you think I'm yapping too much" not "If you find me too noisy."
+""",
+    """
+Recurring scripted lines — these appear in every AfterTalk episode. Use these EXACT translations:
+- "プロセカアフタートーク" opening → "Welcome to ProSeka AfterTalk: [EVENT NAME] edition!"
+- "[UNIT]の[CHARACTER]役の[VA NAME]です" → "I'm [VA NAME], the voice of [CHARACTER] from [UNIT]."
+- "イベントを振り返りながら" / "振り返っていく番組" → "a program where we look back on the event"
+- "アフターライブを一緒に楽しんでいく" → "enjoy the AfterLive together with everyone watching"
+- "#プロセカアフタートーク" → "the hashtag #ProSekaAfterTalk"
+- "YouTubeのチャットも見れるようになっています" → "The staff have set up the YouTube chat so I can see it right here"
+- "ディスコードの投稿チャンネル / メール" → "the official ProSeka Discord channel or via email"
+- "おたよりを募集しています" → "We're always looking for messages for our AfterTalks."
+- "次のアフタートークのイベントが始まったら送ってください" → "Please send one in when the next AfterTalk event starts."
+- "イベントに関係のあるものでお願いします" → "Just make sure your messages are related to the event."
+- "次のイベントが始まったらイベントストーリーから読めます" → "you can read it all in the Event Stories menu once the next event starts."
+- "おたよりはディスコード / メールで" → "You can submit them through the official ProSeka Discord channel or via email."
+- Short sign-off: "それではまた次回" → "See you next time." / "See you again next time!"
+- "バイバイ" → "Bye bye!"
+
+AfterTalk-specific style rules (the game-wide ProSeka rules are in proseka/base):
+1. Specific times like 5分 usually refer to clock times in the livestream schedule (e.g., 10:05 PM), not durations.
+2. Brand capitalization: AfterTalk (capital T), AfterLive (capital L).
+""",
+]
+# Game-wide vocabulary, glossary, and the transcript normalizer live in proseka/base.
+# Only AfterTalk's own program terms belong here.
+vocab = [
+    # --- Program ---
+    "アフタートーク",
+    "アフターライブ",
+]
+
+[glossary]
+"アフタートーク" = "AfterTalk"
+"アフターライブ" = "AfterLive"
+
+[[corners]]
+name = "Story Watchalong"
+description = "Host watches selected visual novel story scenes in picture-in-picture, reacting live over the gameplay footage. This is a passive watchalong — the host comments on what's on screen in real time, not a discussion or analysis of the story. Story discussion (e.g. talking about themes, plot points, impressions) is a separate topic and should NOT be marked as Story Watchalong."
+cues = [
+    "語りたいシーンをピックアップ",
+    "一緒に見ていきましょう",
+    "ストーリーを見ながら",
+    "ゲームの方でまた改めて見ていただければ",
+]
+
+[[corners]]
+name = "Card Illustrations"
+description = "Host reviews event card art, comparing before and after training illustrations. Lines discuss card art, expressions, outfits, and training upgrades."
+cues = [
+    "カードイラストを見ていきましょう",
+    "今回のイベントのカードを見ていきましょう",
+    "イラストコーナー",
+    "カードイラスト",
+]
+
+[[corners]]
+name = "Song Watchalong"
+description = "Host watches and reacts to the event's music video (3DMV or 2DMV). Lines discuss choreography, camera angles, character expressions, song impressions, and composer/artist credits."
+cues = [
+    "3DMVを見ていきましょう",
+    "2DMVを見ていきましょう",
+    "MVを見ていきましょう",
+    "MVご覧ください",
+    "MVを見てみましょう",
+    "楽曲についてお話",
+    "書き下ろしいただいた",
+]
+
+[[corners]]
+name = "Fan Letter Corner"
+description = "Host reads and responds to fan letters/messages submitted via Discord and email. Lines include pen names, fan comments, and the host's reactions."
+cues = [
+    "おたよりコーナー",
+    "おたよりを紹介",
+    "おたよりを読んでいきましょう",
+    "皆さんからいただいたおたより",
+]

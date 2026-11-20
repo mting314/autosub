@@ -40,6 +40,8 @@ color = "#A0D0FF"
         "name": "Suzuki Minori",
         "character": "Ena Shinonome",
         "color": "#FFA0A0",
+        "slot": 1,
+        "avatar": None,
     }
     assert result["1"]["name"] == "Sato Hinata"
 
