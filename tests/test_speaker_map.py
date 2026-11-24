@@ -177,7 +177,10 @@ def test_render_names_styles_after_mapped_speakers(tmp_path):
 def test_render_uses_the_configured_color(tmp_path):
     out = tmp_path / "out.ass"
     generator.render_ass_document(
-        _document("0"), out, mode="source", speaker_map={"0": {"name": "Kanade", "color": "#FF8040"}}
+        _document("0"),
+        out,
+        mode="source",
+        speaker_map={"0": {"name": "Kanade", "color": "#FF8040"}},
     )
 
     expected = pyass.Color(r=255, g=128, b=64, a=0)

@@ -210,7 +210,7 @@ def _load_prompt_fragments(
             logger.warning(
                 f"DEPRECATED: profile {profile_name} references prompt file "
                 f"{prompt_value!r}. Inline the prompt content directly into the "
-                f"profile TOML instead (prompt = \"\"\"...\"\"\"). File references "
+                f'profile TOML instead (prompt = """..."""). File references '
                 f"will be removed in a future release."
             )
             prompt_file_path = _resolve_prompt_path(prompt_value)
