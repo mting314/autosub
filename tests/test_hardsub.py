@@ -266,3 +266,56 @@ def test_black_scan_only_around_joins(tmp_path, monkeypatch):
     black = [c for c in cmds if any("blackdetect" in tok for tok in c)]
     assert len(black) == 2  # 3 segments -> 2 joins, one windowed scan each
     assert all("-ss" in c and "-t" in c for c in black)  # windowed, not a full-output decode
+
+
+# --- overlay.png & popups.json auto-discovery ---
+
+
+def test_overlay_png_and_popups_json_with_video_popup(tmp_path, monkeypatch):
+    import json
+
+    monkeypatch.setattr(hs.shutil, "which", lambda _: "/usr/bin/ffmpeg")
+    video = tmp_path / "v.mkv"
+    video.write_bytes(b"x")
+    ass = tmp_path / "s.ass"
+    _write_ass(ass, [("0:29:00.00", "0:29:05.00", "hi")])
+    (tmp_path / "overlay.png").write_bytes(b"png")
+    (tmp_path / "card.png").write_bytes(b"png")
+    (tmp_path / "anim.mov").write_bytes(b"mov")
+    (tmp_path / "popups.json").write_text(
+        json.dumps([
+            {"id": "before", "image": "card.png", "start": "0:10:00.00", "end": "0:10:05.00", "pos": [10, 20]},
+            {"id": "img", "image": "card.png", "start": "0:31:42.74", "end": "0:31:48.96", "pos": [372, 145]},
+            {"id": "vid", "image": "anim.mov", "start": "0:32:38.01", "end": "0:32:45.26", "pos": [627, 375]},
+            {"id": "missing", "image": "nope.png", "start": "0:29:10.00", "end": "0:29:15.00", "pos": [0, 0]},
+        ]),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(hs.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Result())
+
+    hs.hardsub_video(
+        video,
+        ass,
+        tmp_path / "o.mp4",
+        segments=[("0:28:55", "0:33:20")],
+        detect_black=False,
+        fade=0.4,
+    )
+
+    burn = next(c for c in calls if "-filter_complex" in c)
+    fc = burn[burn.index("-filter_complex") + 1]
+    # overlay.png at 0:0, then shifted img & vid popups, then ass=, then fade/afade
+    assert "[0:v][1:v]overlay=0:0[vbg]" in fc
+    assert "overlay=372:145:enable='between(t,167.740,173.960)'" in fc
+    assert "overlay=627:375:enable='between(t,223.010,230.260)'" in fc
+    assert "overlay=10:20" not in fc  # out-of-segment popup excluded
+    assert "ass=" in fc
+    assert "fade=t=in:st=0:d=0.40" in fc
+    assert "afade=t=in:st=0:d=0.40" in fc
+    # Video popup uses -itsoffset with its segment-relative start time
+    vid_idx = burn.index(str(tmp_path / "anim.mov"))
+    assert burn[vid_idx - 3 : vid_idx - 1] == ["-itsoffset", "223.010"]
+    # Static image popup does not get -itsoffset
+    img_idx = burn.index(str(tmp_path / "card.png"))
+    assert burn[img_idx - 2] != "-itsoffset"
