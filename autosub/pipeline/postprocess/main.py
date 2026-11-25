@@ -571,10 +571,17 @@ def _repair_cross_slot_turn_overlaps(
             b_raw_dur = b_raw_e - b_raw_s
             raw_gap_a = a2_raw_s - a1_raw_e
 
+            b_text = (b.final_text or b.translated_text or b.source_text or "").strip()
+            a1_text = (a1.final_text or a1.translated_text or a1.source_text or "").strip()
+            b_is_long_question = b_text.endswith(("?", "？")) and len(b_text) > 16
+            a1_unfinished = a1_text.endswith((",", "...", "…", "--", "—", "、", "けど", "つつ", "から", "て", "で"))
+            max_b_dur = 1200 if not b_is_long_question else 400
+            max_gap_a = 1800 if a1_unfinished else 1350
+
             if (
-                b_raw_dur <= 400
-                and 0 <= raw_gap_a <= 1000
-                and b_raw_s >= a1_raw_e - 50
+                b_raw_dur <= max_b_dur
+                and -250 <= raw_gap_a <= max_gap_a
+                and b_raw_s >= a1_raw_s
             ):
                 changed = False
                 a2_start_ms = round(a2.start_time * 1000)
@@ -613,7 +620,21 @@ def _repair_cross_slot_turn_overlaps(
                     if target_b_end - target_b_start >= min_duration_ms:
                         b.start_time = target_b_start / 1000.0
                         b.end_time = target_b_end / 1000.0
+                        b_start_ms = target_b_start
+                        b_end_ms = target_b_end
                         changed = True
+
+                # If B's post-speech hang spills past A2's start (or stops within
+                # min_duration_ms before A2's start), snap B's end to A2's start so
+                # A1 and B transition in sync with A2 rather than staggering.
+                if (
+                    b_end_ms > b_raw_e
+                    and b_end_ms > a2_start_ms
+                    and a2_start_ms - b_start_ms >= min_duration_ms
+                    and b_raw_e <= a2_start_ms + 150
+                ):
+                    b.end_time = a2_start_ms / 1000.0
+                    changed = True
 
                 held_pairs.add((a1.id, b.id))
                 held_pairs.add((b.id, a2.id))
@@ -631,7 +652,7 @@ def _repair_cross_slot_turn_overlaps(
 
         prev_raw_s, prev_raw_e = raw_bounds_ms(prev_cue)
         curr_raw_s, curr_raw_e = raw_bounds_ms(curr_cue)
-        if curr_raw_s < prev_raw_e:
+        if curr_raw_s < prev_raw_e - 150:
             # Genuine overlapping speech in the audio; preserve the overlap.
             continue
 
@@ -643,15 +664,23 @@ def _repair_cross_slot_turn_overlaps(
             continue
 
         changed = False
-        # Clamp prev_cue's post-speech padding if it spilled past curr_cue's raw start
-        if prev_end_ms > prev_raw_e and prev_end_ms > curr_raw_s:
+        # Clamp prev_cue's post-speech padding so its stop aligns with curr_cue's start
+        if prev_end_ms > curr_start_ms and curr_start_ms - prev_start_ms >= min_duration_ms:
+            prev_cue.end_time = curr_start_ms / 1000.0
+            prev_end_ms = curr_start_ms
+            changed = True
+        elif prev_end_ms > prev_raw_e and prev_end_ms > curr_raw_s:
             new_prev_end = max(prev_raw_e, curr_raw_s)
             prev_cue.end_time = new_prev_end / 1000.0
             prev_end_ms = new_prev_end
             if prev_end_ms - prev_start_ms < min_duration_ms:
                 p_prev = prev_in_slot.get(prev_cue.id)
                 left_bound = round(p_prev.end_time * 1000) if p_prev else 0
-                prev_cue.start_time = max(left_bound, prev_end_ms - min_duration_ms) / 1000.0
+                prev_start_ms = max(left_bound, prev_end_ms - min_duration_ms)
+                prev_cue.start_time = prev_start_ms / 1000.0
+                if prev_end_ms - prev_start_ms < min_duration_ms:
+                    prev_end_ms = prev_start_ms + min_duration_ms
+                    prev_cue.end_time = prev_end_ms / 1000.0
             changed = True
 
         # Shift curr_cue's pre-speech lead-in so it does not overlap prev_cue
