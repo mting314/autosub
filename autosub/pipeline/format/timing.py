@@ -796,10 +796,18 @@ def _resolve_cross_slot_transitions(
         ):
             b_raw_dur = b.raw_end_ms - b.raw_start_ms
             raw_gap_a = a2.raw_start_ms - a1.raw_end_ms
+            b_text = (b.text or "").strip()
+            a1_text = (a1.text or "").strip()
+            b_is_long_question = b_text.endswith(("?", "？")) and len(b_text) > 16
+            a1_unfinished = a1_text.endswith((",", "...", "…", "--", "—", "、", "けど", "つつ", "から", "て", "で"))
+            max_b_dur = 1200 if not b_is_long_question else 400
+            max_gap_a = 1800 if a1_unfinished else 1350
             if (
-                b_raw_dur <= 400
-                and 0 <= raw_gap_a <= 1000
-                and b.raw_start_ms >= a1.raw_end_ms - 50
+                b_raw_dur <= max_b_dur
+                and -250 <= raw_gap_a <= max_gap_a
+                # B must start (near) after A1's speech; a backchannel spoken
+                # mid-A1 is genuine overlap and must not be pushed later.
+                and b.raw_start_ms >= a1.raw_end_ms - 250
             ):
                 # Restore A2's start to its speech onset if gap snapping pulled it early
                 if a2.start_ms < a2.raw_start_ms and a2.end_ms - a2.raw_start_ms >= min_duration_ms:

@@ -764,3 +764,24 @@ def test_check_display_invariants_detects_same_slot_flash_gap_while_other_slot_a
     found = check_display_invariants(cues, speaker_map=_SLOT_MAP)
     assert [v.kind for v in found] == ["gap"]
     assert found[0].cue_id == "cue-00000001"
+
+
+def test_backchannel_spoken_during_a1_is_not_pushed_after_a1():
+    """Regression: a nod overlapping A1's speech must stay where it was spoken."""
+    from autosub.core.schemas import SubtitleLine, TranscribedWord
+    from autosub.pipeline.format.timing import SegmentMS, _resolve_cross_slot_transitions
+
+    def seg(text, s, e, spk, ws, we):
+        return SegmentMS(
+            SubtitleLine(
+                text=text, start_time=s, end_time=e, speaker=spk,
+                words=[TranscribedWord(word=text, start_time=ws, end_time=we)],
+            )
+        )
+
+    a1 = seg("それでね、昨日の話なんだけど", 0.0, 3.3, "A", 0.0, 3.0)
+    b = seg("うんうん", 1.0, 2.3, "B", 1.0, 2.0)
+    a2 = seg("すごかったの", 3.5, 5.0, "A", 3.5, 5.0)
+    out = _resolve_cross_slot_transitions([a1, b, a2], {"A": 1, "B": 2}, 500)
+    nod = next(s for s in out if s.speaker == "B")
+    assert nod.start_ms == 1000
