@@ -24,6 +24,7 @@ there are fine.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -42,6 +43,7 @@ logger = logging.getLogger(__name__)
 # Keep ffmpeg's stderr minimal (drop the per-second progress spam) so failure
 # output stays readable and stderr never floods a pipe.
 _QUIET = ["-nostats", "-loglevel", "warning"]
+_VIDEO_POPUP_EXTENSIONS = {".mov", ".mp4", ".mkv", ".webm", ".avi"}
 
 
 def _resolve_ffmpeg() -> str:
@@ -80,6 +82,92 @@ def _ass_filter_arg(path: Path | str, fonts_dir: Path | str | None = None) -> st
     return arg
 
 
+def _resolve_overlay_and_popups(
+    video_path: Path, ass_path: Path
+) -> tuple[Path | None, list[dict]]:
+    """Discover optional ``overlay.png`` and ``popups.json`` beside the subs or video."""
+    search_dirs = [ass_path.parent]
+    if video_path.parent != ass_path.parent:
+        search_dirs.append(video_path.parent)
+
+    overlay_path: Path | None = None
+    for d in search_dirs:
+        candidate = d / "overlay.png"
+        if candidate.is_file():
+            overlay_path = candidate
+            break
+
+    popups: list[dict] = []
+    for d in search_dirs:
+        manifest = d / "popups.json"
+        if not manifest.is_file():
+            continue
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            logger.warning("Ignoring non-list popups manifest: %s", manifest)
+            break
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            rel_media = str(item.get("image") or "").strip()
+            if not rel_media:
+                continue
+            media_path = manifest.parent / rel_media
+            if not media_path.is_file():
+                logger.warning("Popup media not found, skipping: %s", media_path)
+                continue
+            start_s = parse_timestamp(str(item["start"]))
+            end_s = parse_timestamp(str(item["end"]))
+            if end_s <= start_s:
+                continue
+            pos = item.get("pos") or [0, 0]
+            popups.append(
+                {
+                    "id": item.get("id") or media_path.stem,
+                    "path": media_path,
+                    "start": start_s,
+                    "end": end_s,
+                    "pos": (int(pos[0]), int(pos[1])),
+                    "is_video": media_path.suffix.lower() in _VIDEO_POPUP_EXTENSIONS,
+                }
+            )
+        break
+
+    return overlay_path, popups
+
+
+def _active_popups_for_segment(
+    popups: list[dict],
+    seg_start: float,
+    seg_duration: float | None,
+) -> list[dict]:
+    """Return popup specs with timestamps shifted relative to ``seg_start``."""
+    seg_end = seg_start + seg_duration if seg_duration is not None else None
+    active: list[dict] = []
+    for item in popups:
+        p_start = item["start"]
+        p_end = item["end"]
+        if p_end <= seg_start:
+            continue
+        if seg_end is not None and p_start >= seg_end:
+            continue
+        rel_start = max(0.0, p_start - seg_start)
+        rel_end = p_end - seg_start
+        if seg_duration is not None:
+            rel_end = min(seg_duration, rel_end)
+        if rel_end <= rel_start:
+            continue
+        active.append(
+            {
+                **item,
+                "rel_start": rel_start,
+                "rel_end": rel_end,
+                "vid_seek": max(0.0, seg_start - p_start),
+            }
+        )
+    return active
+
+
 def hardsub_video(
     video_path: Path | str,
     ass_path: Path | str,
@@ -90,6 +178,7 @@ def hardsub_video(
     preset: str = "medium",
     detect_black: bool = True,
     fonts_dir: Path | str | None = None,
+    fade: float = 0.0,
 ) -> None:
     """Burn ``ass_path`` into ``video_path``, trim to ``segments``, write output.
 
@@ -126,6 +215,12 @@ def hardsub_video(
     if fonts_dir is not None:
         logger.info("Using fonts from %s", fonts_dir)
 
+    overlay_path, popups = _resolve_overlay_and_popups(video_path, ass_path)
+    if overlay_path is not None:
+        logger.info("Using radio overlay %s", overlay_path)
+    if popups:
+        logger.info("Loaded %d popup(s) from popups.json", len(popups))
+
     segs = list(segments or [])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     joins: list[float] = []
@@ -142,15 +237,58 @@ def hardsub_video(
             except OSError:
                 shutil.copyfile(ass_path, subs_link)
             logger.info("Hardsubbing %s (whole video)...", video_path.name)
-            _run(_burn_whole_cmd(ffmpeg, video_path, subs_link, output_path, crf, preset, fonts_dir), "hardsub burn")
+            active_popups = _active_popups_for_segment(popups, 0.0, None)
+            if overlay_path is not None or active_popups or fade > 0:
+                cmd = _burn_filter_complex_cmd(
+                    ffmpeg,
+                    video_path,
+                    subs_link,
+                    output_path,
+                    crf,
+                    preset,
+                    fonts_dir=fonts_dir,
+                    overlay_path=overlay_path,
+                    popups=active_popups,
+                    fade=fade,
+                )
+            else:
+                cmd = _burn_whole_cmd(ffmpeg, video_path, subs_link, output_path, crf, preset, fonts_dir)
+            _run(cmd, "hardsub burn")
         elif len(segs) == 1:
             start, end = segs[0]
             logger.info("Hardsubbing %s (%s–%s)...", video_path.name, start, end)
-            cmd = _prepare_segment(ffmpeg, video_path, ass_path, output_path, start, end, crf, preset, tmpdir, 0, fonts_dir)
+            cmd = _prepare_segment(
+                ffmpeg,
+                video_path,
+                ass_path,
+                output_path,
+                start,
+                end,
+                crf,
+                preset,
+                tmpdir,
+                0,
+                fonts_dir,
+                overlay_path=overlay_path,
+                popups=popups,
+                fade=fade,
+            )
             _run(cmd, "hardsub burn")
         else:
             logger.info("Hardsubbing %s across %d segments...", video_path.name, len(segs))
-            parts = _burn_segments_parallel(ffmpeg, video_path, ass_path, segs, crf, preset, tmpdir, fonts_dir)
+            parts = _burn_segments_parallel(
+                ffmpeg,
+                video_path,
+                ass_path,
+                segs,
+                crf,
+                preset,
+                tmpdir,
+                fonts_dir,
+                overlay_path=overlay_path,
+                popups=popups,
+                fade=fade,
+            )
             _concat(ffmpeg, parts, output_path, tmpdir)
             joins = _join_offsets(segs)
 
@@ -194,7 +332,23 @@ def _shift_ass(src_ass: Path, offset_seconds: float, dst_ass: Path) -> None:
         pyass.dump(script, handle)
 
 
-def _prepare_segment(ffmpeg, video, ass_path, out, start, end, crf, preset, tmpdir, idx, fonts_dir=None) -> list[str]:
+def _prepare_segment(
+    ffmpeg,
+    video,
+    ass_path,
+    out,
+    start,
+    end,
+    crf,
+    preset,
+    tmpdir,
+    idx,
+    fonts_dir=None,
+    *,
+    overlay_path: Path | None = None,
+    popups: list[dict] | None = None,
+    fade: float = 0.0,
+) -> list[str]:
     """Shift the subtitle for this segment and return the input-seek burn command."""
     start_s = parse_timestamp(start)
     duration = parse_timestamp(end) - start_s
@@ -202,6 +356,22 @@ def _prepare_segment(ffmpeg, video, ass_path, out, start, end, crf, preset, tmpd
         raise ValueError(f"segment end must be after start: {start}–{end}")
     shifted = tmpdir / f"seg_{idx:03d}.ass"
     _shift_ass(ass_path, start_s, shifted)
+    active_popups = _active_popups_for_segment(popups or [], start_s, duration)
+    if overlay_path is not None or active_popups or fade > 0:
+        return _burn_filter_complex_cmd(
+            ffmpeg,
+            video,
+            shifted,
+            out,
+            crf,
+            preset,
+            start=start,
+            duration=duration,
+            fonts_dir=fonts_dir,
+            overlay_path=overlay_path,
+            popups=active_popups,
+            fade=fade,
+        )
     return _seg_burn_cmd(ffmpeg, video, shifted, out, start, duration, crf, preset, fonts_dir)
 
 
@@ -223,7 +393,93 @@ def _seg_burn_cmd(ffmpeg, video, shifted_ass, out, start, duration, crf, preset,
     ]
 
 
-def _burn_segments_parallel(ffmpeg, video, ass_path, segs, crf, preset, tmpdir, fonts_dir=None) -> list[Path]:
+def _burn_filter_complex_cmd(
+    ffmpeg,
+    video,
+    ass_file,
+    out,
+    crf,
+    preset,
+    *,
+    start: str | None = None,
+    duration: float | None = None,
+    fonts_dir=None,
+    overlay_path: Path | None = None,
+    popups: list[dict] | None = None,
+    fade: float = 0.0,
+) -> list[str]:
+    """Build an ffmpeg ``-filter_complex`` command with overlay, popups, ASS, and fades."""
+    cmd: list[str] = [ffmpeg, "-y", *_QUIET]
+    if start is not None:
+        cmd.extend(["-ss", start])
+    if duration is not None:
+        cmd.extend(["-t", f"{duration:.3f}"])
+    cmd.extend(["-i", str(video)])
+
+    next_input = 1
+    filters: list[str] = []
+    cur_label = "[0:v]"
+
+    if overlay_path is not None:
+        cmd.extend(["-i", str(overlay_path)])
+        out_label = "[vbg]"
+        filters.append(f"{cur_label}[{next_input}:v]overlay=0:0{out_label}")
+        cur_label = out_label
+        next_input += 1
+
+    for idx, item in enumerate(popups or []):
+        if item["is_video"]:
+            if item["vid_seek"] > 0:
+                cmd.extend(["-ss", f"{item['vid_seek']:.3f}"])
+            elif item["rel_start"] > 0:
+                cmd.extend(["-itsoffset", f"{item['rel_start']:.3f}"])
+        cmd.extend(["-i", str(item["path"])])
+        x, y = item["pos"]
+        out_label = f"[vp{idx}]"
+        filters.append(
+            f"{cur_label}[{next_input}:v]overlay={x}:{y}:enable='between(t,{item['rel_start']:.3f},{item['rel_end']:.3f})'{out_label}"
+        )
+        cur_label = out_label
+        next_input += 1
+
+    ass_expr = _ass_filter_arg(ass_file, fonts_dir)
+    if fade > 0 and duration is not None and duration > 2 * fade:
+        fade_out_st = duration - fade
+        filters.append(
+            f"{cur_label}{ass_expr},fade=t=in:st=0:d={fade:.2f},fade=t=out:st={fade_out_st:.2f}:d={fade:.2f}[outv]"
+        )
+        filters.append(
+            f"[0:a]afade=t=in:st=0:d={fade:.2f},afade=t=out:st={fade_out_st:.2f}:d={fade:.2f}[outa]"
+        )
+        audio_map = "[outa]"
+    else:
+        filters.append(f"{cur_label}{ass_expr}[outv]")
+        audio_map = "0:a"
+
+    cmd.extend(["-filter_complex", ";".join(filters), "-map", "[outv]", "-map", audio_map])
+    cmd.extend(
+        [
+            "-c:v", "libx264", "-crf", str(crf), "-preset", preset,
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(out),
+        ]
+    )
+    return cmd
+
+
+def _burn_segments_parallel(
+    ffmpeg,
+    video,
+    ass_path,
+    segs,
+    crf,
+    preset,
+    tmpdir,
+    fonts_dir=None,
+    *,
+    overlay_path: Path | None = None,
+    popups: list[dict] | None = None,
+    fade: float = 0.0,
+) -> list[Path]:
     """Burn each segment concurrently, bounded to the CPU count.
 
     Each burn runs via ``subprocess.run`` (which fully drains its own stderr, so
@@ -236,7 +492,22 @@ def _burn_segments_parallel(ffmpeg, video, ass_path, segs, crf, preset, tmpdir, 
     def _burn(i: int) -> None:
         start, end = segs[i]
         logger.info("  segment %d/%d: %s–%s", i + 1, len(segs), start, end)
-        cmd = _prepare_segment(ffmpeg, video, ass_path, parts[i], start, end, crf, preset, tmpdir, i, fonts_dir)
+        cmd = _prepare_segment(
+            ffmpeg,
+            video,
+            ass_path,
+            parts[i],
+            start,
+            end,
+            crf,
+            preset,
+            tmpdir,
+            i,
+            fonts_dir,
+            overlay_path=overlay_path,
+            popups=popups,
+            fade=fade,
+        )
         _run(cmd, f"hardsub segment {i + 1}")
 
     with ThreadPoolExecutor(max_workers=workers) as executor:

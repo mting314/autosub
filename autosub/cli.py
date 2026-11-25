@@ -1897,6 +1897,12 @@ def hardsub(
         exists=False,
         file_okay=False,
     ),
+    fade: float = typer.Option(
+        0.0,
+        "--fade",
+        min=0.0,
+        help="Fade-in/fade-out duration in seconds at segment boundaries (e.g. 0.4).",
+    ),
 ):
     """
     Burn subtitles into a video and trim to segment(s).
@@ -1930,6 +1936,7 @@ def hardsub(
             preset=preset,
             detect_black=detect_black,
             fonts_dir=fonts_dir,
+            fade=fade,
         )
     except Exception as e:
         logger.error(f"Error during hardsub: {e}")
