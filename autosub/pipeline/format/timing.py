@@ -805,7 +805,9 @@ def _resolve_cross_slot_transitions(
             if (
                 b_raw_dur <= max_b_dur
                 and -250 <= raw_gap_a <= max_gap_a
-                and b.raw_start_ms >= a1.raw_start_ms
+                # B must start (near) after A1's speech; a backchannel spoken
+                # mid-A1 is genuine overlap and must not be pushed later.
+                and b.raw_start_ms >= a1.raw_end_ms - 250
             ):
                 # Restore A2's start to its speech onset if gap snapping pulled it early
                 if a2.start_ms < a2.raw_start_ms and a2.end_ms - a2.raw_start_ms >= min_duration_ms:

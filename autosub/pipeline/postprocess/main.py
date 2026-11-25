@@ -581,7 +581,9 @@ def _repair_cross_slot_turn_overlaps(
             if (
                 b_raw_dur <= max_b_dur
                 and -250 <= raw_gap_a <= max_gap_a
-                and b_raw_s >= a1_raw_s
+                # B must start (near) after A1's speech; a backchannel spoken
+                # mid-A1 is genuine overlap and must not be pushed later.
+                and b_raw_s >= a1_raw_e - 250
             ):
                 changed = False
                 a2_start_ms = round(a2.start_time * 1000)
@@ -665,7 +667,13 @@ def _repair_cross_slot_turn_overlaps(
 
         changed = False
         # Clamp prev_cue's post-speech padding so its stop aligns with curr_cue's start
-        if prev_end_ms > curr_start_ms and curr_start_ms - prev_start_ms >= min_duration_ms:
+        # Only when curr's start (incl. lead-in) is at/after prev's speech end, so the
+        # snap never cuts into prev's actual speech.
+        if (
+            prev_end_ms > curr_start_ms
+            and curr_start_ms >= prev_raw_e
+            and curr_start_ms - prev_start_ms >= min_duration_ms
+        ):
             prev_cue.end_time = curr_start_ms / 1000.0
             prev_end_ms = curr_start_ms
             changed = True

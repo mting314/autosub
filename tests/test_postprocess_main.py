@@ -525,3 +525,23 @@ def test_postprocess_merges_chained_same_slot_flash_and_fragment_cues(tmp_path):
     assert doc.cues[1].final_text == "How was today for you, Hon-chan?"
     assert doc.cues[1].start_time == 121.92
     assert doc.cues[1].end_time == 123.28
+
+
+def test_stop_to_start_snap_never_cuts_prev_speech():
+    """Regression: curr's lead-in starting before prev's speech ends must not truncate prev."""
+    from autosub.core.schemas import SubtitleCue, TranscribedWord
+    from autosub.pipeline.postprocess.main import _repair_cross_slot_turn_overlaps
+
+    def cue(i, s, e, spk, ws, we):
+        return SubtitleCue(
+            id=i, start_time=s, end_time=e, speaker=spk, source_text="x",
+            translated_text="t", final_text="t",
+            words=[TranscribedWord(word="x", start_time=ws, end_time=we)],
+        )
+
+    prev = cue("cue-1", 0.0, 3.4, "A", 0.0, 3.0)
+    curr = cue("cue-2", 2.6, 5.0, "B", 3.1, 5.0)
+    sm = {"A": {"name": "A", "slot": 1}, "B": {"name": "B", "slot": 2}}
+    _repair_cross_slot_turn_overlaps([prev, curr], speaker_map=sm, min_duration_ms=500)
+    assert prev.end_time >= 3.0
+    assert curr.start_time >= prev.end_time
