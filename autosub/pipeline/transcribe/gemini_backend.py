@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 from google import genai
 from google.genai import types

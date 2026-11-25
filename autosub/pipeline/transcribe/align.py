@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import array
 import difflib
+import glob
 import logging
 import math
 from pathlib import Path
@@ -96,7 +97,9 @@ def find_companion_vtt(media_or_doc_path: Path) -> Path | None:
         if cand.is_file():
             return cand
 
-    vtts = sorted(parent.glob(f"{stem}*.vtt")) or sorted(parent.glob("*.vtt"))
+    # Only accept captions named after this media/doc stem; never fall back to an
+    # arbitrary .vtt in the folder (it may belong to a different episode).
+    vtts = sorted(parent.glob(f"{glob.escape(stem)}*.vtt"))
     return vtts[0] if vtts else None
 
 
@@ -182,7 +185,11 @@ def fetch_youtube_vtt(
         )
         return None
 
-    return find_companion_vtt(target_dir / f"{stem}.mkv")
+    written = sorted(target_dir.glob(f"{glob.escape(stem)}.auto-captions*.vtt"))
+    if not written:
+        logger.warning("yt-dlp exited cleanly but wrote no %s captions for %s.", sub_lang, youtube_url)
+        return None
+    return written[0]
 
 
 def ensure_companion_vtt(
@@ -193,9 +200,7 @@ def ensure_companion_vtt(
 ) -> Path | None:
     """Return an existing companion `.vtt` or fetch it from YouTube via `yt-dlp`."""
     existing = find_companion_vtt(media_or_doc_path)
-    if existing is not None and not youtube_url:
-        return existing
-    if existing is not None and youtube_url:
+    if existing is not None:
         return existing
 
     resolved_url = resolve_youtube_url(media_or_doc_path, explicit_url=youtube_url)
@@ -213,7 +218,8 @@ def ensure_companion_vtt(
 def parse_vtt_words(vtt_path: Path) -> list[TranscribedWord]:
     """Extract word-level ``TranscribedWord`` timestamps from a YouTube VTT file."""
     vtt_text = vtt_path.read_text(encoding="utf-8")
-    raw_tokens: list[tuple[float, str]] = []
+    raw_tokens: list[tuple[float, float, str]] = []
+    last_untagged_line: str | None = None
 
     for block in vtt_text.split("\n\n"):
         m_hdr = _VTT_HEADER_RE.search(block)
@@ -233,23 +239,50 @@ def parse_vtt_words(vtt_path: Path) -> list[TranscribedWord]:
             continue
         last_line = lines[-1]
         if "<c>" in last_line:
+            last_untagged_line = None
+            block_tokens: list[tuple[float, str]] = []
             first_part = re.split(r"<\d\d:\d\d:\d\d\.\d\d\d>", last_line)[0]
             first_tok = _HTML_TAG_RE.sub("", first_part).strip()
             if first_tok:
-                raw_tokens.append((bst, first_tok))
+                block_tokens.append((bst, first_tok))
             for tm, tok in _VTT_INLINE_TAG_RE.findall(last_line):
                 cleaned_tok = _HTML_TAG_RE.sub("", tok).strip()
                 if cleaned_tok:
-                    raw_tokens.append((_parse_vtt_ts(tm), cleaned_tok))
+                    block_tokens.append((_parse_vtt_ts(tm), cleaned_tok))
+            for k, (t_tok, tok_str) in enumerate(block_tokens):
+                t_next = block_tokens[k + 1][0] if k + 1 < len(block_tokens) else ben
+                raw_tokens.append((t_tok, max(t_tok + 0.04, t_next), tok_str))
         else:
             cleaned_line = _HTML_TAG_RE.sub("", last_line).strip()
-            if cleaned_line and (not raw_tokens or raw_tokens[-1][1] != cleaned_line):
-                raw_tokens.append((bst, cleaned_line))
+            if cleaned_line and cleaned_line != last_untagged_line:
+                last_untagged_line = cleaned_line
+                sub_toks = (
+                    re.findall(r"[^、。！？!?…\s][、。！？!?…]*", cleaned_line)
+                    or [cleaned_line]
+                )
+                span_end = min(ben, bst + max(0.45, 0.22 * len(cleaned_line)))
+                span_dur = max(0.06, span_end - bst)
+                weights = [
+                    1.0
+                    + (
+                        0.65
+                        if any(ch in st for ch in "。！？!?…")
+                        else (0.35 if "、" in st else 0.0)
+                    )
+                    for st in sub_toks
+                ]
+                total_w = sum(weights) or 1.0
+                cursor = bst
+                for st, w in zip(sub_toks, weights):
+                    dur = span_dur * (w / total_w)
+                    raw_tokens.append((cursor, cursor + dur, st))
+                    cursor += dur
 
     words: list[TranscribedWord] = []
-    for idx, (t_val, tok) in enumerate(raw_tokens):
-        next_t = raw_tokens[idx + 1][0] if idx + 1 < len(raw_tokens) else t_val + 0.25
-        end_t = min(t_val + 0.45, max(t_val + 0.06, next_t))
+    for idx, (t_val, t_max_end, tok) in enumerate(raw_tokens):
+        next_t = raw_tokens[idx + 1][0] if idx + 1 < len(raw_tokens) else t_max_end
+        cap_dur = max(0.45, 0.22 * len(tok))
+        end_t = min(t_val + cap_dur, t_max_end, max(t_val + 0.04, next_t))
         words.append(
             TranscribedWord(
                 word=tok,
@@ -359,25 +392,36 @@ def _align_items_in_windows(
         for ci in c_indices:
             orig_dur = max(0.45, ends[ci] - starts[ci])
             sp, ep_pos = cue_spans[ci]
+            h_len = max(1, ep_pos - sp)
             w_st = warp(starts[ci])
             w_en = warp(ends[ci])
-            hits = [
-                cue_char_to_vtt[p]
-                for p in range(sp, ep_pos)
-                if p in cue_char_to_vtt
-            ]
-            if hits and (sp in cue_char_to_vtt or (sp + 1) in cue_char_to_vtt):
+            hit_positions = [p for p in range(sp, ep_pos) if p in cue_char_to_vtt]
+            hits = [cue_char_to_vtt[p] for p in hit_positions]
+            # Last matched position within the cue text (not the VTT char index).
+            last_hit_pos = hit_positions[-1] if hit_positions else sp
+            if hits and (
+                sp in cue_char_to_vtt
+                or (sp + 1) in cue_char_to_vtt
+                or (sp + 2) in cue_char_to_vtt
+            ):
                 cand_st = vtt_chars[hits[0]][0]
-                if abs(cand_st - w_st) <= 1.8:
+                if abs(cand_st - w_st) <= 2.5:
                     w_st = cand_st
             if hits and (
-                (ep_pos - 1) in cue_char_to_vtt or (ep_pos - 2) in cue_char_to_vtt
+                (ep_pos - 1) in cue_char_to_vtt
+                or (ep_pos - 2) in cue_char_to_vtt
+                or (last_hit_pos - sp >= max(3, int(0.55 * h_len)))
             ):
-                cand_en = vtt_chars[hits[-1]][1]
-                if abs(cand_en - w_en) <= 1.8 and cand_en > w_st + 0.15:
+                rem_chars = max(0, (ep_pos - 1) - last_hit_pos)
+                cand_en = vtt_chars[hits[-1]][1] + rem_chars * 0.12
+                cand_dur = cand_en - w_st
+                natural_dur = 0.04 * h_len <= cand_dur <= max(2.5, 0.30 * h_len)
+                if cand_en > w_st + 0.15 and (
+                    abs(cand_en - w_en) <= 2.5 or natural_dur
+                ):
                     w_en = cand_en
             if w_en <= w_st + 0.25:
-                w_en = w_st + min(orig_dur, 2.5)
+                w_en = w_st + max(min(orig_dur, 2.5), min(4.0, 0.11 * h_len))
 
             raw_st = round(max(0.0, w_st), 2)
             raw_en = round(max(raw_st + 0.25, w_en), 2)

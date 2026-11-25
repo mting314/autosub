@@ -169,3 +169,32 @@ def test_resolve_youtube_url_from_id_or_notes_and_auto_fetch(
     assert "--write-auto-sub" in calls[0]
     assert "https://www.youtube.com/watch?v=MTAKEOzS5Ac" in calls[0]
 
+
+
+def test_partial_match_in_later_window_does_not_truncate_end():
+    """Regression: the coverage gate must compare cue positions, not global VTT indices."""
+    from autosub.core.schemas import TranscribedWord as W
+    from autosub.pipeline.transcribe.align import _align_items_in_windows
+
+    vtt = [W(word="あ", start_time=i * 0.25, end_time=i * 0.25 + 0.1) for i in range(200)]
+    base = 62.0
+    for k, ch in enumerate("かきくけこ"):
+        vtt.append(W(word=ch, start_time=base + k * 0.1, end_time=base + k * 0.1 + 0.1))
+    for k, ch in enumerate("らりるれろ" * 6):
+        t = base + 3 + k * 0.1
+        vtt.append(W(word=ch, start_time=t, end_time=t + 0.1))
+    text = "かきくけこ" + "さしすせそ" * 6
+    _, ends, _ = _align_items_in_windows(
+        [text], [62.0], [64.5], [None], vtt, [(0, 60), (60, 120)]
+    )
+    assert ends[0] >= 64.0
+
+
+def test_find_companion_vtt_ignores_other_episodes(tmp_path):
+    from autosub.pipeline.transcribe.align import find_companion_vtt
+
+    (tmp_path / "Show Ep 75.auto-captions.ja.vtt").write_text("WEBVTT\n")
+    assert find_companion_vtt(tmp_path / "Show Ep 76.mkv") is None
+    own = tmp_path / "Show Ep 76.auto-captions.ja.vtt"
+    own.write_text("WEBVTT\n")
+    assert find_companion_vtt(tmp_path / "Show Ep 76.mkv") == own

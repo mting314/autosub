@@ -2050,9 +2050,10 @@ def align(
     """
     Phonetic-align subtitle timestamps against YouTube captions (.vtt / yt-dlp) or audio waveform.
     """
+    from autosub.core.speaker_map import load_speaker_map
     from autosub.pipeline.transcribe.align import align_subtitle_document
 
-    loaded_speaker_map = _resolve_speaker_map(speaker_map)
+    loaded_speaker_map = load_speaker_map(speaker_map) if speaker_map else None
     doc = align_subtitle_document(
         target,
         media_path=video,
