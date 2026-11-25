@@ -13,7 +13,7 @@ from autosub.core.schemas import (
     TranscriptionSegment,
 )
 from autosub.core.utils import parse_timestamp
-from autosub.pipeline.transcribe import api, audio, gcs, whisperx_backend
+from autosub.pipeline.transcribe import api, audio, gcs, gemini_backend, whisperx_backend
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ SUPPORTED_TRANSCRIPTION_BACKENDS = {
     "chirp_2",
     "chirp_3",
     "whisperx",
+    "gemini",
 }
 CHIRP_BACKENDS = {"chirp_2", "chirp_3"}
 MAX_CONCURRENT_TRANSCRIPTION_JOBS = 4
@@ -225,6 +226,8 @@ def _apply_offset_to_segments(
             end_time=segment.end_time + offset_seconds,
             words=_apply_offset(segment.words, offset_seconds),
             speaker=segment.speaker,
+            role=segment.role,
+            corner=segment.corner,
             confidence=segment.confidence,
             kind=segment.kind,
         )
@@ -257,6 +260,11 @@ def _transcribe_time_range(
     whisper_batch_size: int,
     whisper_diarize: bool,
     whisper_hf_token: str | None,
+    gemini_model: str = gemini_backend.DEFAULT_GEMINI_TRANSCRIBE_MODEL,
+    speaker_map: dict[str, dict] | None = None,
+    gemini_checkpoint_dir: Path | None = None,
+    classify_roles: bool = False,
+    corners: list[dict] | None = None,
 ) -> TranscriptionResult:
     logger.info(
         "Extracting audio for segment %s (start=%s, end=%s)...",
@@ -302,6 +310,29 @@ def _transcribe_time_range(
         if not project_id:
             raise ValueError("GOOGLE_CLOUD_PROJECT is not set in the environment.")
         project_id_str = project_id
+
+        if transcription_backend == "gemini":
+            gemini_result = gemini_backend.transcribe_file(
+                audio_path,
+                project_id=project_id_str,
+                language_code=language_code,
+                model_name=gemini_model,
+                vocabulary=vocabulary,
+                num_speakers=num_speakers,
+                speaker_map=speaker_map,
+                checkpoint_dir=gemini_checkpoint_dir,
+                classify_roles=classify_roles,
+                corners=corners,
+                source_media_path=video_path,
+                time_offset=time_range.offset_seconds,
+            )
+            return TranscriptionResult(
+                words=_apply_offset(gemini_result.words, time_range.offset_seconds),
+                segments=_apply_offset_to_segments(
+                    gemini_result.segments, time_range.offset_seconds
+                ),
+                metadata=gemini_result.metadata,
+            )
 
         if duration > 60:
             if not GCS_BUCKET:
@@ -488,6 +519,10 @@ def transcribe(
     whisper_diarize: bool = False,
     whisper_hf_token: str | None = None,
     replacements: dict[str, str] | None = None,
+    gemini_model: str = gemini_backend.DEFAULT_GEMINI_TRANSCRIBE_MODEL,
+    speaker_map: dict[str, dict] | None = None,
+    classify_roles: bool = False,
+    corners: list[dict] | None = None,
 ) -> TranscriptionResult:
     """
     End-to-end transcription of a video file:
@@ -505,7 +540,11 @@ def transcribe(
             "Speaker diarization (--speakers) is not supported by the chirp_2 "
             "recognizer. Use --backend chirp_3 (or whisperx) for diarization."
         )
-    project_id = PROJECT_ID if resolved_backend in CHIRP_BACKENDS else None
+    project_id = (
+        PROJECT_ID
+        if resolved_backend in (CHIRP_BACKENDS | {"gemini"})
+        else None
+    )
     if resolved_backend == "whisperx" and vocabulary:
         logger.warning(
             "Ignoring vocabulary hints for WhisperX transcription; this backend "
@@ -539,6 +578,11 @@ def transcribe(
             whisper_batch_size,
             whisper_diarize,
             whisper_hf_token,
+            gemini_model,
+            speaker_map,
+            output_json_path.with_name(f".{output_json_path.stem}_gemini_chunks_{segment.index}"),
+            classify_roles,
+            corners,
         )
     else:
         concurrency_cap = (
@@ -569,6 +613,11 @@ def transcribe(
                     whisper_batch_size,
                     whisper_diarize,
                     whisper_hf_token,
+                    gemini_model,
+                    speaker_map,
+                    output_json_path.with_name(f".{output_json_path.stem}_gemini_chunks_{segment.index}"),
+                    classify_roles,
+                    corners,
                 ): segment
                 for segment in normalized_ranges
             }
@@ -612,13 +661,18 @@ def transcribe(
             backend=cast(Any, resolved_backend),
             language=language_code,
             model=(
-                whisper_model if resolved_backend == "whisperx" else resolved_backend
+                whisper_model
+                if resolved_backend == "whisperx"
+                else gemini_model
+                if resolved_backend == "gemini"
+                else resolved_backend
             ),
         ),
     )
     logger.info(
-        "Found %s transcribed words across %s segment(s). Saving to %s...",
+        "Found %s transcribed words and %s segment(s) across %s range(s). Saving to %s...",
         len(words_data),
+        len(segments_data),
         len(normalized_ranges),
         output_json_path,
     )

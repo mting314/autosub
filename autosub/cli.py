@@ -386,7 +386,19 @@ def transcribe(
         "chirp_3",
         "--backend",
         "--transcription-backend",
-        help="Transcription backend to use ('chirp_3' or 'whisperx').",
+        help="Transcription backend to use ('chirp_2', 'chirp_3', 'whisperx', or 'gemini').",
+    ),
+    gemini_model: str = typer.Option(
+        "gemini-4-carbon",
+        "--gemini-model",
+        help="Gemini model name when --backend gemini is selected.",
+    ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        help="Optional speaker_map.toml providing speaker names/characters for Gemini diarization.",
+        exists=True,
+        dir_okay=False,
     ),
     whisper_model: str = typer.Option(
         "large-v2",
@@ -454,6 +466,8 @@ def transcribe(
             "whisper_batch_size": whisper_batch_size,
             "whisper_diarize": whisper_diarize,
             "whisper_hf_token": whisper_hf_token,
+            "gemini_model": gemini_model,
+            "speaker_map": speaker_map,
             "start": start,
             "end": end,
         },
@@ -469,13 +483,23 @@ def transcribe(
     whisper_batch_size = resolved["whisper_batch_size"]
     whisper_diarize = resolved["whisper_diarize"]
     whisper_hf_token = resolved["whisper_hf_token"]
+    gemini_model = resolved["gemini_model"]
+    speaker_map = resolved["speaker_map"]
     start = resolved["start"]
     end = resolved["end"]
     time_ranges = _normalize_time_ranges(start, end)
 
     logger.info(f"Starting transcription pipeline for: {video_path}")
 
+    loaded_speaker_map = None
+    if speaker_map:
+        from autosub.core.speaker_map import load_speaker_map
+
+        loaded_speaker_map = load_speaker_map(speaker_map)
+
     final_vocab = []
+    classify_roles = False
+    profile_corners: list[dict] = []
     if profile:
         try:
             profile_data = load_unified_profile(profile)
@@ -483,6 +507,13 @@ def transcribe(
             logger.error(f"Error while loading transcribe profile: {e}")
             raise typer.Exit(code=1)
         final_vocab.extend(profile_data.get("transcribe", {}).get("vocab", []))
+        classify_roles = bool(
+            profile_data.get("format", {})
+            .get("extensions", {})
+            .get("radio_discourse", {})
+            .get("enabled", False)
+        )
+        profile_corners = list(profile_data.get("corners", []) or [])
     if vocab:
         final_vocab.extend(vocab)
 
@@ -501,8 +532,14 @@ def transcribe(
             whisper_diarize=whisper_diarize,
             whisper_hf_token=whisper_hf_token,
             num_speakers=speakers,
+            gemini_model=gemini_model,
+            speaker_map=loaded_speaker_map,
+            classify_roles=classify_roles,
+            corners=profile_corners or None,
         )
-        logger.info(f"Success! Saved {len(result.words)} words to {output}")
+        logger.info(
+            f"Success! Saved {len(getattr(result, 'segments', []))} segments ({len(result.words)} words) to {output}"
+        )
     except Exception as e:
         logger.exception("Error during transcription (%s)", _exception_summary(e))
         raise typer.Exit(code=1)
@@ -1378,7 +1415,12 @@ def run(
         "chirp_2",
         "--backend",
         "--transcription-backend",
-        help="Transcription backend to use ('chirp_2', 'chirp_3', or 'whisperx').",
+        help="Transcription backend to use ('chirp_2', 'chirp_3', 'whisperx', or 'gemini').",
+    ),
+    gemini_model: str = typer.Option(
+        "gemini-4-carbon",
+        "--gemini-model",
+        help="Gemini model name when --backend gemini is selected.",
     ),
     whisper_model: str = typer.Option(
         "large-v2",
@@ -1522,6 +1564,7 @@ def run(
             "whisper_batch_size": whisper_batch_size,
             "whisper_diarize": whisper_diarize,
             "whisper_hf_token": whisper_hf_token,
+            "gemini_model": gemini_model,
             "prompt": prompt,
             "target_lang": target_lang,
             "source_lang": source_lang,
@@ -1550,6 +1593,7 @@ def run(
     whisper_batch_size = resolved["whisper_batch_size"]
     whisper_diarize = resolved["whisper_diarize"]
     whisper_hf_token = resolved["whisper_hf_token"]
+    gemini_model = resolved["gemini_model"]
     prompt = resolved["prompt"]
     target_lang = resolved["target_lang"]
     source_lang = resolved["source_lang"]
@@ -1694,6 +1738,12 @@ def run(
     # Step 1: Transcribe
     try:
         logger.info("[Step 1/4] Transcribing...")
+        classify_roles = bool(
+            final_format_extensions.get("radio_discourse", {}).get("enabled", False)
+        )
+        profile_corners = list(
+            final_format_extensions.get("corners", {}).get("segments", []) or []
+        )
         result = transcribe_main.transcribe(
             video_path,
             transcript_out,
@@ -1709,6 +1759,10 @@ def run(
             whisper_hf_token=whisper_hf_token,
             num_speakers=speakers,
             replacements=replacements or None,
+            gemini_model=gemini_model,
+            speaker_map=loaded_speaker_map,
+            classify_roles=classify_roles,
+            corners=profile_corners or None,
         )
     except Exception as e:
         logger.exception("Failed during transcription (%s)", _exception_summary(e))
@@ -1716,7 +1770,9 @@ def run(
 
     # Log speaker label count for awareness (assignment deferred to assign-speakers)
     if speakers and result:
-        unique_speakers = {w.speaker for w in result.words if w.speaker}
+        unique_speakers = {
+            w.speaker for w in result.words if w.speaker
+        } or {s.speaker for s in getattr(result, "segments", []) if s.speaker}
         if len(unique_speakers) > speakers:
             logger.warning(
                 f"Requested {speakers} speakers but transcription returned "
@@ -1943,6 +1999,70 @@ def hardsub(
         raise typer.Exit(code=1)
 
     logger.info(f"Hardsub complete! Output saved to {out}")
+
+
+@app.command(rich_help_panel="Utilities")
+def align(
+    target: Path = typer.Argument(
+        ...,
+        help="Subtitle JSON file (_postprocessed.json, _translated.json, or _formatted.json) to re-align.",
+        exists=True,
+        dir_okay=False,
+    ),
+    video: Path = typer.Option(
+        None,
+        "--video",
+        "-v",
+        help="Optional media file (.mkv/.mp4/.mp3) for companion .vtt lookup or waveform onset snapping.",
+        exists=True,
+        dir_okay=False,
+    ),
+    ass: Path = typer.Option(
+        None,
+        "--ass",
+        "-a",
+        help="Optional .ass file to sync manual text edits from and re-render with aligned timestamps.",
+        exists=False,
+        dir_okay=False,
+    ),
+    vtt: Path = typer.Option(
+        None,
+        "--vtt",
+        help="Optional YouTube .vtt caption file (auto-discovered or fetched via yt-dlp if omitted).",
+        exists=True,
+        dir_okay=False,
+    ),
+    youtube_url: str = typer.Option(
+        None,
+        "--youtube-url",
+        "--youtube",
+        help="YouTube URL or 11-char Video ID to fetch .vtt captions from via yt-dlp (auto-discovered from notes.md if omitted).",
+    ),
+    speaker_map: Path = typer.Option(
+        None,
+        "--speaker-map",
+        "-s",
+        help="Path to speaker_map.toml for per-slot timing rules and ASS style rendering.",
+        exists=True,
+        dir_okay=False,
+    ),
+):
+    """
+    Phonetic-align subtitle timestamps against YouTube captions (.vtt / yt-dlp) or audio waveform.
+    """
+    from autosub.pipeline.transcribe.align import align_subtitle_document
+
+    loaded_speaker_map = _resolve_speaker_map(speaker_map)
+    doc = align_subtitle_document(
+        target,
+        media_path=video,
+        ass_path=ass,
+        vtt_path=vtt,
+        youtube_url=youtube_url,
+        speaker_map=loaded_speaker_map,
+    )
+    logger.info(f"Aligned {len(doc.cues)} cues in {target}")
+
 
 
 if __name__ == "__main__":

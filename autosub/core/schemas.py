@@ -17,12 +17,14 @@ class TranscriptionSegment(BaseModel):
     end_time: float
     words: List[TranscribedWord] = Field(default_factory=list)
     speaker: str | None = None
+    role: str | None = None
+    corner: str | None = None
     confidence: float | None = None
     kind: Literal["segment", "sentence", "chunk", "result"] | None = None
 
 
 class TranscriptionMetadata(BaseModel):
-    backend: Literal["chirp_2", "chirp_3", "whisperx"] | None = None
+    backend: Literal["chirp_2", "chirp_3", "whisperx", "gemini"] | None = None
     language: str | None = None
     model: str | None = None
 

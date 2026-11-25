@@ -510,3 +510,84 @@ def test_format_subtitles_warns_when_input_produces_zero_lines(tmp_path, caplog)
     format_subtitles(transcript_path, output_path)
 
     assert "Transcript produced zero initial subtitle lines" in caplog.text
+
+
+def test_format_subtitles_skips_combined_llm_when_gemini_prelabeled(
+    tmp_path, monkeypatch
+):
+    from autosub.pipeline.format import main as format_main
+
+    transcript_path = tmp_path / "gemini_transcript.json"
+    output_ass = tmp_path / "original.ass"
+    output_json = tmp_path / "formatted.json"
+
+    transcript_path.write_text(
+        json.dumps(
+            {
+                "words": [],
+                "segments": [
+                    {
+                        "text": "こんばんは！",
+                        "start_time": 1.0,
+                        "end_time": 2.5,
+                        "words": [],
+                        "speaker": "Tomomi Jiena Sumi",
+                        "role": "host",
+                        "corner": "Opening Talk",
+                        "kind": "segment",
+                    },
+                    {
+                        "text": "お便りを読ませていただきますといただきました。",
+                        "start_time": 3.0,
+                        "end_time": 6.0,
+                        "words": [],
+                        "speaker": "Kent Ito",
+                        "role": "listener_mail",
+                        "corner": "Opening Talk",
+                        "kind": "segment",
+                    },
+                ],
+                "metadata": {
+                    "backend": "gemini",
+                    "language": "ja-JP",
+                    "model": "gemini-4-carbon",
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("Combined LLM classifier should be bypassed")
+
+    monkeypatch.setattr(format_main, "_apply_combined_extensions", fail_if_called)
+
+    doc = format_subtitles(
+        transcript_path,
+        output_ass,
+        output_json_path=output_json,
+        extensions_config={
+            "radio_discourse": {
+                "enabled": True,
+                "engine": "hybrid",
+                "split_framing_phrases": True,
+                "label_roles": True,
+                "correct_speakers": True,
+            },
+            "corners": {
+                "enabled": True,
+                "engine": "hybrid",
+                "segments": [
+                    {"name": "Opening Talk", "description": "Intro", "cues": []}
+                ],
+            },
+        },
+    )
+
+    assert len(doc.cues) == 3
+    assert doc.cues[0].corner == "Opening Talk"
+    assert doc.cues[1].corner is None  # dedup_sticky removed duplicate
+    assert doc.cues[1].role == "listener_mail"
+    assert doc.cues[2].role == "host_meta"  # split_host_meta_suffix applied
+    assert doc.cues[2].corner is None
