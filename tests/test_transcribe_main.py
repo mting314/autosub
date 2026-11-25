@@ -386,4 +386,110 @@ def test_chirp_2_is_a_supported_backend():
     """DEFAULT_TRANSCRIPTION_BACKEND is chirp_3, so listing it left chirp_2 out."""
     from autosub.pipeline.transcribe.main import SUPPORTED_TRANSCRIPTION_BACKENDS
 
-    assert SUPPORTED_TRANSCRIPTION_BACKENDS == {"chirp_2", "chirp_3", "whisperx"}
+    assert SUPPORTED_TRANSCRIPTION_BACKENDS == {
+        "chirp_2",
+        "chirp_3",
+        "whisperx",
+        "gemini",
+    }
+
+
+def test_transcribe_gemini_routes_and_offsets_segments(tmp_path, monkeypatch):
+    from autosub.core.schemas import (
+        TranscriptionMetadata,
+        TranscriptionResult,
+        TranscriptionSegment,
+    )
+    from autosub.pipeline.transcribe import main as transcribe_main
+
+    video_path = tmp_path / "video.mp4"
+    video_path.write_text("fake", encoding="utf-8")
+    audio_path = tmp_path / "extracted.wav"
+    audio_path.write_text("wav", encoding="utf-8")
+    out_path = tmp_path / "transcript.json"
+
+    monkeypatch.setattr(transcribe_main, "PROJECT_ID", "test-proj")
+    monkeypatch.setattr(transcribe_main.audio, "extract_audio", lambda *a, **k: audio_path)
+    monkeypatch.setattr(transcribe_main.audio, "get_audio_duration", lambda *a, **k: 25.0)
+
+    captured: dict = {}
+
+    def fake_gemini_transcribe(path, **kwargs):
+        captured["path"] = path
+        captured.update(kwargs)
+        return TranscriptionResult(
+            words=[],
+            segments=[
+                TranscriptionSegment(
+                    text="こんにちは。",
+                    start_time=1.5,
+                    end_time=3.2,
+                    words=[],
+                    speaker="Tomomi Jiena Sumi",
+                    kind="segment",
+                )
+            ],
+            metadata=TranscriptionMetadata(
+                backend="gemini", language="ja-JP", model="gemini-4-carbon"
+            ),
+        )
+
+    monkeypatch.setattr(transcribe_main.gemini_backend, "transcribe_file", fake_gemini_transcribe)
+
+    res = transcribe_main.transcribe(
+        video_path,
+        out_path,
+        transcription_backend="gemini",
+        start_time="00:01:00",
+        end_time="00:01:25",
+        gemini_model="gemini-4-carbon",
+        speaker_map={"0": {"name": "Tomomi Jiena Sumi", "character": "An Shiraishi"}},
+    )
+
+    assert captured["model_name"] == "gemini-4-carbon"
+    assert res.metadata.backend == "gemini"
+    assert len(res.segments) == 1
+    assert res.segments[0].start_time == 61.5
+    assert res.segments[0].end_time == 63.2
+    assert res.segments[0].speaker == "Tomomi Jiena Sumi"
+    assert out_path.exists()
+
+
+def test_gemini_backend_prompt_and_corner_dedup():
+    from autosub.core.schemas import TranscriptionSegment
+    from autosub.pipeline.transcribe import gemini_backend
+
+    corners = [
+        {"name": "Opening Talk", "description": "Intro chat", "cues": ["こんばんは"]},
+        {"name": "Ending", "description": "Closing", "cues": ["バイバイ"]},
+    ]
+    prompt = gemini_backend._build_chunk_prompt(
+        chunk_idx=1,
+        chunk_count=4,
+        chunk_start=180.0,
+        chunk_end=360.0,
+        total_duration=720.0,
+        language_code="ja-JP",
+        speaker_entries=[{"name": "Kent Ito", "character": "Toya Aoyagi"}],
+        num_speakers=2,
+        vocabulary=["セカラジ"],
+        classify_roles=True,
+        corners=corners,
+    )
+    assert "chunk 2/4" in prompt
+    assert "Discourse role (`role` field):" in prompt
+    assert 'Program segments (`corner` field):' in prompt
+    assert '"Opening Talk"' in prompt
+
+    valid = {"opening talk": "Opening Talk", "ending": "Ending"}
+    assert gemini_backend._canonicalize_corner(" opening talk ", valid) == "Opening Talk"
+    assert gemini_backend._canonicalize_corner("Invalid Corner", valid) is None
+
+    segs = [
+        TranscriptionSegment(text="a", start_time=0.0, end_time=1.0, corner="Opening Talk"),
+        TranscriptionSegment(text="b", start_time=1.0, end_time=2.0, corner=None),
+        TranscriptionSegment(text="c", start_time=2.0, end_time=3.0, corner="Opening Talk"),
+        TranscriptionSegment(text="d", start_time=3.0, end_time=4.0, corner="Ending"),
+    ]
+    deduped = gemini_backend._dedup_segment_corners(segs)
+    assert [s.corner for s in deduped] == ["Opening Talk", None, None, "Ending"]

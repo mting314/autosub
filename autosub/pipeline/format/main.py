@@ -195,6 +195,8 @@ def _segments_to_lines(transcript: TranscriptionResult) -> list[SubtitleLine]:
                 start_time=segment.start_time,
                 end_time=segment.end_time,
                 speaker=segment.speaker,
+                role=segment.role,
+                corner=segment.corner,
                 words=list(segment.words),
             )
         )
@@ -202,9 +204,69 @@ def _segments_to_lines(transcript: TranscriptionResult) -> list[SubtitleLine]:
     return lines
 
 
+def _apply_prelabeled_extensions(
+    lines: list[SubtitleLine],
+    radio_config: dict,
+    corners_config: dict,
+    *,
+    apply_roles: bool,
+    apply_corners: bool,
+) -> list[SubtitleLine]:
+    """Finalize pre-labeled role/corner annotations deterministically without LLM calls."""
+    processed = list(lines)
+    if apply_roles:
+        from autosub.extensions.radio_discourse.main import (
+            _normalize_greetings,
+            classify_role,
+            split_host_meta_suffix,
+        )
+
+        greetings = _normalize_greetings(radio_config.get("greetings", []))
+        if greetings:
+            processed = apply_split_after(
+                processed, greetings, ensure_terminal_punctuation=True
+            )
+        if radio_config.get("split_framing_phrases", True):
+            split_lines: list[SubtitleLine] = []
+            for line in processed:
+                split_lines.extend(split_host_meta_suffix(line))
+            processed = split_lines
+
+        label_roles = radio_config.get("label_roles", True)
+        previous_role: str | None = None
+        updated_roles: list[SubtitleLine] = []
+        for line in processed:
+            role = line.role
+            if role is None:
+                role = classify_role(line.text, previous_role)
+            previous_role = role
+            updated_roles.append(
+                line.model_copy(update={"role": role if label_roles else None})
+            )
+        processed = updated_roles
+
+    if apply_corners:
+        from autosub.extensions.corners.main import (
+            _merge_detections,
+            dedup_sticky,
+            detect_by_cues,
+        )
+
+        segments = corners_config.get("segments", [])
+        cue_corners = detect_by_cues(processed, segments) if segments else [None] * len(processed)
+        existing_corners = [line.corner for line in processed]
+        resolved_corners = dedup_sticky(_merge_detections(cue_corners, existing_corners))
+        processed = [
+            line.model_copy(update={"corner": corner})
+            for line, corner in zip(processed, resolved_corners, strict=False)
+        ]
+
+    return processed
+
+
 def _initial_lines(transcript: TranscriptionResult) -> list[SubtitleLine]:
     backend = transcript.metadata.backend if transcript.metadata else None
-    if backend == "whisperx" and transcript.segments:
+    if backend in {"whisperx", "gemini"} and transcript.segments:
         logger.info("Using transcript segments as initial subtitle lines.")
         return _segments_to_lines(transcript)
     return chunker.chunk_words_to_lines(transcript.words)
@@ -374,7 +436,7 @@ def _split_line_after_with_options(
                 end_time=te,
                 speaker=line.speaker,
                 role=line.role,
-                corner=line.corner,
+                corner=line.corner if i == 0 else None,
                 words=seg_words,
                 replacement_spans=seg_spans,
             )
@@ -473,6 +535,14 @@ def format_subtitles(
 
     radio_discourse_config = extensions_config.get("radio_discourse", {})
     corners_config = extensions_config.get("corners", {})
+    if radio_discourse_config.get("correct_speakers") and any(
+        m.backend == "gemini" for m in transcription_metadata
+    ):
+        logger.info(
+            "Preserving Gemini audio-grounded speaker labels (skipping text-only correct_speakers)."
+        )
+        radio_discourse_config = dict(radio_discourse_config)
+        radio_discourse_config["correct_speakers"] = False
 
     # Determine whether the combined path will run, so we can skip
     # the standalone radio_discourse call and avoid a wasted LLM pass.
@@ -490,52 +560,97 @@ def format_subtitles(
         and radio_engine in {"llm", "hybrid"}
         and corners_engine in {"llm", "hybrid"}
     )
+    has_prelabeled_roles = any(line.role is not None for line in lines)
+    has_prelabeled_corners = any(line.corner is not None for line in lines)
 
-    if radio_enabled and not use_combined:
-        logger.info("Applying radio discourse extension...")
-        from autosub.extensions.radio_discourse.main import apply_radio_discourse
-
-        if radio_engine in {"llm", "hybrid"}:
-            radio_discourse_config = dict(radio_discourse_config)
-            if enable_trace:
-                llm_trace_path = _stage_trace_path(
-                    output_ass_path, "radio_discourse", log_dir=log_dir
+    if use_combined and has_prelabeled_roles and (
+        has_prelabeled_corners or not corners_config.get("segments")
+    ):
+        logger.info(
+            "Using pre-labeled audio roles and corners (skipping combined LLM classifier)."
+        )
+        lines = _apply_prelabeled_extensions(
+            lines,
+            radio_discourse_config,
+            corners_config,
+            apply_roles=True,
+            apply_corners=True,
+        )
+    else:
+        if radio_enabled and not use_combined:
+            if has_prelabeled_roles:
+                logger.info(
+                    "Using pre-labeled audio roles (skipping radio_discourse LLM classifier)."
                 )
-                radio_discourse_config.setdefault("llm_trace_path", llm_trace_path)
-                llm_trace_path.unlink(missing_ok=True)
+                lines = _apply_prelabeled_extensions(
+                    lines,
+                    radio_discourse_config,
+                    corners_config,
+                    apply_roles=True,
+                    apply_corners=False,
+                )
+            else:
+                logger.info("Applying radio discourse extension...")
+                from autosub.extensions.radio_discourse.main import (
+                    apply_radio_discourse,
+                )
 
-        lines = apply_radio_discourse(lines, radio_discourse_config)
-        logger.info(f"Radio discourse extension produced {len(lines)} subtitle lines.")
+                if radio_engine in {"llm", "hybrid"}:
+                    radio_discourse_config = dict(radio_discourse_config)
+                    if enable_trace:
+                        llm_trace_path = _stage_trace_path(
+                            output_ass_path, "radio_discourse", log_dir=log_dir
+                        )
+                        radio_discourse_config.setdefault(
+                            "llm_trace_path", llm_trace_path
+                        )
+                        llm_trace_path.unlink(missing_ok=True)
 
-    if corners_enabled:
-        if use_combined:
-            logger.info("Running combined radio discourse + corners classification...")
-            lines = _apply_combined_extensions(
-                lines,
-                radio_discourse_config,
-                corners_config,
-                output_ass_path,
-                speaker_map=speaker_map,
-                log_dir=log_dir,
-                enable_trace=enable_trace,
-            )
-        else:
-            # Standalone corners (cues-only, or radio_discourse not using LLM)
-            logger.info("Applying corners extension...")
-            from autosub.extensions.corners.main import apply_corners
+                lines = apply_radio_discourse(lines, radio_discourse_config)
+                logger.info(
+                    f"Radio discourse extension produced {len(lines)} subtitle lines."
+                )
 
-            if corners_engine in {"llm", "hybrid"}:
-                corners_config = dict(corners_config)
-                if enable_trace:
-                    llm_trace_path = _stage_trace_path(
-                        output_ass_path, "corners", log_dir=log_dir
-                    )
-                    llm_trace_path.unlink(missing_ok=True)
-                    corners_config.setdefault("llm_trace_path", llm_trace_path)
+        if corners_enabled:
+            if use_combined:
+                logger.info("Running combined radio discourse + corners classification...")
+                lines = _apply_combined_extensions(
+                    lines,
+                    radio_discourse_config,
+                    corners_config,
+                    output_ass_path,
+                    speaker_map=speaker_map,
+                    log_dir=log_dir,
+                    enable_trace=enable_trace,
+                )
+            elif has_prelabeled_corners:
+                logger.info(
+                    "Using pre-labeled audio corners (skipping corners LLM classifier)."
+                )
+                lines = _apply_prelabeled_extensions(
+                    lines,
+                    radio_discourse_config,
+                    corners_config,
+                    apply_roles=False,
+                    apply_corners=True,
+                )
+            else:
+                # Standalone corners (cues-only, or radio_discourse not using LLM)
+                logger.info("Applying corners extension...")
+                from autosub.extensions.corners.main import apply_corners
 
-            lines = apply_corners(lines, corners_config)
-            detected = sum(1 for line in lines if line.corner)
-            logger.info(f"Corners extension detected {detected} transitions.")
+                if corners_engine in {"llm", "hybrid"}:
+                    corners_config = dict(corners_config)
+                    if enable_trace:
+                        llm_trace_path = _stage_trace_path(
+                            output_ass_path, "corners", log_dir=log_dir
+                        )
+                        llm_trace_path.unlink(missing_ok=True)
+                        corners_config.setdefault("llm_trace_path", llm_trace_path)
+
+                lines = apply_corners(lines, corners_config)
+                detected = sum(1 for line in lines if line.corner)
+                logger.info(f"Corners extension detected {detected} transitions.")
 
     logger.info("Applying timing rules (snapping, keyframes, min duration)...")
     if not timing_config:

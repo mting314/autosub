@@ -169,6 +169,8 @@ def split_host_meta_suffix(line: SubtitleLine) -> list[SubtitleLine]:
                 update={
                     "text": suffix,
                     "start_time": split_time,
+                    "role": "host_meta" if line.role is not None else None,
+                    "corner": None,
                     "words": second_words,
                     "replacement_spans": second_spans,
                 }
