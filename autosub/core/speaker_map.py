@@ -91,6 +91,12 @@ def load_speaker_map(path: Path) -> dict[str, dict]:
         if card_margin_left is not None:
             speaker_info["card_margin_left"] = int(card_margin_left)
 
+        bar_margin_right = entry.get(
+            "bar_margin_right", layout_cfg.get("bar_margin_right")
+        )
+        if bar_margin_right is not None:
+            speaker_info["bar_margin_right"] = int(bar_margin_right)
+
         y_offset = entry.get(
             "y_offset",
             layout_cfg.get(f"slot_{slot_val}_y_offset", layout_cfg.get("y_offset")),
@@ -176,6 +182,7 @@ def calculate_speaker_slot_layout(
     canvas_height: int = 1080,
     card_width: int = 260,
     card_margin_left: int = 30,
+    bar_margin_right: int = SLOT_CANVAS_MARGIN_RIGHT,
     text_gap: int = 40,
     font_size: int = SLOT_FONT_SIZE,
     y_offset: int = 0,
@@ -210,7 +217,7 @@ def calculate_speaker_slot_layout(
         SLOT_MAX_LINES * font_size * SLOT_LINE_HEIGHT + 2 * SLOT_TEXT_PAD
     )
     bar_x1 = text_x - SLOT_TEXT_PAD
-    bar_x2 = canvas_width - SLOT_CANVAS_MARGIN_RIGHT
+    bar_x2 = canvas_width - bar_margin_right
     bar_y1 = center_y - bar_height // 2
 
     return {
@@ -292,6 +299,9 @@ def slot_styles_for_map(speaker_map: dict[str, dict]) -> dict[str, "pyass.Style"
                 slot=int(slot),
                 total_slots=total_slots,
                 card_margin_left=int(entry.get("card_margin_left", 30)),
+                bar_margin_right=int(
+                    entry.get("bar_margin_right", SLOT_CANVAS_MARGIN_RIGHT)
+                ),
                 y_offset=int(entry.get("y_offset", 0)),
             ),
         )

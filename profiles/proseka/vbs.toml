@@ -25,6 +25,9 @@ vocab = [
     "鷲見友美ジェナ",
     "今井文也",
     "伊東健人",
+
+    # --- Greetings ---
+    "コンビバ",
 ]
 
 [glossary]
@@ -32,3 +35,8 @@ vocab = [
 "白石杏" = "An Shiraishi"
 "東雲彰人" = "Akito Shinonome"
 "青柳冬弥" = "Toya Aoyagi"
+"コンビバ" = "kon-vivid"
+
+[[format.normalizer.terms]]
+value = "コンビバ"
+explanation = "Fan greeting portmanteau of こんにちは/こんばんは + ビビバス (Vivid BAD SQUAD). ASR may transcribe コンビバー or こんびば."

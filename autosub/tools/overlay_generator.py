@@ -318,6 +318,7 @@ def generate_radio_overlay_image(
             canvas_height=canvas_h,
             card_width=260,
             card_margin_left=int(entry.get("card_margin_left", 30)),
+            bar_margin_right=int(entry.get("bar_margin_right", 30)),
             text_gap=40,
             y_offset=int(entry.get("y_offset", 0)),
         )
@@ -360,6 +361,7 @@ def generate_radio_overlay_image(
             canvas_height=canvas_h,
             card_width=260,
             card_margin_left=int(entry.get("card_margin_left", 30)),
+            bar_margin_right=int(entry.get("bar_margin_right", 30)),
             text_gap=40,
             y_offset=int(entry.get("y_offset", 0)),
         )
