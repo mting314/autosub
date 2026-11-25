@@ -2,15 +2,15 @@ extends = ["multi_seiyuu_radio", "proseka/base"]
 
 prompt = [
     """
-セカラジ / Sekaraji ("Project SEKAI RADIO") is a biweekly pre-recorded web radio show for the mobile rhythm game Project Sekai: Colorful Stage! feat. Hatsune Miku, released on YouTube on Friday evenings. Two voice actors host together, talk about the game, run recurring corners, and read listener mail sent to sekairadio@pjsekai.jp.
+セカラジ / SekaRaji ("Project SEKAI RADIO") is a biweekly pre-recorded web radio show for the mobile rhythm game Project SEKAI COLORFUL STAGE! feat. Hatsune Miku, released on YouTube on Friday evenings. Two voice actors host together, talk about the game, run recurring corners, and read listener mail sent to sekairadio@pjsekai.jp.
 
 This is radio, not a livestream: there is no chat to react to, no story or MV playing on screen, and no event to recap. The hosts are talking to each other and to listeners. Keep the register warm and conversational, and let the two hosts play off each other — banter, interruptions, and agreement noises are the substance of the show, not noise to clean up.
 
 The host pair rotates every episode and can be drawn from any unit, so do not assume who is speaking from the show alone. Who hosts THIS episode is supplied separately, in the "Speakers in this recording" list.
 """,
     """
-Sekaraji conventions:
-- "セカラジ" → "Sekaraji". Never "Sekarazi" or "SekaRadi".
+SekaRaji conventions:
+- "セカラジ" → "SekaRaji" (camelCase R). Never "Sekaraji", "Sekarazi", or "SekaRadi".
 - "連絡ノート" → "the exchange notebook". This is the show's running relay: each episode's hosts answer a question the previous episode's hosts left them, then leave a new question for the next pair. Keep the term consistent — it is a segment name, not a literal notebook.
 - "ユニットシャッフル" → "unit shuffle", the show's word for rotating which units the hosts come from.
 - The listener mail address is read aloud as "sekairadio@pjsekai.jp" — render it as the literal address, not a transliteration.
@@ -62,7 +62,7 @@ vocab = [
     "降幡愛",
     "本泉莉奈",
     "秋奈",
-    "澄利冴那",
+    "鷲見友美ジェナ",
     "今井文也",
     "伊東健人",
     "廣瀬大介",
@@ -77,12 +77,13 @@ vocab = [
     # --- Greetings ---
     "コンニード",
     "コンモア",
+    "コンビバ",
     "コンニーゴ",
     "ワンダーホイ",
 ]
 
 [glossary]
-"セカラジ" = "Sekaraji"
+"セカラジ" = "SekaRaji"
 "お便り" = "listener mail"
 "連絡ノート" = "exchange notebook"
 "ユニットシャッフル" = "unit shuffle"
@@ -130,11 +131,15 @@ explanation = "Show name (Project SEKAI RADIO). ASR variants to correct: セカ�
 
 [[format.normalizer.terms]]
 value = "セットログ"
-explanation = "Setlog photo/schedule logging app used by the cast during Kanshasai. ASR variants to correct: セットラグ."
+explanation = "Setlog photo/schedule logging app used by the cast during the Thanks Festival. ASR variants to correct: セットラグ."
 
 [[format.normalizer.terms]]
 value = "コンモア"
 explanation = "Fan greeting portmanteau of こんばんは + モア (MORE MORE JUMP!). ASR may drop the ン, producing コモア."
+
+[[format.normalizer.terms]]
+value = "コンビバ"
+explanation = "Fan greeting portmanteau of こんにちは/こんばんは + ビビバス (Vivid BAD SQUAD). ASR may transcribe コンビバー or こんびば."
 
 [[format.normalizer.terms]]
 value = "コンニーゴ"

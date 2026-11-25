@@ -2,7 +2,7 @@ extends = ["solo_seiyuu_radio", "proseka/base"]
 
 prompt = [
     """
-ProSeka AfterTalk (プロセカアフタートーク) is a recurring livestream for the mobile rhythm game Project Sekai: Colorful Stage! feat. Hatsune Miku. Each edition covers one in-game event story: a single voice actor hosts, reads fan letters, and discusses the story while watching key scenes live. Streams air on YouTube after each event ends.
+ProSeka AfterTalk (プロセカアフタートーク) is a recurring livestream for the mobile rhythm game Project SEKAI COLORFUL STAGE! feat. Hatsune Miku. Each edition covers one in-game event story: a single voice actor hosts, reads fan letters, and discusses the story while watching key scenes live. Streams air on YouTube after each event ends.
 
 Tone: relaxed YouTube livestream, not a formal presentation. Use casual register — "Here we go!" not "Please, take a look"; "if you think I'm yapping too much" not "If you find me too noisy."
 """,
