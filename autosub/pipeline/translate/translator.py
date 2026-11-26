@@ -34,6 +34,8 @@ class VertexTranslator(BaseTranslator, BaseStructuredLLM):
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
         "openrouter": "openai/gpt-5-mini",
+        # Aliases track the latest model the local claude CLI offers.
+        "claude-cli": "opus",
     }
 
     def __init__(

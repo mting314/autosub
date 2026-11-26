@@ -37,6 +37,8 @@ class ReflowSplitter(BaseStructuredLLM):
         "google-vertex": "gemini-2.5-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
+        # Aliases track the latest model the local claude CLI offers.
+        "claude-cli": "haiku",
     }
     _DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash-lite"
 
