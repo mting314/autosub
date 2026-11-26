@@ -704,7 +704,7 @@ def translate(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for the vertex engine ('google-vertex', 'anthropic-vertex', 'anthropic', 'openai', or 'openrouter').",
+        help="LLM provider to use for the vertex engine ('google-vertex', 'anthropic-vertex', 'anthropic', 'openai', 'openrouter', or 'claude-cli' for the local Claude Code CLI).",
     ),
     vertex_reasoning_effort: ReasoningEffort | None = typer.Option(
         "medium",
@@ -1479,7 +1479,7 @@ def run(
     llm_provider: str = typer.Option(
         "google-vertex",
         "--llm-provider",
-        help="LLM provider to use for translation ('google-vertex', 'anthropic-vertex', 'anthropic', 'openai', or 'openrouter').",
+        help="LLM provider to use for translation ('google-vertex', 'anthropic-vertex', 'anthropic', 'openai', 'openrouter', or 'claude-cli' for the local Claude Code CLI).",
     ),
     bilingual: bool = typer.Option(
         False, "--bilingual/--replace", help="Include original text on top."

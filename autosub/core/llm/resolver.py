@@ -11,6 +11,7 @@ SUPPORTED_PROVIDERS: tuple[LLMProvider, ...] = (
     "anthropic",
     "openai",
     "openrouter",
+    "claude-cli",
 )
 
 PROVIDER_PREFERENCE: tuple[LLMProvider, ...] = (
@@ -27,6 +28,9 @@ PROVIDER_ENV_VARS: dict[LLMProvider, str] = {
     "anthropic": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
+    # Not an env var: the local `claude` CLI must be on PATH (or set
+    # AUTOSUB_CLAUDE_CLI). Only used for error messages.
+    "claude-cli": "AUTOSUB_CLAUDE_CLI",
 }
 
 DIRECT_PROVIDER_BY_FAMILY: dict[str, LLMProvider] = {
@@ -177,7 +181,12 @@ def classify_model(model: str) -> ModelClassification | None:
     direct_provider = DIRECT_PROVIDER_BY_FAMILY[direct_family]
     compatible_providers: tuple[LLMProvider, ...]
     if direct_family == "claude":
-        compatible_providers = ("anthropic", "anthropic-vertex", "openrouter")
+        compatible_providers = (
+            "anthropic",
+            "anthropic-vertex",
+            "openrouter",
+            "claude-cli",
+        )
     else:
         compatible_providers = (direct_provider, "openrouter")
     return ModelClassification(
@@ -190,6 +199,10 @@ def classify_model(model: str) -> ModelClassification | None:
 
 def provider_has_credentials(provider: str) -> bool:
     _validate_provider(provider)
+    if provider == "claude-cli":
+        from autosub.core.llm.claude_cli import claude_cli_available
+
+        return claude_cli_available()
     env_var = PROVIDER_ENV_VARS[provider]
     return bool(os.environ.get(env_var))
 
@@ -197,6 +210,11 @@ def provider_has_credentials(provider: str) -> bool:
 def _require_provider_credentials(provider: str, model: str) -> None:
     if provider_has_credentials(provider):
         return
+    if provider == "claude-cli":
+        raise LLMResolutionError(
+            f"Model '{model}' requires provider 'claude-cli', but the `claude` "
+            "CLI was not found on PATH (set AUTOSUB_CLAUDE_CLI to its path)."
+        )
     env_var = PROVIDER_ENV_VARS[provider]
     raise LLMResolutionError(
         f"Model '{model}' requires provider '{provider}', but {env_var} is not set."

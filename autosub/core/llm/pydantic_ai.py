@@ -515,6 +515,14 @@ class BaseStructuredLLM:
         operation_name: str,
         output_name: str,
     ) -> tuple[OutputT, VertexResponseDiagnostics]:
+        if self.provider == "claude-cli":
+            return self._run_claude_cli_structured_output(
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                output_type=output_type,
+                operation_name=operation_name,
+            )
+
         agent = self._build_agent(
             system_prompt=system_prompt,
             output_type=output_type,
@@ -544,6 +552,120 @@ class BaseStructuredLLM:
             diagnostics=diagnostics,
         )
         return result.output, diagnostics
+
+    def _run_claude_cli_structured_output(
+        self,
+        *,
+        user_prompt: str,
+        system_prompt: str,
+        output_type: Any,
+        operation_name: str,
+    ) -> tuple[Any, VertexResponseDiagnostics]:
+        from autosub.core.llm import claude_cli
+
+        try:
+            cli_result = claude_cli.run_structured(
+                model=self.model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                output_type=output_type,
+                reasoning_effort=self._serialize_reasoning_effort(),
+            )
+        except claude_cli.ClaudeCLIError as exc:
+            self._write_claude_cli_trace_entry(
+                status="error",
+                operation_name=operation_name,
+                user_prompt=user_prompt,
+                system_prompt=system_prompt,
+                error=exc,
+            )
+            error_cls = (
+                VertexResponseParseError
+                if isinstance(exc, claude_cli.ClaudeCLIOutputError)
+                else VertexRequestError
+            )
+            kwargs: dict[str, Any] = {}
+            if error_cls is VertexResponseParseError:
+                kwargs["diagnostics"] = self._build_error_diagnostics(
+                    text_preview=str(exc)
+                )
+            raise error_cls(
+                f"{operation_name} via claude CLI failed: {exc}",
+                project_id=self.project_id,
+                model=self.model,
+                location=self.location,
+                **kwargs,
+            ) from exc
+
+        input_tokens = cli_result.input_tokens
+        output_tokens = cli_result.output_tokens
+        diagnostics = VertexResponseDiagnostics(
+            response_id=cli_result.raw.get("session_id"),
+            model_version=self.model,
+            candidate_finish_reasons=(
+                (str(cli_result.raw.get("stop_reason")),)
+                if cli_result.raw.get("stop_reason")
+                else ()
+            ),
+            prompt_token_count=input_tokens or None,
+            candidates_token_count=output_tokens or None,
+            total_token_count=(input_tokens + output_tokens) or None,
+            text_preview=self._truncate_preview(
+                self._serialize_output(cli_result.output)
+            ),
+        )
+        self._write_claude_cli_trace_entry(
+            status="success",
+            operation_name=operation_name,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            cli_result=cli_result,
+            diagnostics=diagnostics,
+        )
+        return cli_result.output, diagnostics
+
+    def _write_claude_cli_trace_entry(
+        self,
+        *,
+        status: str,
+        operation_name: str,
+        user_prompt: str,
+        system_prompt: str,
+        cli_result: Any = None,
+        diagnostics: VertexResponseDiagnostics | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        if self.trace_path is None:
+            return
+        raw = cli_result.raw if cli_result is not None else {}
+        entry = {
+            "status": status,
+            "operation_name": operation_name,
+            "provider": self.provider,
+            "model": self.model,
+            "reasoning_effort": self._serialize_reasoning_effort(),
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "output": (
+                self._to_jsonable(cli_result.output) if cli_result is not None else None
+            ),
+            "usage": raw.get("usage"),
+            "total_cost_usd": raw.get("total_cost_usd"),
+            "duration_ms": raw.get("duration_ms"),
+            "num_turns": raw.get("num_turns"),
+            "response_id": raw.get("session_id"),
+            "finish_reason": raw.get("stop_reason"),
+            "diagnostics": self._serialize_diagnostics(diagnostics),
+            "error": (
+                {"type": type(error).__name__, "message": str(error)}
+                if error is not None
+                else None
+            ),
+        }
+        self.trace_path.parent.mkdir(parents=True, exist_ok=True)
+        with self.trace_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False))
+            handle.write("\n")
 
     def _build_response_diagnostics(
         self, result: AgentRunResult[Any]
