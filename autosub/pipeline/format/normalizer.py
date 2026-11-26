@@ -258,6 +258,8 @@ class LLMKeywordNormalizer(BaseStructuredLLM):
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
         "openrouter": "google/gemini-3.1-flash-lite",
+        # Aliases track the latest model the local claude CLI offers.
+        "claude-cli": "haiku",
     }
 
     def __init__(

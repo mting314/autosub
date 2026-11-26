@@ -70,6 +70,13 @@ def test_list_output_type_is_wrapped_and_unwrapped(fake_claude):
     assert schema["required"] == ["items"]
     assert "$defs" in schema
     assert calls[0]["input"] == "user"
+    # System prompt goes through a file, never argv (OS arg-length limits).
+    assert "--system-prompt" not in command
+    assert "sys" not in command
+    assert command[command.index("--system-prompt-file") + 1].endswith(
+        "system_prompt.txt"
+    )
+    assert result.effort == "medium"
 
 
 def test_object_output_type_is_not_wrapped():
@@ -190,3 +197,117 @@ def test_resolver_reports_missing_cli(monkeypatch):
     monkeypatch.setattr(claude_cli, "resolve_claude_binary", lambda: None)
     with pytest.raises(LLMResolutionError, match="claude"):
         resolve_llm_selection(model="claude-opus-5-5", provider="claude-cli")
+
+
+def test_system_prompt_file_contents(monkeypatch):
+    monkeypatch.setattr(claude_cli, "resolve_claude_binary", lambda: "/bin/claude")
+    seen = {}
+
+    def fake_run(command, **kwargs):
+        path = command[command.index("--system-prompt-file") + 1]
+        seen["prompt"] = open(path, encoding="utf-8").read()
+        return _fake_completed(
+            {"type": "result", "subtype": "success", "structured_output": {"items": []}}
+        )
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    big = "日本語のプロンプト" * 20000  # ~540KB UTF-8, far past any argv limit
+    claude_cli.run_structured(
+        model="opus", system_prompt=big, user_prompt="u", output_type=list[_Line]
+    )
+    assert seen["prompt"] == big
+
+
+def test_bare_can_be_disabled(fake_claude, monkeypatch):
+    calls = fake_claude(
+        {"type": "result", "subtype": "success", "structured_output": {"items": []}}
+    )
+    monkeypatch.setenv(claude_cli.CLAUDE_CLI_ENV_BARE, "0")
+    claude_cli.run_structured(
+        model="opus", system_prompt="s", user_prompt="u", output_type=list[_Line]
+    )
+    assert "--bare" not in calls[0]["command"]
+
+
+def test_off_effort_maps_to_low():
+    assert claude_cli.map_effort("off") == "low"
+    assert claude_cli.map_effort("minimal") == "low"
+    assert claude_cli.map_effort(None) is None
+
+
+def test_malformed_timeout_raises_cli_error(fake_claude, monkeypatch):
+    fake_claude({"type": "result", "subtype": "success", "structured_output": {}})
+    monkeypatch.setenv(claude_cli.CLAUDE_CLI_ENV_TIMEOUT, "30m")
+    with pytest.raises(claude_cli.ClaudeCLIError, match="number of seconds"):
+        claude_cli.run_structured(
+            model="opus", system_prompt="s", user_prompt="u", output_type=list[_Line]
+        )
+
+
+def test_nonzero_exit_with_non_result_json_reports_exit_code(monkeypatch):
+    monkeypatch.setattr(claude_cli, "resolve_claude_binary", lambda: "/bin/claude")
+    monkeypatch.setattr(
+        claude_cli.subprocess,
+        "run",
+        lambda command, **kw: subprocess.CompletedProcess(
+            command, 3, stdout='{"banner": true}\n', stderr="boom"
+        ),
+    )
+    with pytest.raises(claude_cli.ClaudeCLIError, match="exited with code 3: boom"):
+        claude_cli.run_structured(
+            model="opus", system_prompt="s", user_prompt="u", output_type=list[_Line]
+        )
+
+
+def test_non_result_json_is_not_treated_as_result(fake_claude):
+    fake_claude({"banner": True})
+    with pytest.raises(claude_cli.ClaudeCLIOutputError, match="did not return"):
+        claude_cli.run_structured(
+            model="opus", system_prompt="s", user_prompt="u", output_type=list[_Line]
+        )
+
+
+def test_auth_error_hints_at_bare_mode(fake_claude):
+    fake_claude(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "result": "Invalid API key · Please run /login",
+        }
+    )
+    with pytest.raises(claude_cli.ClaudeCLIError, match="AUTOSUB_CLAUDE_CLI_BARE=0"):
+        claude_cli.run_structured(
+            model="opus", system_prompt="s", user_prompt="u", output_type=list[_Line]
+        )
+
+
+@pytest.mark.parametrize(
+    "module_path, class_name",
+    [
+        ("autosub.pipeline.translate.translator", "VertexTranslator"),
+        ("autosub.pipeline.translate.reflow_llm", "ReflowSplitter"),
+        ("autosub.pipeline.format.normalizer", "LLMKeywordNormalizer"),
+        ("autosub.extensions.combined_classifier", "CombinedClassifier"),
+    ],
+)
+def test_default_models_cover_claude_cli(module_path, class_name):
+    import importlib
+
+    cls = getattr(importlib.import_module(module_path), class_name)
+    assert cls.DEFAULT_MODELS["claude-cli"] in ("opus", "haiku")
+
+
+def test_resolver_missing_creds_message_suggests_flag_not_env(monkeypatch):
+    for var in (
+        "GOOGLE_CLOUD_PROJECT",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    with pytest.raises(LLMResolutionError) as excinfo:
+        resolve_llm_selection(model="claude-opus-5-5", provider=None)
+    message = str(excinfo.value)
+    assert "AUTOSUB_CLAUDE_CLI" not in message
+    assert "--llm-provider claude-cli" in message

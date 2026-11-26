@@ -24,6 +24,8 @@ class VertexCornerClassifier(BaseStructuredLLM):
         "google-vertex": "gemini-3.1-flash-lite",
         "anthropic": "claude-haiku-4-5",
         "openai": "gpt-5-mini",
+        # Aliases track the latest model the local claude CLI offers.
+        "claude-cli": "haiku",
     }
 
     def __init__(

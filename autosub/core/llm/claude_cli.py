@@ -7,7 +7,12 @@ separately billed API key or GCP project.
 The call is ``claude --bare -p --output-format json --json-schema ...``:
 
 - ``--bare`` drops hooks, plugins, MCP servers, skills and CLAUDE.md discovery,
-  cutting per-call overhead from ~65k tokens to under 1k.
+  cutting per-call overhead from ~65k tokens to under 1k. Bare mode only
+  authenticates via ``ANTHROPIC_API_KEY``/``apiKeyHelper`` or a 3P provider
+  (Bedrock/Vertex/Foundry) — it never reads an OAuth/keychain login. Set
+  ``AUTOSUB_CLAUDE_CLI_BARE=0`` to run without it (slower, but uses OAuth).
+- The system prompt is passed via ``--system-prompt-file`` so large profiles
+  don't hit OS argument-length limits (Windows ~32K chars, Linux 128KB/arg).
 - ``--tools ""`` disables every built-in tool; the model can only answer.
 - ``--json-schema`` makes the CLI validate the final answer against the schema
   and return it under ``structured_output``.
@@ -19,6 +24,11 @@ unwrapped before validation.
 Extra launcher flags can be supplied via ``AUTOSUB_CLAUDE_CLI_ARGS`` (shell
 syntax), e.g. ``--dangerously-disable-osx-sandbox`` when autosub itself runs
 inside a sandbox that forbids nesting another one.
+
+The CLI has no "thinking off" level, so ``off``/``minimal`` map to ``--effort
+low``; the effective level is recorded on the result (and in traces).
+Temperature, token caps and reasoning budgets are not exposed by the CLI and
+are ignored.
 """
 
 from __future__ import annotations
@@ -37,6 +47,7 @@ from pydantic import TypeAdapter
 CLAUDE_CLI_ENV_BINARY = "AUTOSUB_CLAUDE_CLI"
 CLAUDE_CLI_ENV_ARGS = "AUTOSUB_CLAUDE_CLI_ARGS"
 CLAUDE_CLI_ENV_TIMEOUT = "AUTOSUB_CLAUDE_CLI_TIMEOUT"
+CLAUDE_CLI_ENV_BARE = "AUTOSUB_CLAUDE_CLI_BARE"
 DEFAULT_TIMEOUT_SECONDS = 1800.0
 
 _WRAP_KEY = "items"
@@ -64,6 +75,7 @@ class ClaudeCLIResult:
     output: Any
     raw: dict[str, Any]
     command: list[str]
+    effort: str | None = None
 
     @property
     def usage(self) -> dict[str, Any]:
@@ -100,6 +112,33 @@ def claude_cli_available() -> bool:
     return resolve_claude_binary() is not None
 
 
+def map_effort(reasoning_effort: str | None) -> str | None:
+    return _EFFORT_MAP.get((reasoning_effort or "").lower())
+
+
+def _bare_enabled() -> bool:
+    return os.environ.get(CLAUDE_CLI_ENV_BARE, "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _resolve_timeout(timeout: float | None) -> float:
+    if timeout is not None:
+        return timeout
+    raw = os.environ.get(CLAUDE_CLI_ENV_TIMEOUT)
+    if not raw:
+        return DEFAULT_TIMEOUT_SECONDS
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ClaudeCLIError(
+            f"{CLAUDE_CLI_ENV_TIMEOUT} must be a number of seconds, got {raw!r}"
+        ) from exc
+
+
 def build_output_schema(output_type: Any) -> tuple[dict[str, Any], bool]:
     """Return (schema, wrapped). Wraps non-object roots under ``items``."""
     schema = TypeAdapter(output_type).json_schema()
@@ -122,7 +161,7 @@ def build_command(
     *,
     binary: str,
     model: str,
-    system_prompt: str,
+    system_prompt_file: str,
     schema: dict[str, Any],
     reasoning_effort: str | None,
 ) -> list[str]:
@@ -130,7 +169,7 @@ def build_command(
     command = [
         binary,
         *extra,
-        "--bare",
+        *(["--bare"] if _bare_enabled() else []),
         "-p",
         "--model",
         model,
@@ -139,12 +178,12 @@ def build_command(
         "--no-session-persistence",
         "--tools",
         "",
-        "--system-prompt",
-        system_prompt,
+        "--system-prompt-file",
+        system_prompt_file,
         "--json-schema",
         json.dumps(schema, ensure_ascii=False),
     ]
-    effort = _EFFORT_MAP.get((reasoning_effort or "").lower())
+    effort = map_effort(reasoning_effort)
     if effort:
         command += ["--effort", effort]
     return command
@@ -167,7 +206,7 @@ def _parse_result_json(stdout: str) -> dict[str, Any]:
     if start >= 0:
         try:
             payload = json.loads(stdout[start:])
-            if isinstance(payload, dict):
+            if isinstance(payload, dict) and payload.get("type") == "result":
                 return payload
         except json.JSONDecodeError:
             pass
@@ -193,18 +232,21 @@ def run_structured(
         )
 
     schema, wrapped = build_output_schema(output_type)
-    command = build_command(
-        binary=binary,
-        model=model,
-        system_prompt=system_prompt,
-        schema=schema,
-        reasoning_effort=reasoning_effort,
-    )
-    if timeout is None:
-        timeout = float(os.environ.get(CLAUDE_CLI_ENV_TIMEOUT, DEFAULT_TIMEOUT_SECONDS))
+    timeout = _resolve_timeout(timeout)
 
-    # Run from an empty directory so no project files leak into context.
+    # Run from an empty directory so no project files leak into context; the
+    # system prompt goes in a file there to stay clear of argv length limits.
     with tempfile.TemporaryDirectory(prefix="autosub-claude-") as workdir:
+        prompt_file = os.path.join(workdir, "system_prompt.txt")
+        with open(prompt_file, "w", encoding="utf-8") as handle:
+            handle.write(system_prompt)
+        command = build_command(
+            binary=binary,
+            model=model,
+            system_prompt_file=prompt_file,
+            schema=schema,
+            reasoning_effort=reasoning_effort,
+        )
         try:
             completed = subprocess.run(
                 command,
@@ -220,20 +262,29 @@ def run_structured(
         except OSError as exc:
             raise ClaudeCLIError(f"failed to launch claude CLI: {exc}") from exc
 
-    if completed.returncode != 0 and not completed.stdout.strip():
-        raise ClaudeCLIError(
-            f"claude CLI exited with code {completed.returncode}: "
-            f"{completed.stderr.strip()[-800:]}"
-        )
+    try:
+        payload = _parse_result_json(completed.stdout)
+    except ClaudeCLIOutputError:
+        if completed.returncode != 0:
+            raise ClaudeCLIError(
+                f"claude CLI exited with code {completed.returncode}: "
+                f"{completed.stderr.strip()[-800:]}"
+            ) from None
+        raise
 
-    payload = _parse_result_json(completed.stdout)
     if payload.get("is_error") or payload.get("subtype") not in (None, "success"):
-        raise ClaudeCLIError(
+        message = (
             "claude CLI returned an error result: "
             f"subtype={payload.get('subtype')!r} "
             f"api_error_status={payload.get('api_error_status')!r} "
             f"result={str(payload.get('result'))[:500]!r}"
         )
+        if _bare_enabled() and _looks_like_auth_error(payload):
+            message += (
+                f". --bare mode never reads OAuth/keychain logins; set "
+                f"{CLAUDE_CLI_ENV_BARE}=0 or provide ANTHROPIC_API_KEY."
+            )
+        raise ClaudeCLIError(message)
 
     structured = payload.get("structured_output")
     if structured is None:
@@ -255,4 +306,20 @@ def run_structured(
             f"claude CLI structured_output failed validation: {exc}"
         ) from exc
 
-    return ClaudeCLIResult(output=output, raw=payload, command=command)
+    return ClaudeCLIResult(
+        output=output,
+        raw=payload,
+        command=command,
+        effort=map_effort(reasoning_effort),
+    )
+
+
+def _looks_like_auth_error(payload: dict[str, Any]) -> bool:
+    status = payload.get("api_error_status")
+    if status in (401, 403, "401", "403"):
+        return True
+    text = str(payload.get("result") or "").lower()
+    return any(
+        marker in text
+        for marker in ("api key", "apikey", "authentication", "not logged in", "login")
+    )

@@ -140,10 +140,16 @@ def resolve_llm_selection(
         required_envs = ", ".join(
             PROVIDER_ENV_VARS[provider_name]
             for provider_name in classification.compatible_providers
+            if provider_name in PROVIDER_PREFERENCE
         )
         raise LLMResolutionError(
             f"Model '{model}' can use these providers: {compatible_list}. "
             f"Set one of these environment variables first: {required_envs}."
+            + (
+                " Or pass --llm-provider claude-cli to use the local claude CLI."
+                if "claude-cli" in classification.compatible_providers
+                else ""
+            )
         )
 
     resolved_provider = credentialed_candidates[0]

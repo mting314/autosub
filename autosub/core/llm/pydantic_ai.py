@@ -30,6 +30,7 @@ from autosub.core.errors import (
     VertexResponseDiagnostics,
     VertexResponseParseError,
 )
+from autosub.core.llm.claude_cli import map_effort as claude_cli_effort
 from autosub.core.llm.resolver import classify_model
 
 logger = logging.getLogger(__name__)
@@ -563,6 +564,7 @@ class BaseStructuredLLM:
     ) -> tuple[Any, VertexResponseDiagnostics]:
         from autosub.core.llm import claude_cli
 
+        self._warn_claude_cli_ignored_settings()
         try:
             cli_result = claude_cli.run_structured(
                 model=self.model,
@@ -644,6 +646,8 @@ class BaseStructuredLLM:
             "provider": self.provider,
             "model": self.model,
             "reasoning_effort": self._serialize_reasoning_effort(),
+            # The CLI has no "off" level; this is the --effort actually sent.
+            "cli_effort": claude_cli_effort(self._serialize_reasoning_effort()),
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "output": (
@@ -662,10 +666,35 @@ class BaseStructuredLLM:
                 else None
             ),
         }
+        self._append_trace(entry)
+
+    def _append_trace(self, entry: dict[str, Any]) -> None:
+        if self.trace_path is None:
+            return
         self.trace_path.parent.mkdir(parents=True, exist_ok=True)
         with self.trace_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, ensure_ascii=False))
             handle.write("\n")
+
+    def _warn_claude_cli_ignored_settings(self) -> None:
+        if getattr(self, "_claude_cli_warned", False):
+            return
+        self._claude_cli_warned = True
+        ignored = [
+            name
+            for name, value in (
+                ("provider_options", self.provider_options),
+                ("reasoning_budget_tokens", self.reasoning_budget_tokens),
+                ("reasoning_dynamic", self.reasoning_dynamic),
+            )
+            if value
+        ]
+        if ignored:
+            logger.warning(
+                "claude-cli provider ignores %s (the claude CLI exposes no such "
+                "controls); temperature is ignored as well.",
+                ", ".join(ignored),
+            )
 
     def _build_response_diagnostics(
         self, result: AgentRunResult[Any]
@@ -802,10 +831,7 @@ class BaseStructuredLLM:
             ),
         }
 
-        self.trace_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.trace_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(entry, ensure_ascii=False))
-            handle.write("\n")
+        self._append_trace(entry)
 
     @classmethod
     def _serialize_response_parts(cls, response: Any) -> list[dict[str, Any]]:
